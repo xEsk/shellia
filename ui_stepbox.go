@@ -39,7 +39,6 @@ func (box *stepBox) Close() {
 	if box == nil || box.closed {
 		return
 	}
-	fmt.Fprintln(box.target)
 	box.closed = true
 }
 

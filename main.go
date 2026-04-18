@@ -445,7 +445,11 @@ func runTurn(ctx context.Context, ui bool, cfg config, ctxInfo *contextInfo, ins
 	lastPlans := []commandPlan(nil)
 
 	for round := 0; round < maxPlanRounds; round++ {
+		thinking := startThinkingIndicator(ui, os.Stdout)
 		rawResponse, err := callLLM(ctx, cfg, *ctxInfo, instruction, history, state, allExecutions)
+		if thinking != nil {
+			thinking.stop()
+		}
 		if err != nil {
 			return turnResult{}, err
 		}
@@ -467,7 +471,11 @@ func runTurn(ctx context.Context, ui bool, cfg config, ctxInfo *contextInfo, ins
 		}
 
 		if len(plans) == 0 && shouldRetryWithDiscoveryRepair(parsed, round, allExecutions) {
+			thinking = startThinkingIndicator(ui, os.Stdout)
 			repairedRawResponse, repairErr := callDiscoveryRepairLLM(ctx, cfg, *ctxInfo, instruction, history, state, allExecutions, parsed)
+			if thinking != nil {
+				thinking.stop()
+			}
 			if repairErr == nil {
 				repairedParsed, parseErr := parseResponse(repairedRawResponse)
 				if parseErr == nil {
@@ -524,8 +532,9 @@ func runTurn(ctx context.Context, ui bool, cfg config, ctxInfo *contextInfo, ins
 	}
 
 	openResultPanel(ui)
-	w := &resultWriter{ui: ui}
+	w := &resultWriter{ui: ui, thinking: startThinkingIndicator(ui, os.Stdout)}
 	result, streamErr := streamSummarizeExecutions(ctx, cfg, instruction, allExecutions, w)
+	w.stopThinking()
 	if streamErr != nil || strings.TrimSpace(result) == "" {
 		result = staticFallbackAnswer(lastSummary, allExecutions)
 		// Only print the fallback if streaming never wrote a single byte to the terminal.

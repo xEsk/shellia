@@ -283,9 +283,15 @@ type resultWriter struct {
 	wroteAnything bool
 	buffer        strings.Builder
 	state         answerRenderState
+	thinking      *thinkingIndicator
 }
 
 func (writer *resultWriter) Write(data []byte) (int, error) {
+	if writer.thinking != nil {
+		writer.thinking.stop()
+		writer.thinking = nil
+	}
+
 	if _, err := writer.buffer.Write(data); err != nil {
 		return 0, err
 	}
@@ -298,6 +304,14 @@ func (writer *resultWriter) Write(data []byte) (int, error) {
 	}
 
 	return len(data), nil
+}
+
+func (writer *resultWriter) stopThinking() {
+	if writer == nil || writer.thinking == nil {
+		return
+	}
+	writer.thinking.stop()
+	writer.thinking = nil
 }
 
 type answerRenderState struct {
