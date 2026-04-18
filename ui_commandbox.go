@@ -7,11 +7,11 @@ import (
 
 const (
 	commandBoxPrompt            = "run ›"
-	commandBoxHorizontalPadding = 2
+	commandBoxHorizontalPadding = greyPanelHorizontalPadding
 	commandBoxMinPanelWidth     = 24
-	commandBoxBackground        = "\033[48;2;58;62;74m"
-	commandBoxForeground        = "\033[38;2;235;237;242m"
-	commandBoxPromptForeground  = "\033[38;2;116;196;255m"
+	commandBoxBackground        = greyPanelBackground
+	commandBoxForeground        = greyPanelForeground
+	commandBoxPromptForeground  = "\033[38;5;75m"
 )
 
 // Command prints the command as a compact code panel inside the step box.
@@ -33,7 +33,7 @@ func renderCommandBox(ui bool, command string, maxWidth int) []string {
 	}
 
 	lines := make([]string, 0, len(contentLines)+2)
-	blank := commandBoxRow(strings.Repeat(" ", panelWidth))
+	blank := greyPanelBlankRow(panelWidth)
 	lines = append(lines, blank)
 	for index, line := range contentLines {
 		lines = append(lines, commandBoxRenderedContentLine(line, panelWidth, index == 0))
@@ -83,39 +83,16 @@ func commandBoxWrapWidth(panelWidth int) int {
 
 // commandBoxRenderedContentLine returns one coloured row of command content.
 func commandBoxRenderedContentLine(commandLine string, panelWidth int, first bool) string {
-	leading := strings.Repeat(" ", commandBoxHorizontalPadding)
-	prefix := leading
 	if first {
-		prefix += commandBoxPrompt + " "
-	} else {
-		prefix += strings.Repeat(" ", visibleWidth(commandBoxPrompt+" "))
+		return greyPanelRow(panelWidth,
+			greyPanelSegment{text: commandBoxPrompt, color: commandBoxPromptForeground},
+			greyPanelSegment{text: " " + commandLine},
+		)
 	}
 
-	line := prefix + commandLine
-	padding := panelWidth - visibleWidth(line)
-	if padding < 0 {
-		padding = 0
-	}
-
-	if !first {
-		return commandBoxBackground + commandBoxForeground + line + strings.Repeat(" ", padding) + colorReset
-	}
-
-	return commandBoxBackground +
-		commandBoxForeground +
-		leading +
-		commandBoxPromptForeground +
-		commandBoxPrompt +
-		commandBoxForeground +
-		" " +
-		commandLine +
-		strings.Repeat(" ", padding) +
-		colorReset
-}
-
-// commandBoxRow applies the Codex-like command panel background to a full row.
-func commandBoxRow(text string) string {
-	return commandBoxBackground + commandBoxForeground + text + colorReset
+	return greyPanelRow(panelWidth,
+		greyPanelSegment{text: strings.Repeat(" ", visibleWidth(commandBoxPrompt+" ")) + commandLine},
+	)
 }
 
 // renderPlainCommandBox returns the no-colour fallback for the command panel.

@@ -211,14 +211,6 @@ func printSection(ui bool, title string, color string) {
 	fmt.Println(style(ui, color+colorBold, title))
 }
 
-// printSessionBanner shows the short banner for the interactive session.
-func printSessionBanner(ui bool) {
-	fmt.Println()
-	fmt.Println(shelliaBrand(ui, true) + style(ui, colorDim, " session · ") + shelliaVersionBadge(ui))
-	fmt.Println(style(ui, colorWhite, "  Interactive mode"))
-	fmt.Println(style(ui, colorDim, "  !<cmd>  :shell  :ai  :mode  exit  quit  clear  context"))
-}
-
 // printCommandExecution presents the active command inside a step box before running it.
 func printCommandExecution(ui bool, cfg config, index int, total int, plan commandPlan) *stepBox {
 	box := newStepBox(os.Stdout, ui, fmt.Sprintf("step %d/%d", index, total))
