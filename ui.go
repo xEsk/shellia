@@ -350,6 +350,12 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 	single := []byte{0}
 	renderState := &editableRenderState{}
 
+	promptWidth := visibleWidth(prompt)
+	contentWidth := promptRenderWidth() - promptWidth
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+
 	renderEditablePrompt(ui, prompt, buffer, cursor, renderState)
 
 	for {
@@ -366,7 +372,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 			fmt.Print("\r\n")
 			return "exit", nil
 		case 27:
-			exitPrompt, err := applyEscapeSequenceOrExit(fd, &buffer, &cursor)
+			exitPrompt, err := applyEscapeSequenceOrExit(fd, &buffer, &cursor, contentWidth)
 			if err != nil {
 				return "", err
 			}
@@ -582,8 +588,91 @@ func utf8SequenceLength(first byte) int {
 	}
 }
 
+// wrapPromptRunesWithOffsets és com wrapPromptRunes però retorna també l'offset
+// inicial de cada línia dins del buffer original.
+func wrapPromptRunesWithOffsets(buffer []rune, width int) ([]string, []int) {
+	if width < 1 {
+		width = 1
+	}
+	if len(buffer) == 0 {
+		return []string{""}, []int{0}
+	}
+
+	lines := make([]string, 0, len(buffer)/width+1)
+	offsets := make([]int, 0, len(buffer)/width+1)
+	start := 0
+	for start < len(buffer) {
+		offsets = append(offsets, start)
+		remaining := len(buffer) - start
+		if remaining <= width {
+			lines = append(lines, string(buffer[start:]))
+			break
+		}
+
+		lastSpace := -1
+		for index := 0; index < width; index++ {
+			if unicode.IsSpace(buffer[start+index]) {
+				lastSpace = index
+			}
+		}
+
+		if lastSpace > 0 {
+			lines = append(lines, strings.TrimRightFunc(string(buffer[start:start+lastSpace]), unicode.IsSpace))
+			start += lastSpace
+			for start < len(buffer) && unicode.IsSpace(buffer[start]) {
+				start++
+			}
+			continue
+		}
+
+		lines = append(lines, string(buffer[start:start+width]))
+		start += width
+	}
+
+	if len(lines) == 0 {
+		return []string{""}, []int{0}
+	}
+	return lines, offsets
+}
+
+// moveCursorVertical mou el cursor una fila amunt (delta=-1) o avall (delta=+1)
+// intentant mantenir la mateixa columna visual.
+func moveCursorVertical(buffer []rune, cursor int, contentWidth int, delta int) int {
+	lines, offsets := wrapPromptRunesWithOffsets(buffer, contentWidth)
+	if len(lines) <= 1 {
+		return cursor
+	}
+
+	cursorRow := 0
+	for row := len(offsets) - 1; row >= 0; row-- {
+		if cursor >= offsets[row] {
+			cursorRow = row
+			break
+		}
+	}
+
+	cursorCol := cursor - offsets[cursorRow]
+	if lineLen := len([]rune(lines[cursorRow])); cursorCol > lineLen {
+		cursorCol = lineLen
+	}
+
+	targetRow := cursorRow + delta
+	if targetRow < 0 || targetRow >= len(lines) {
+		return cursor
+	}
+
+	col := cursorCol
+	if targetLineLen := len([]rune(lines[targetRow])); col > targetLineLen {
+		col = targetLineLen
+	}
+
+	return offsets[targetRow] + col
+}
+
 // applyEscapeSequence resol les tecles especials de cursor i edició.
-func applyEscapeSequence(buffer *[]rune, cursor *int) error {
+// contentWidth és l'amplada del contingut editable (sense el prefix); si és 0
+// el moviment vertical queda desactivat (p. ex. a l'editor d'una sola fila).
+func applyEscapeSequence(buffer *[]rune, cursor *int, contentWidth int) error {
 	sequence := []byte{0, 0}
 	if _, err := os.Stdin.Read(sequence[:1]); err != nil {
 		return err
@@ -596,6 +685,14 @@ func applyEscapeSequence(buffer *[]rune, cursor *int) error {
 	}
 
 	switch sequence[1] {
+	case 'A':
+		if contentWidth > 0 {
+			*cursor = moveCursorVertical(*buffer, *cursor, contentWidth, -1)
+		}
+	case 'B':
+		if contentWidth > 0 {
+			*cursor = moveCursorVertical(*buffer, *cursor, contentWidth, +1)
+		}
 	case 'C':
 		if *cursor < len(*buffer) {
 			*cursor = *cursor + 1
@@ -622,7 +719,7 @@ func applyEscapeSequence(buffer *[]rune, cursor *int) error {
 }
 
 // applyEscapeSequenceOrExit interpreta una seqüència d'escapament o tanca el prompt si Esc va sol.
-func applyEscapeSequenceOrExit(fd int, buffer *[]rune, cursor *int) (bool, error) {
+func applyEscapeSequenceOrExit(fd int, buffer *[]rune, cursor *int, contentWidth int) (bool, error) {
 	ready, err := isInputReady(fd)
 	if err != nil {
 		return false, err
@@ -630,7 +727,7 @@ func applyEscapeSequenceOrExit(fd int, buffer *[]rune, cursor *int) (bool, error
 	if !ready {
 		return true, nil
 	}
-	return false, applyEscapeSequence(buffer, cursor)
+	return false, applyEscapeSequence(buffer, cursor, contentWidth)
 }
 
 // renderEditablePrompt repinta tot el bloc del prompt editable, gestionant bé el wrap.

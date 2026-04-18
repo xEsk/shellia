@@ -151,7 +151,7 @@ func (box *stepBox) EditCommand(reader *bufio.Reader, initial string) (string, e
 			fmt.Fprint(box.target, "\r\n")
 			return "", nil
 		case 27:
-			if err := applyEscapeSequence(&buffer, &cursor); err != nil {
+			if err := applyEscapeSequence(&buffer, &cursor, 0); err != nil {
 				fmt.Fprint(box.target, "\r\n")
 				return "", err
 			}
