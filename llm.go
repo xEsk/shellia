@@ -504,6 +504,7 @@ func buildDiscoveryRepairPrompt(cfg config, instruction string, resolvedInstruct
 	b.WriteString("- Facts such as installed version, binary path, package manager ownership, installation method, config files, repo state, and runtime environment are discoverable local facts.\n")
 	b.WriteString("- If those facts can be discovered safely, return only short discovery or inspection commands for this round and set requires_observation=true.\n")
 	b.WriteString("- Do not stop after one unsuccessful ownership or installation check if other plausible local discovery paths still exist.\n")
+	b.WriteString("- In your summary, briefly tell the user that the first verification was not conclusive and that you are continuing with another short investigation.\n")
 	b.WriteString("- In this retry, do not return update, install, uninstall, or destructive action commands yet; discovery only.\n")
 	b.WriteString("- If the missing detail truly depends on user preference, credentials, secrets, remote access, or another system that cannot be inspected from this machine, you may still return no commands.\n")
 	b.WriteString("\nPrevious empty planning response:\n")
