@@ -82,6 +82,7 @@ func TestBuildDiscoveryRepairPromptIncludesContext(t *testing.T) {
 		"Recent session context:",
 		"Session memory:",
 		"Discovery repair mode:",
+		"Do not stop after one unsuccessful ownership or installation check if other plausible local discovery paths still exist.",
 		"Previous empty planning response:",
 		"requires_input: true",
 		"Need the installation method.",

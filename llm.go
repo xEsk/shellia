@@ -394,6 +394,7 @@ func buildSystemPrompt() string {
 		"If the observed outputs already answer the user's question, return no commands and put the answer in summary instead of asking to run more commands. " +
 		"Do not repeat an inspection command that was already executed and already provided the needed information, unless the user explicitly asks to rerun it. " +
 		"When only a small detail is missing, prefer a short safe inspection or verification command over returning no commands. " +
+		"When investigating how a local tool or dependency is installed or managed, do not stop after a single unsuccessful ownership check if other plausible local discovery paths still exist. " +
 		"Do not refuse only because a referenced file has an unusual extension; if needed, inspect it safely first. " +
 		"If the task is ambiguous, choose the safest minimal plan. " +
 		"Return only strict JSON with this exact schema: " +
@@ -502,6 +503,7 @@ func buildDiscoveryRepairPrompt(cfg config, instruction string, resolvedInstruct
 	b.WriteString("- Before asking the user for more detail, decide whether the missing information can be discovered locally from this machine.\n")
 	b.WriteString("- Facts such as installed version, binary path, package manager ownership, installation method, config files, repo state, and runtime environment are discoverable local facts.\n")
 	b.WriteString("- If those facts can be discovered safely, return only short discovery or inspection commands for this round and set requires_observation=true.\n")
+	b.WriteString("- Do not stop after one unsuccessful ownership or installation check if other plausible local discovery paths still exist.\n")
 	b.WriteString("- In this retry, do not return update, install, uninstall, or destructive action commands yet; discovery only.\n")
 	b.WriteString("- If the missing detail truly depends on user preference, credentials, secrets, remote access, or another system that cannot be inspected from this machine, you may still return no commands.\n")
 	b.WriteString("\nPrevious empty planning response:\n")
