@@ -216,8 +216,8 @@ a {
 }
 
 .hero h1 {
-  max-width: 11ch;
-  font-size: clamp(3.4rem, 7vw, 7.1rem);
+  
+  font-size: clamp(2.25rem, 4vw, 4.2rem);
 }
 
 .hero-lead {
@@ -453,12 +453,11 @@ a {
 }
 
 .section-heading {
-  max-width: 52rem;
   margin-bottom: 34px;
 }
 
 .section-heading h2 {
-  max-width: 15ch;
+  max-width: 75%; 
   font-size: clamp(2.25rem, 4vw, 4.4rem);
 }
 
