@@ -608,6 +608,142 @@ a {
   gap: 16px;
 }
 
+.download-surface {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 26px;
+  background: linear-gradient(180deg, rgba(13, 21, 36, 0.72) 0%, rgba(8, 14, 24, 0.9) 100%);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.download-surface-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 22px 28px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.download-version {
+  color: var(--dim);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.82rem;
+}
+
+.download-intro {
+  margin: 0;
+  padding: 22px 28px;
+  color: var(--muted);
+  line-height: 1.7;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.download-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 24px;
+  align-items: center;
+  padding: 20px 28px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.download-os {
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.download-asset-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.download-asset {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 0 16px 0 12px;
+  border: 1px solid rgba(111, 234, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(111, 234, 255, 0.05);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    transform 180ms ease;
+}
+
+.download-asset:hover {
+  background: rgba(111, 234, 255, 0.11);
+  border-color: rgba(111, 234, 255, 0.38);
+  transform: translateY(-1px);
+}
+
+.download-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.download-arch {
+  padding: 0.1rem 0.48rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--dim);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.download-links-row {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 20px 28px;
+}
+
+.download-text-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+  transition: color 180ms ease;
+}
+
+.download-text-link svg {
+  width: 12px;
+  height: 12px;
+}
+
+.download-text-link:hover {
+  color: var(--accent);
+}
+
+@media (max-width: 720px) {
+  .download-surface-head,
+  .download-intro,
+  .download-row,
+  .download-links-row {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+
+  .download-row {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}
+
 .site-footer {
   margin-top: 96px;
   padding: 12px 0 8px;
