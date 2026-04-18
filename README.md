@@ -94,7 +94,17 @@ and the endpoint behaves like an OpenAI-compatible chat completions API, Shellia
 
 Shellia is a single Go binary.
 
-Build it locally:
+### Download a pre-built binary
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/xEsk/shellia/releases), extract it, and move it to your `PATH`:
+
+```bash
+# example for macOS Apple Silicon
+tar -xzf shellia_v0.1.0_darwin_arm64.tar.gz
+mv shellia /usr/local/bin/
+```
+
+### Build from source
 
 ```bash
 go build -o shellia .
@@ -426,4 +436,4 @@ Current practical limits:
 
 ## License
 
-Shellia is licensed under the MPL-2.0 license. See [LICENSE](/Users/Xesc/Desktop/shellia/LICENSE).
+Shellia is licensed under the MPL-2.0 license. See [LICENSE](LICENSE).
