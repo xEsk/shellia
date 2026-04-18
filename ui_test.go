@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestShelliaVersionBadgeUsesConfiguredVersion comprova que la UI mostra la versió configurada.
+// TestShelliaVersionBadgeUsesConfiguredVersion checks that the UI shows the configured version.
 func TestShelliaVersionBadgeUsesConfiguredVersion(t *testing.T) {
 	previousVersion := version
 	version = "v1.2.3"
@@ -18,7 +18,7 @@ func TestShelliaVersionBadgeUsesConfiguredVersion(t *testing.T) {
 	}
 }
 
-// TestShelliaVersionBadgeFallsBackToDev comprova que la UI cau a "dev" si no hi ha versió definida.
+// TestShelliaVersionBadgeFallsBackToDev checks that the UI falls back to "dev" when no version is defined.
 func TestShelliaVersionBadgeFallsBackToDev(t *testing.T) {
 	previousVersion := version
 	version = "   "
@@ -31,8 +31,8 @@ func TestShelliaVersionBadgeFallsBackToDev(t *testing.T) {
 	}
 }
 
-// TestWrapPromptRunesWithOffsetsPreservesWhitespace comprova que el wrap manté
-// els espais del buffer per conservar la correspondència exacta del caret.
+// TestWrapPromptRunesWithOffsetsPreservesWhitespace checks that wrapping keeps
+// buffer spaces to preserve the exact caret mapping.
 func TestWrapPromptRunesWithOffsetsPreservesWhitespace(t *testing.T) {
 	buffer := []rune("alpha beta gamma")
 
@@ -48,8 +48,8 @@ func TestWrapPromptRunesWithOffsetsPreservesWhitespace(t *testing.T) {
 	}
 }
 
-// TestEditablePromptLayoutUsesFullWrappedLayout comprova que el caret es
-// col·loca sobre la fila real renderitzada i no sobre el prefix ja embolicat.
+// TestEditablePromptLayoutUsesFullWrappedLayout checks that the caret is placed
+// on the real rendered row and not on the already wrapped prefix.
 func TestEditablePromptLayoutUsesFullWrappedLayout(t *testing.T) {
 	prompt := "you > "
 	buffer := []rune("alpha beta gamma")
@@ -71,8 +71,8 @@ func TestEditablePromptLayoutUsesFullWrappedLayout(t *testing.T) {
 	}
 }
 
-// TestMoveCursorVerticalKeepsColumn comprova que amunt i avall mantenen la
-// mateixa columna visible quan la fila objectiu ho permet.
+// TestMoveCursorVerticalKeepsColumn checks that up and down keep the same
+// visible column when the target row allows it.
 func TestMoveCursorVerticalKeepsColumn(t *testing.T) {
 	buffer := []rune("alpha beta gamma delta")
 	lines, offsets := wrapPromptRunesWithOffsets(buffer, 8)
@@ -98,8 +98,8 @@ func TestMoveCursorVerticalKeepsColumn(t *testing.T) {
 	}
 }
 
-// TestMoveCursorVerticalClipsToTargetLine comprova que el caret es retalla al
-// final de la fila objectiu si aquesta és més curta.
+// TestMoveCursorVerticalClipsToTargetLine checks that the caret is clipped to
+// the end of the target row when that row is shorter.
 func TestMoveCursorVerticalClipsToTargetLine(t *testing.T) {
 	buffer := []rune("abcd efghij")
 	lines, offsets := wrapPromptRunesWithOffsets(buffer, 6)
@@ -118,8 +118,8 @@ func TestMoveCursorVerticalClipsToTargetLine(t *testing.T) {
 	}
 }
 
-// TestMoveCursorVerticalHandlesBounds comprova que si l'usuari ja és a la
-// primera o última fila, el caret va a l'inici o al final del buffer.
+// TestMoveCursorVerticalHandlesBounds checks that if the user is already on the
+// first or last row, the caret moves to the start or end of the buffer.
 func TestMoveCursorVerticalHandlesBounds(t *testing.T) {
 	buffer := []rune("alpha beta gamma")
 
@@ -131,9 +131,9 @@ func TestMoveCursorVerticalHandlesBounds(t *testing.T) {
 	}
 }
 
-// TestMoveCursorVerticalKeepsWrappedLineEnd comprova que si un moviment vertical
-// cau exactament al límit d'una línia embolicada, el caret es pinta al final de
-// la línia objectiu i no a l'inici de la següent.
+// TestMoveCursorVerticalKeepsWrappedLineEnd checks that when a vertical movement
+// lands exactly on a wrapped line boundary, the caret is rendered at the end of
+// the target row instead of the start of the next one.
 func TestMoveCursorVerticalKeepsWrappedLineEnd(t *testing.T) {
 	prompt := "you > "
 	buffer := []rune("alpha beta gamma")

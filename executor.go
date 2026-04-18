@@ -42,14 +42,14 @@ type commandExecution struct {
 	ExitCode int
 }
 
-// commandRunError representa un comando executat que ha acabat amb error o timeout.
+// commandRunError represents an executed command that finished with an error or timeout.
 type commandRunError struct {
 	Command  string
 	ExitCode int
 	TimedOut bool
 }
 
-// Error retorna una descripció breu del fallo del comando.
+// Error returns a short description of the command failure.
 func (err *commandRunError) Error() string {
 	if err == nil {
 		return ""
@@ -69,7 +69,7 @@ const (
 	manualRenderShellInteractive
 )
 
-// capturedStream representa la part capturada d'un stream, amb informació de truncat.
+// capturedStream represents the captured part of a stream, with truncation information.
 type capturedStream struct {
 	Text       string
 	TotalBytes int
@@ -77,12 +77,12 @@ type capturedStream struct {
 	Truncated  bool
 }
 
-// HasOutput indica si el stream capturat conté text útil.
+// HasOutput reports whether the captured stream contains useful text.
 func (stream capturedStream) HasOutput() bool {
 	return strings.TrimSpace(stream.Text) != ""
 }
 
-// RenderForPrompt prepara el stream per enviar-lo al model amb avís de truncat.
+// RenderForPrompt prepares the stream to be sent to the model with a truncation notice.
 func (stream capturedStream) RenderForPrompt(label string, limit int) string {
 	if !stream.HasOutput() {
 		return ""
@@ -97,7 +97,7 @@ func (stream capturedStream) RenderForPrompt(label string, limit int) string {
 	return fmt.Sprintf("%s:\n%s", label, body.String())
 }
 
-// TextForUser retorna el text capturat amb un avís curt si el stream es va truncar.
+// TextForUser returns the captured text with a short notice if the stream was truncated.
 func (stream capturedStream) TextForUser() string {
 	if !stream.HasOutput() {
 		return ""
@@ -110,7 +110,7 @@ func (stream capturedStream) TextForUser() string {
 	return text + fmt.Sprintf("\n...[output truncated locally: kept %d of %d bytes]", stream.KeptBytes, stream.TotalBytes)
 }
 
-// PreferredOutput retorna la millor sortida disponible per a respostes simples.
+// PreferredOutput returns the best available output for simple answers.
 func (execution commandExecution) PreferredOutput() string {
 	if execution.ExitCode != 0 && execution.Stderr.HasOutput() {
 		return execution.Stderr.TextForUser()
@@ -124,7 +124,7 @@ func (execution commandExecution) PreferredOutput() string {
 	return ""
 }
 
-// PromptTranscript construeix una transcripció curta prioritzant stderr sobre stdout.
+// PromptTranscript builds a short transcript prioritising stderr over stdout.
 func (execution commandExecution) PromptTranscript(limit int) string {
 	if limit <= 0 {
 		limit = 1
@@ -157,7 +157,7 @@ func (execution commandExecution) PromptTranscript(limit int) string {
 	return strings.Join(sections, "\n")
 }
 
-// limitedCaptureWriter conserva només els primers bytes configurats d'un stream.
+// limitedCaptureWriter keeps only the configured first bytes of a stream.
 type limitedCaptureWriter struct {
 	limit      int
 	totalBytes int
@@ -165,7 +165,7 @@ type limitedCaptureWriter struct {
 	buffer     bytes.Buffer
 }
 
-// Write guarda fins al límit configurat i descarta la resta mantenint el comptador total.
+// Write stores up to the configured limit and discards the rest while keeping the total counter.
 func (writer *limitedCaptureWriter) Write(data []byte) (int, error) {
 	writer.totalBytes += len(data)
 
@@ -196,7 +196,7 @@ func (writer *limitedCaptureWriter) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-// Stream converteix el buffer capturat en una estructura portable per a la resta del tool.
+// Stream converts the captured buffer into a portable structure for the rest of the tool.
 func (writer *limitedCaptureWriter) Stream() capturedStream {
 	return capturedStream{
 		Text:       strings.TrimSpace(writer.buffer.String()),
@@ -483,8 +483,8 @@ func executeOneCommand(ctx context.Context, ui bool, cfg config, ctxInfo context
 	return output, 0, hadOutput, nil
 }
 
-// executeInteractiveCommand cedeix temporalment el terminal a un procés que
-// necessita una sessió interactiva real i captura una part de la sortida.
+// executeInteractiveCommand temporarily hands over the terminal to a process that
+// needs a real interactive session and captures part of its output.
 func executeInteractiveCommand(ctx context.Context, ui bool, cfg config, ctxInfo contextInfo, shellPath string, command string) (output commandExecution, exitCode int, hadOutput bool, err error) {
 	cmd := exec.CommandContext(ctx, shellPath, "-c", command)
 	cmd.Dir = ctxInfo.CWD

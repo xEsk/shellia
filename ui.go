@@ -40,8 +40,8 @@ type directShellWriter struct {
 	started   bool
 }
 
-// Write aplica un prefix visual a cada línia de sortida del shell.
-// Retorna len(data) en cas d'èxit, o 0 + error si l'escriptura al target falla.
+// Write applies a visual prefix to each line of shell output.
+// It returns len(data) on success, or 0 + error if writing to the target fails.
 func (writer *prefixedWriter) Write(data []byte) (int, error) {
 	writer.buffer += string(data)
 	for len(writer.buffer) > 0 {
@@ -67,7 +67,7 @@ func (writer *prefixedWriter) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-// Flush força la impressió de l'última línia parcial del buffer si n'hi ha.
+// Flush forces printing of the last partial line in the buffer when present.
 func (writer *prefixedWriter) Flush() error {
 	if !writer.started || writer.buffer == "" {
 		return nil
@@ -79,8 +79,8 @@ func (writer *prefixedWriter) Flush() error {
 	return nil
 }
 
-// Write imprimeix directament la sortida del mode :shell amb un to més discret.
-// Manté les línies alineades a la columna zero i pinta cada línia en gris.
+// Write prints :shell mode output directly with a more subdued tone.
+// It keeps lines aligned at column zero and paints each line in gray.
 func (writer *directShellWriter) Write(data []byte) (int, error) {
 	text := string(data)
 	for len(text) > 0 {
@@ -116,7 +116,7 @@ func (writer *directShellWriter) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-// Flush tanca l'última línia parcial del mode :shell si n'hi ha.
+// Flush closes the last partial line of :shell mode when present.
 func (writer *directShellWriter) Flush() error {
 	if writer.lineStart {
 		return nil
@@ -125,7 +125,7 @@ func (writer *directShellWriter) Flush() error {
 	return err
 }
 
-// uiEnabled indica si la sortida enriquida pot usar color ANSI.
+// uiEnabled reports whether enriched output can use ANSI colours.
 func uiEnabled(cfg config) bool {
 	if cfg.NoColor {
 		return false
@@ -144,7 +144,7 @@ func uiEnabled(cfg config) bool {
 	return (info.Mode() & os.ModeCharDevice) != 0
 }
 
-// exitWithError imprimeix un error i finalitza el procés amb el codi indicat.
+// exitWithError prints an error and terminates the process with the given code.
 func exitWithError(ui bool, message string, code int) {
 	renderPanel(os.Stderr, ui, "error", colorRed, []string{
 		style(ui, colorWhite+colorBold, message),
@@ -152,7 +152,7 @@ func exitWithError(ui bool, message string, code int) {
 	os.Exit(code)
 }
 
-// printContext mostra el context detectat quan s'activa el mode debug.
+// printContext shows the detected context when debug mode is enabled.
 func printContext(ui bool, ctxInfo contextInfo) {
 	lines := []string{
 		metaLine(ui, "cwd", ctxInfo.CWD),
@@ -170,7 +170,7 @@ func printContext(ui bool, ctxInfo contextInfo) {
 	renderPanel(os.Stdout, ui, "context", colorBlue, lines)
 }
 
-// printPlan presenta el resum i els comandos proposats pel model.
+// printPlan presents the summary and the commands proposed by the model.
 func printPlan(ui bool, cfg config, summary string, plans []commandPlan, discovery bool) {
 	title := "plan"
 	titleColor := colorMagenta
@@ -198,20 +198,20 @@ func printPlan(ui bool, cfg config, summary string, plans []commandPlan, discove
 	renderPanel(os.Stdout, ui, "steps", colorDim, trimTrailingBlankLines(lines))
 }
 
-// printHeader mostra una capçalera compacta amb l'estat global de la sessió.
+// printHeader shows a compact header with the global session state.
 func printHeader(ui bool, ctxInfo contextInfo) {
 	fmt.Println()
 	fmt.Println(shelliaBrand(ui, false) + style(ui, colorDim, " · ") + shelliaVersionBadge(ui))
 	fmt.Println(style(ui, colorDim, fmt.Sprintf("%s · %s", ctxInfo.CWD, plainHeaderGitValue(ctxInfo))))
 }
 
-// printSection dibuixa una capçalera de secció amb més jerarquia visual.
+// printSection draws a section header with stronger visual hierarchy.
 func printSection(ui bool, title string, color string) {
 	fmt.Println()
 	fmt.Println(style(ui, color+colorBold, title))
 }
 
-// printSessionBanner mostra l'entrada curta de la sessió interactiva.
+// printSessionBanner shows the short banner for the interactive session.
 func printSessionBanner(ui bool) {
 	fmt.Println()
 	fmt.Println(shelliaBrand(ui, true) + style(ui, colorDim, " session · ") + shelliaVersionBadge(ui))
@@ -219,7 +219,7 @@ func printSessionBanner(ui bool) {
 	fmt.Println(style(ui, colorDim, "  !<cmd>  :shell  :ai  :mode  exit  quit  clear  context"))
 }
 
-// printCommandExecution presenta el comando actiu dins d'un bloc de pas abans d'executar-lo.
+// printCommandExecution presents the active command inside a step box before running it.
 func printCommandExecution(ui bool, cfg config, index int, total int, plan commandPlan) *stepBox {
 	box := newStepBox(os.Stdout, ui, fmt.Sprintf("step %d/%d", index, total))
 	box.Bullet(plan.Purpose)
@@ -233,24 +233,24 @@ func printCommandExecution(ui bool, cfg config, index int, total int, plan comma
 	return box
 }
 
-// printInfo mostra un missatge informatiu curt.
+// printInfo shows a short informational message.
 func printInfo(ui bool, message string) {
 	fmt.Printf("%s %s\n", shelliaBrand(ui, false), style(ui, colorWhite+colorBold, message))
 }
 
-// printModeStatus mostra un canvi d'estat del mode interactiu amb una sortida més neta.
+// printModeStatus shows an interactive mode state change with cleaner output.
 func printModeStatus(ui bool, message string) {
 	renderPanel(os.Stdout, ui, "mode", colorCyan, []string{
 		style(ui, colorWhite+colorBold, message),
 	})
 }
 
-// printWarning mostra un avís no fatal.
+// printWarning shows a non-fatal warning.
 func printWarning(ui bool, message string) {
 	fmt.Fprintf(os.Stderr, "%s %s\n", style(ui, colorYellow+colorBold, "warning"), style(ui, colorWhite+colorBold, message))
 }
 
-// printFinalResult mostra la resposta final útil per a l'usuari (fallback no-streaming).
+// printFinalResult shows the final useful answer for the user (non-streaming fallback).
 func printFinalResult(ui bool, message string) {
 	fmt.Println()
 	fmt.Println(shelliaBrand(ui, false))
@@ -259,7 +259,7 @@ func printFinalResult(ui bool, message string) {
 	fmt.Println(style(ui, colorDim, strings.Repeat("─", boxWidth())))
 }
 
-// openResultPanel obre el bloc de resultat en streaming.
+// openResultPanel opens the streaming result block.
 func openResultPanel(ui bool) {
 	fmt.Println()
 	fmt.Println(style(ui, colorDim, strings.Repeat("─", boxWidth())))
@@ -267,7 +267,7 @@ func openResultPanel(ui bool) {
 	fmt.Println(shelliaBrand(ui, false))
 }
 
-// closeResultPanel tanca visualment el resultat en streaming.
+// closeResultPanel visually closes the streaming result.
 func closeResultPanel(ui bool) {
 	fmt.Print(styleEnd(ui))
 	fmt.Println()
@@ -325,7 +325,7 @@ const (
 	cursorAffinityBackward
 )
 
-// readInteractivePrompt mostra una entrada clara i retorna el text introduït.
+// readInteractivePrompt shows a clear prompt and returns the entered text.
 func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) (string, error) {
 	fmt.Println()
 	fmt.Println(promptQuestionLine(ui, mode))
@@ -412,7 +412,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 	}
 }
 
-// promptQuestion retorna el text guia segons el mode interactiu actual.
+// promptQuestion returns the guiding text for the current interactive mode.
 func promptQuestion(mode interactiveMode) string {
 	if mode == interactiveModeShell {
 		return "Enter a shell command to run."
@@ -420,7 +420,7 @@ func promptQuestion(mode interactiveMode) string {
 	return "What do you want Shellia to do?"
 }
 
-// promptQuestionLine renderitza la pregunta del prompt amb la marca Shellia integrada.
+// promptQuestionLine renders the prompt question with the Shellia brand integrated.
 func promptQuestionLine(ui bool, mode interactiveMode) string {
 	if mode == interactiveModeShell {
 		return style(ui, colorDim, promptQuestion(mode))
@@ -435,7 +435,7 @@ func promptQuestionLine(ui bool, mode interactiveMode) string {
 		style(ui, colorDim, " to do?")
 }
 
-// promptPrefix renderitza el prefix visual del prompt segons el mode actual.
+// promptPrefix renders the visual prompt prefix for the current mode.
 func promptPrefix(ui bool, mode interactiveMode) string {
 	if mode == interactiveModeShell {
 		return style(ui, colorWhite+colorBold, "shell") + style(ui, colorWhite, " › ")
@@ -452,7 +452,7 @@ const (
 	confirmDecisionInteractive
 )
 
-// logConfirmationChoice anota la decisió de confirmació a la mateixa línia del prompt original.
+// logConfirmationChoice records the confirmation decision on the same line as the original prompt.
 func logConfirmationChoice(box *stepBox, prompt string, choice string) {
 	if box == nil {
 		return
@@ -463,7 +463,7 @@ func logConfirmationChoice(box *stepBox, prompt string, choice string) {
 	box.ReplaceLastRenderedRow(rendered)
 }
 
-// promptConfirmation demana confirmació explícita dins del bloc del pas.
+// promptConfirmation asks for explicit confirmation inside the step box.
 func promptConfirmation(box *stepBox, reader *bufio.Reader, prompt string, initialCommand string) (confirmDecision, string, error) {
 	if box != nil {
 		box.KeyValue("confirm", prompt, colorYellow, colorWhite)
@@ -531,7 +531,7 @@ func promptConfirmation(box *stepBox, reader *bufio.Reader, prompt string, initi
 	}
 }
 
-// readSingleConfirmationKey intenta llegir una sola tecla sense esperar Enter.
+// readSingleConfirmationKey tries to read a single key without waiting for Enter.
 func readSingleConfirmationKey() (byte, bool, error) {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {
@@ -555,7 +555,7 @@ func readSingleConfirmationKey() (byte, bool, error) {
 
 var errDiscardRune = errors.New("discard rune")
 
-// readInputRune decodifica una rune UTF-8 completa a partir del primer byte ja llegit.
+// readInputRune decodes a complete UTF-8 rune from the first byte already read.
 func readInputRune(first byte) (rune, error) {
 	if first < utf8.RuneSelf {
 		if first < 32 && first != '\t' {
@@ -584,7 +584,7 @@ func readInputRune(first byte) (rune, error) {
 	return r, nil
 }
 
-// utf8SequenceLength retorna la longitud esperada d'una seqüència UTF-8 segons el primer byte.
+// utf8SequenceLength returns the expected length of a UTF-8 sequence from its first byte.
 func utf8SequenceLength(first byte) int {
 	switch {
 	case first&0b1110_0000 == 0b1100_0000:
@@ -598,10 +598,9 @@ func utf8SequenceLength(first byte) int {
 	}
 }
 
-// wrapPromptRunesWithOffsets parteix el buffer segons l'amplada disponible i
-// retorna també l'offset inicial de cada línia dins del buffer original.
-// Manté els espais al final de línia perquè el render i el caret comparteixin
-// exactament el mateix model visual.
+// wrapPromptRunesWithOffsets splits the buffer using the available width and
+// also returns the starting offset of each line within the original buffer.
+// It keeps trailing spaces so rendering and the caret share the exact same visual model.
 func wrapPromptRunesWithOffsets(buffer []rune, width int) ([]string, []int) {
 	if width < 1 {
 		width = 1
@@ -643,10 +642,10 @@ func wrapPromptRunesWithOffsets(buffer []rune, width int) ([]string, []int) {
 	return lines, offsets
 }
 
-// promptCursorPosition calcula la fila i la columna del caret dins del layout
-// embolicat del prompt a partir dels offsets de cada línia.
-// L'afinitat permet representar un límit de línia com a final de la fila
-// anterior o com a inici de la següent, segons d'on ve el moviment.
+// promptCursorPosition computes the caret row and column within the wrapped
+// prompt layout from the offsets of each line.
+// Affinity allows a line boundary to be represented as the end of the previous
+// row or as the start of the next one, depending on where the movement came from.
 func promptCursorPosition(lines []string, offsets []int, cursor int, affinity cursorAffinity) (int, int) {
 	if len(lines) == 0 || len(offsets) == 0 {
 		return 0, 0
@@ -685,8 +684,8 @@ func promptCursorPosition(lines []string, offsets []int, cursor int, affinity cu
 	return row, col
 }
 
-// moveCursorVertical mou el cursor una fila amunt (delta=-1) o avall (delta=+1)
-// intentant mantenir la mateixa columna visual.
+// moveCursorVertical moves the cursor one row up (delta=-1) or down (delta=+1)
+// while trying to preserve the same visual column.
 func moveCursorVertical(buffer []rune, cursor int, contentWidth int, delta int, affinity cursorAffinity) (int, cursorAffinity) {
 	lines, offsets := wrapPromptRunesWithOffsets(buffer, contentWidth)
 	if len(lines) <= 1 {
@@ -723,9 +722,9 @@ func moveCursorVertical(buffer []rune, cursor int, contentWidth int, delta int, 
 	return targetCursor, targetAffinity
 }
 
-// applyEscapeSequence resol les tecles especials de cursor i edició.
-// contentWidth és l'amplada del contingut editable (sense el prefix); si és 0
-// el moviment vertical queda desactivat (p. ex. a l'editor d'una sola fila).
+// applyEscapeSequence handles special cursor and editing keys.
+// contentWidth is the width of the editable content (without the prefix); if it is 0
+// vertical movement is disabled (for example in the single-line editor).
 func applyEscapeSequence(buffer *[]rune, cursor *int, contentWidth int, affinity *cursorAffinity) error {
 	sequence := []byte{0, 0}
 	if _, err := os.Stdin.Read(sequence[:1]); err != nil {
@@ -803,7 +802,7 @@ func applyEscapeSequence(buffer *[]rune, cursor *int, contentWidth int, affinity
 	return nil
 }
 
-// applyEscapeSequenceOrExit interpreta una seqüència d'escapament o tanca el prompt si Esc va sol.
+// applyEscapeSequenceOrExit interprets an escape sequence or closes the prompt if Esc is pressed alone.
 func applyEscapeSequenceOrExit(fd int, buffer *[]rune, cursor *int, contentWidth int, affinity *cursorAffinity) (bool, error) {
 	ready, err := isInputReady(fd)
 	if err != nil {
@@ -815,7 +814,7 @@ func applyEscapeSequenceOrExit(fd int, buffer *[]rune, cursor *int, contentWidth
 	return false, applyEscapeSequence(buffer, cursor, contentWidth, affinity)
 }
 
-// renderEditablePrompt repinta tot el bloc del prompt editable, gestionant bé el wrap.
+// renderEditablePrompt repaints the full editable prompt block while handling wrapping correctly.
 func renderEditablePrompt(ui bool, prompt string, buffer []rune, cursor int, affinity cursorAffinity, state *editableRenderState) {
 	lines, cursorRow, cursorCol := editablePromptLayout(prompt, buffer, cursor, affinity, promptRenderWidth())
 	promptWidth := visibleWidth(prompt)
@@ -850,7 +849,7 @@ func renderEditablePrompt(ui bool, prompt string, buffer []rune, cursor int, aff
 	}
 }
 
-// clearEditablePrompt neteja totes les files del prompt renderitzat anteriorment.
+// clearEditablePrompt clears all rows from the previously rendered prompt.
 func clearEditablePrompt(state *editableRenderState) {
 	if state == nil || state.rows == 0 {
 		return
@@ -872,7 +871,7 @@ func clearEditablePrompt(state *editableRenderState) {
 	fmt.Print("\r")
 }
 
-// editablePromptLayout calcula les línies visibles i la posició del cursor del prompt editable.
+// editablePromptLayout computes the visible lines and cursor position for the editable prompt.
 func editablePromptLayout(prompt string, buffer []rune, cursor int, affinity cursorAffinity, width int) ([]string, int, int) {
 	if width < 2 {
 		width = 2
@@ -897,7 +896,7 @@ func editablePromptLayout(prompt string, buffer []rune, cursor int, affinity cur
 	return lines, cursorRow, cursorCol
 }
 
-// promptRenderWidth retorna l'amplada útil per al prompt editable evitant l'última columna.
+// promptRenderWidth returns the usable width for the editable prompt while avoiding the last column.
 func promptRenderWidth() int {
 	fd := int(os.Stdout.Fd())
 	if term.IsTerminal(fd) {
@@ -908,19 +907,19 @@ func promptRenderWidth() int {
 	return 79
 }
 
-// wrapPromptRunes parteix el text del prompt en línies, prioritzant salts per
-// paraules però mantenint tots els espais del buffer.
+// wrapPromptRunes splits prompt text into lines, prioritising word boundaries
+// while keeping all spaces from the buffer.
 func wrapPromptRunes(buffer []rune, width int) []string {
 	lines, _ := wrapPromptRunesWithOffsets(buffer, width)
 	return lines
 }
 
-// clearScreen neteja la terminal actual.
+// clearScreen clears the current terminal.
 func clearScreen() {
 	fmt.Print("\033[2J\033[H")
 }
 
-// renderPanel dibuixa un bloc visual lleuger per distingir millor la UI de Shellia.
+// renderPanel draws a light visual block to better distinguish the Shellia UI.
 func renderPanel(target io.Writer, ui bool, title string, color string, lines []string) {
 	fmt.Fprintln(target)
 	fmt.Fprintln(target, style(ui, color+colorBold, title))
@@ -935,7 +934,7 @@ func renderPanel(target io.Writer, ui bool, title string, color string, lines []
 	}
 }
 
-// plainHeaderGitValue genera un resum breu de Git sense estils.
+// plainHeaderGitValue generates a short plain Git summary without styles.
 func plainHeaderGitValue(ctxInfo contextInfo) string {
 	if !ctxInfo.Git.IsRepo {
 		return "not a repository"
@@ -948,17 +947,17 @@ func plainHeaderGitValue(ctxInfo contextInfo) string {
 	return branch + " (dirty)"
 }
 
-// shellStreamPrefix retorna el prefix usat per a cada línia de sortida real del shell.
+// shellStreamPrefix returns the prefix used for each line of real shell output.
 func shellStreamPrefix(ui bool) string {
 	return style(ui, colorDim, "│   ")
 }
 
-// answerPrefix retorna el marge visual per a la resposta principal de Shellia.
+// answerPrefix returns the visual margin used for Shellia's main answer.
 func answerPrefix(ui bool) string {
 	return style(ui, colorGreen, "  ")
 }
 
-// shelliaBrand renderitza la marca Shellia amb "ia" accentuat.
+// shelliaBrand renders the Shellia brand with an accented "ia".
 func shelliaBrand(ui bool, lower bool) string {
 	left := "Shell"
 	if lower {
@@ -967,12 +966,12 @@ func shelliaBrand(ui bool, lower bool) string {
 	return style(ui, colorWhite+colorBold, left) + style(ui, colorCyan+colorBold, "ia")
 }
 
-// shelliaVersionBadge renderitza la versió actual amb un tractament visual compacte.
+// shelliaVersionBadge renders the current version with compact visual treatment.
 func shelliaVersionBadge(ui bool) string {
 	return badge(ui, colorCyan, fallbackValue(strings.TrimSpace(version), "dev"))
 }
 
-// plainRiskLabel retorna el nivell de risc sense estils ANSI.
+// plainRiskLabel returns the risk level without ANSI styling.
 func plainRiskLabel(risk string) string {
 	switch risk {
 	case riskSafe:
@@ -984,7 +983,7 @@ func plainRiskLabel(risk string) string {
 	}
 }
 
-// style aplica estils ANSI quan la sortida els suporta.
+// style applies ANSI styling when the output supports it.
 func style(ui bool, color string, text string) string {
 	if !ui {
 		return text
@@ -1008,22 +1007,22 @@ func styleEnd(ui bool) string {
 	return colorReset
 }
 
-// badge genera una etiqueta visual compacta per a la interfície.
+// badge generates a compact visual label for the interface.
 func badge(ui bool, color string, text string) string {
 	return style(ui, color+colorBold, text)
 }
 
-// metaLabel renderitza una etiqueta de metadades lleugera.
+// metaLabel renders a lightweight metadata label.
 func metaLabel(ui bool, text string) string {
 	return style(ui, colorDim, strings.ToLower(text))
 }
 
-// metaLine renderitza metadades compactes clau/valor.
+// metaLine renders compact key/value metadata.
 func metaLine(ui bool, key string, value string) string {
 	return fmt.Sprintf("%s %s", metaLabel(ui, key), value)
 }
 
-// stepBadge genera una etiqueta compacta per a cada pas del pla.
+// stepBadge generates a compact label for each plan step.
 func stepBadge(ui bool, step int) string {
 	return style(ui, colorBlue+colorBold, fmt.Sprintf("%d.", step))
 }
@@ -1052,7 +1051,7 @@ func classificationBadge(ui bool, classification string) string {
 	}
 }
 
-// confirmBadge indica clarament si el comando requereix confirmació.
+// confirmBadge clearly indicates whether the command requires confirmation.
 func confirmBadge(ui bool, required bool) string {
 	if required {
 		return badge(ui, colorYellow, "required")
@@ -1060,7 +1059,7 @@ func confirmBadge(ui bool, required bool) string {
 	return badge(ui, colorGreen, "auto")
 }
 
-// fallbackValue retorna un text alternatiu quan el valor és buit.
+// fallbackValue returns a fallback text when the value is empty.
 func fallbackValue(value string, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback
@@ -1068,7 +1067,7 @@ func fallbackValue(value string, fallback string) string {
 	return value
 }
 
-// indentLines sagna un bloc multilínia per presentar-lo millor en terminal.
+// indentLines indents a multiline block to present it better in the terminal.
 func indentLines(text string, prefix string) string {
 	lines := strings.Split(text, "\n")
 	for index, line := range lines {
@@ -1077,7 +1076,7 @@ func indentLines(text string, prefix string) string {
 	return strings.Join(lines, "\n")
 }
 
-// isRetryInstruction detecta quan l'usuari vol repetir l'últim intent no completat.
+// isRetryInstruction detects when the user wants to repeat the last unfinished attempt.
 func isRetryInstruction(input string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(input))
 	switch normalized {
@@ -1088,7 +1087,7 @@ func isRetryInstruction(input string) bool {
 	}
 }
 
-// trimTrailingBlankLines elimina línies en blanc sobrants al final d'un bloc.
+// trimTrailingBlankLines removes extra trailing blank lines from a block.
 func trimTrailingBlankLines(lines []string) []string {
 	last := len(lines) - 1
 	for last >= 0 && strings.TrimSpace(lines[last]) == "" {
@@ -1100,13 +1099,13 @@ func trimTrailingBlankLines(lines []string) []string {
 	return lines[:last+1]
 }
 
-// boxMinWidth garanteix una amplada mínima llegible fins i tot en terminals estrets.
+// boxMinWidth guarantees a readable minimum width even on narrow terminals.
 const boxMinWidth = 40
 
-// boxHorizontalMargin deixa una mica d'aire a la dreta del bloc.
+// boxHorizontalMargin leaves a bit of space to the right of the box.
 const boxHorizontalMargin = 4
 
-// boxWidth calcula l'amplada total del bloc de pas segons la mida actual de la terminal.
+// boxWidth computes the total width of the step box using the current terminal size.
 func boxWidth() int {
 	fd := int(os.Stdout.Fd())
 	if term.IsTerminal(fd) {
@@ -1122,9 +1121,9 @@ func boxWidth() int {
 	return 80
 }
 
-// visibleWidth calcula l'amplada visible d'una cadena ignorant les seqüències ANSI.
-// Les seqüències CSI tenen la forma \033[ <params> <final>, on el byte final és 0x40–0x7E.
-// El caràcter '[' (0x5B) és l'introductor CSI i NO s'ha de tractar com a byte final.
+// visibleWidth computes the visible width of a string while ignoring ANSI sequences.
+// CSI sequences have the form \033[ <params> <final>, where the final byte is 0x40–0x7E.
+// The '[' character (0x5B) is the CSI introducer and must NOT be treated as a final byte.
 func visibleWidth(text string) int {
 	width := 0
 	runes := []rune(text)
@@ -1132,16 +1131,16 @@ func visibleWidth(text string) int {
 	for i < len(runes) {
 		r := runes[i]
 		if r == '\033' && i+1 < len(runes) && runes[i+1] == '[' {
-			// Seqüència CSI: \033[ ... byte_final (0x40–0x7E)
-			i += 2 // salta \033 i [
+			// CSI sequence: \033[ ... final_byte (0x40–0x7E)
+			i += 2 // skip \033 and [
 			for i < len(runes) && !(runes[i] >= '@' && runes[i] <= '~') {
 				i++
 			}
-			i++ // salta el byte final
+			i++ // skip the final byte
 			continue
 		}
 		if r == '\033' {
-			i++ // salta ESC solitari
+			i++ // skip a lone ESC
 			continue
 		}
 		width++

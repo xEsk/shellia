@@ -11,7 +11,7 @@ import (
 	"golang.org/x/term"
 )
 
-// stepBox renderitza un pas complet amb el seu estat, confirmació i sortida.
+// stepBox renders a full step with its state, confirmation, and output.
 type stepBox struct {
 	target        io.Writer
 	ui            bool
@@ -20,7 +20,7 @@ type stepBox struct {
 	closed        bool
 }
 
-// newStepBox crea i obre un bloc de pas nou amb una amplada consistent.
+// newStepBox creates and opens a new step box with a consistent width.
 func newStepBox(target io.Writer, ui bool, title string) *stepBox {
 	box := &stepBox{
 		target: target,
@@ -34,7 +34,7 @@ func newStepBox(target io.Writer, ui bool, title string) *stepBox {
 	return box
 }
 
-// Close tanca el bloc del pas si encara està obert.
+// Close closes the step box if it is still open.
 func (box *stepBox) Close() {
 	if box == nil || box.closed {
 		return
@@ -43,32 +43,32 @@ func (box *stepBox) Close() {
 	box.closed = true
 }
 
-// Spacer afegeix una línia en blanc dins del bloc.
+// Spacer adds a blank line inside the box.
 func (box *stepBox) Spacer() {
 	box.writeRow("")
 }
 
-// Bullet imprimeix una línia principal del pas.
+// Bullet prints a main line for the step.
 func (box *stepBox) Bullet(text string) {
 	box.writePrefixed("• ", style(box.ui, colorWhite+colorBold, "• "), text, colorWhite+colorBold)
 }
 
-// Text imprimeix una línia de text amb indentació simple dins del bloc.
+// Text prints a text line with simple indentation inside the box.
 func (box *stepBox) Text(text string, color string) {
 	box.writePrefixed("", "", text, color)
 }
 
-// Section imprimeix una secció curta dins del bloc amb un accent de color.
+// Section prints a short section inside the box with a colour accent.
 func (box *stepBox) Section(label string, color string) {
 	box.writePrefixed("• ", style(box.ui, color+colorBold, "• "), label, color)
 }
 
-// KeyValue imprimeix una línia amb etiqueta i valor, fent wrapping si cal.
+// KeyValue prints a line with a label and value, wrapping when needed.
 func (box *stepBox) KeyValue(label string, value string, labelColor string, valueColor string) {
 	box.writePrefixed("• "+label+" ", style(box.ui, labelColor+colorBold, "• "+label+" "), value, valueColor)
 }
 
-// ReplaceLastRenderedRow repinta l'última línia del bloc amb contingut ja renderitzat.
+// ReplaceLastRenderedRow repaints the last line of the box with already rendered content.
 func (box *stepBox) ReplaceLastRenderedRow(rendered string) {
 	if box == nil {
 		return
@@ -84,7 +84,7 @@ func (box *stepBox) ReplaceLastRenderedRow(rendered string) {
 	fmt.Fprintln(box.target, rendered)
 }
 
-// OutputLabel inicia la secció de sortida del sistema dins del bloc.
+// OutputLabel starts the system output section inside the box.
 func (box *stepBox) OutputLabel() {
 	if box.outputStarted {
 		return
@@ -94,12 +94,12 @@ func (box *stepBox) OutputLabel() {
 	box.outputStarted = true
 }
 
-// OutputLine imprimeix una línia de sortida del sistema amb padding frontal i color discret.
+// OutputLine prints a line of system output with leading padding and a subdued colour.
 func (box *stepBox) OutputLine(text string) {
 	fmt.Fprintln(box.target, "  "+style(box.ui, colorDim, text))
 }
 
-// EditCommand mostra una línia editable dins del bloc per retocar el comando proposat.
+// EditCommand shows an editable line inside the box to adjust the proposed command.
 func (box *stepBox) EditCommand(reader *bufio.Reader, initial string) (string, error) {
 	if box == nil {
 		return strings.TrimSpace(initial), nil
@@ -178,12 +178,12 @@ func (box *stepBox) EditCommand(reader *bufio.Reader, initial string) (string, e
 	}
 }
 
-// separatorLine renderitza una línia llarga i discreta per separar blocs.
+// separatorLine renders a long, subdued line to separate blocks.
 func (box *stepBox) separatorLine() string {
 	return style(box.ui, colorDim, strings.Repeat("─", box.width))
 }
 
-// writePrefixed imprimeix contingut amb un prefix fix i wrapping dur dins del bloc.
+// writePrefixed prints content with a fixed prefix and hard wrapping inside the box.
 func (box *stepBox) writePrefixed(prefixPlain string, prefixRendered string, text string, textColor string) {
 	available := box.innerWidth() - visibleWidth(prefixPlain)
 	if available < 1 {
@@ -205,12 +205,12 @@ func (box *stepBox) writePrefixed(prefixPlain string, prefixRendered string, tex
 	}
 }
 
-// writeRow escriu una línia del bloc.
+// writeRow writes a row inside the box.
 func (box *stepBox) writeRow(rendered string) {
 	fmt.Fprintln(box.target, rendered)
 }
 
-// renderEditableRow repinta una única línia editable mantenint el cursor dins del bloc.
+// renderEditableRow repaints a single editable row while keeping the cursor inside the box.
 func (box *stepBox) renderEditableRow(prefixPlain string, prefixRendered string, buffer []rune, cursor int) {
 	available := box.innerWidth() - visibleWidth(prefixPlain)
 	if available < 1 {
@@ -254,12 +254,12 @@ func (box *stepBox) renderEditableRow(prefixPlain string, prefixRendered string,
 	}
 }
 
-// innerWidth retorna l'espai útil entre vores del bloc.
+// innerWidth returns the usable space between the box borders.
 func (box *stepBox) innerWidth() int {
 	return box.width
 }
 
-// wrapPlainText parteix text pla en línies d'una amplada visible fixa, respectant límits de paraula.
+// wrapPlainText splits plain text into lines of a fixed visible width, respecting word boundaries.
 func wrapPlainText(text string, width int) []string {
 	if width <= 0 {
 		return []string{text}

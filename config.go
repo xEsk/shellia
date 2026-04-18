@@ -253,7 +253,7 @@ func getenvFallback(fallback string, keys ...string) string {
 	return fallback
 }
 
-// normalizeCommandEngineMode valida els modes configurables del motor manual.
+// normalizeCommandEngineMode validates the configurable modes of the manual engine.
 func normalizeCommandEngineMode(value string, fallback commandEngineMode) commandEngineMode {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case string(commandEnginePlain):
