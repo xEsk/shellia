@@ -17,7 +17,11 @@ type thinkingIndicator struct {
 	doneCh chan struct{}
 }
 
-const thinkingStatusText = "Thinking..."
+const (
+	thinkingStatusBullet   = "•"
+	thinkingStatusText     = "Thinking..."
+	thinkingStatusLineText = thinkingStatusBullet + " " + thinkingStatusText
+)
 
 // startThinkingIndicator renders a subtle animated Thinking status on the current line.
 func startThinkingIndicator(ui bool, target io.Writer) *thinkingIndicator {
@@ -98,13 +102,14 @@ func renderThinkingFrame(target io.Writer, ui bool, frame int, firstFrame bool) 
 // thinkingStatusFrame returns one frame of the animated Thinking status.
 func thinkingStatusFrame(ui bool, frame int) string {
 	if !ui {
-		return thinkingStatusText
+		return thinkingStatusLineText
 	}
 
 	runes := []rune(thinkingStatusText)
 	center := thinkingShimmerCenter(frame, len(runes))
 
 	var b strings.Builder
+	b.WriteString(style(ui, colorDim, thinkingStatusBullet+" "))
 	for index, r := range runes {
 		b.WriteString(thinkingRuneStyle(thinkingShimmerWeight(float64(index), center)))
 		b.WriteRune(r)

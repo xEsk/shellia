@@ -222,8 +222,10 @@ func printSessionBanner(ui bool) {
 // printCommandExecution presents the active command inside a step box before running it.
 func printCommandExecution(ui bool, cfg config, index int, total int, plan commandPlan) *stepBox {
 	box := newStepBox(os.Stdout, ui, fmt.Sprintf("step %d/%d", index, total))
+	box.Spacer()
+	box.Command(plan.Command)
+	box.Spacer()
 	box.Bullet(plan.Purpose)
-	box.KeyValue("run", plan.Command, colorCyan, colorWhite)
 	if plan.Interactive {
 		box.KeyValue("interactive", fallbackValue(plan.InteractiveReason, "yes"), colorYellow, colorWhite)
 	}

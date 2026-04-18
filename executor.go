@@ -489,7 +489,8 @@ func executeManualCommand(ctx context.Context, ui bool, cfg config, ctxInfo *con
 	var box *stepBox
 	if renderMode == manualRenderInline {
 		box = newStepBox(os.Stdout, ui, "shell")
-		box.KeyValue("run", command, colorCyan, colorWhite)
+		box.Spacer()
+		box.Command(command)
 	} else if renderMode == manualRenderInteractive {
 		printInfo(ui, "Starting interactive command. Shellia will resume when it exits.")
 	}
