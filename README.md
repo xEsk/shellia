@@ -124,6 +124,63 @@ Run without arguments:
 
 This opens a session where you can keep asking for follow-up actions.
 
+### Manual commands inside interactive mode
+
+Shellia supports two ways to run commands yourself without asking the model to plan them.
+
+When Shellia proposes a command itself, the confirmation prompt also supports:
+
+- `y` to run it as proposed
+- `e` to edit the command before running it
+- `i` to run that step in interactive terminal mode
+- `n` to cancel
+
+#### One direct command with `!`
+
+Prefix a line with `!` to execute it immediately as a manual shell command:
+
+```text
+shellia › !pwd
+shellia › !cd prova
+shellia › !brew update
+```
+
+This is useful when you already know exactly what you want to run and do not need the AI to propose anything.
+How `!` runs is controlled by `command_mode` in the config:
+
+- `plain`
+  - runs as a normal direct command with structured Shellia output
+- `interactive`
+  - runs in an interactive terminal session and Shellia resumes when it exits
+
+#### Persistent shell mode with `:shell`
+
+Switch the prompt into direct command mode:
+
+```text
+shellia › :shell
+shell › pwd
+shell › cd prova
+shell › ls -la
+shell › :ai
+shellia › where am I now?
+```
+
+Commands executed this way still stay inside Shellia's session state:
+
+- the current working directory is preserved
+- Git context is refreshed
+- command observations can still help later AI prompts
+- every command uses the shell engine configured by `shell_mode`
+
+Useful commands in interactive mode:
+
+- `:shell` to enter direct shell mode
+- `!<cmd>` to run one direct manual command
+- `:ai` or `:prompt` to return to AI mode
+- `:mode` to show the current mode
+- `clear`, `context`, `exit`, `quit`
+
 ### One-shot mode
 
 Run with an instruction:
@@ -205,6 +262,14 @@ timeout_seconds         = 120
 request_timeout_seconds = 60
 yes_safe                = false
 continue_on_error       = false
+shell_mode              = "interactive"
+command_mode            = "plain"
+
+[output]
+capture_stdout_bytes     = 131072
+capture_stderr_bytes     = 262144
+observation_output_chars = 1200
+summary_output_chars     = 4000
 
 [ui]
 verbose  = false
@@ -225,12 +290,52 @@ Supported environment variables:
 - `SHELLIA_BASE_URL`
 - `SHELLIA_MODEL`
 - `SHELLIA_API_KEY`
+- `SHELLIA_SHELL_MODE`
+- `SHELLIA_COMMAND_MODE`
 
 Compatibility fallback variables:
 
 - `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
 - `OPENAI_API_KEY`
+
+### Output capture controls
+
+Shellia streams command output live to the terminal, but it also keeps a bounded in-memory capture so later planning and summarization do not send huge logs to the model.
+
+These settings control that behavior:
+
+- `capture_stdout_bytes`
+  - how many bytes of `stdout` Shellia keeps per command
+- `capture_stderr_bytes`
+  - how many bytes of `stderr` Shellia keeps per command
+- `observation_output_chars`
+  - how much captured output is sent back to the model during iterative planning
+- `summary_output_chars`
+  - how much captured output is sent to the model for the final answer
+
+If output is truncated, Shellia marks it explicitly instead of pretending it captured everything.
+
+### Command engine modes
+
+Shellia lets you choose how manual commands are executed.
+
+- `shell_mode`
+  - controls how commands run inside `:shell`
+- `command_mode`
+  - controls how one-off `!<cmd>` commands run
+
+Allowed values:
+
+- `plain`
+  - normal command execution with Shellia's structured output
+- `interactive`
+  - run inside an interactive terminal session and return control to Shellia when the command exits
+
+Defaults:
+
+- `shell_mode = "interactive"`
+- `command_mode = "plain"`
 
 ## Safety model
 

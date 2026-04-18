@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shellia</title>
+    <meta
+      name="description"
+      content="Shellia is a terminal-native AI shell agent that turns natural language into safe, inspectable command execution."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <div class="site-banner" role="note" aria-label="Project status">
+        <span class="site-banner-label">In development</span>
+        <p>
+          <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> is still experimental. Expect rough edges, fast iteration, and behavior that may change between versions.
+        </p>
+      </div>
+
+      <header class="site-header">
+        <a class="brand" href="#top" aria-label="Shellia home">
+          <span class="brand-mark"></span>
+          <span class="brand-word shellia-word">Shell<span class="shellia-ia">ia</span></span>
+        </a>
+
+        <nav class="site-nav" aria-label="Primary">
+          <a href="#how-it-works">How it works</a>
+          <a href="#runtime">Runtime</a>
+          <a href="#quickstart">Quick start</a>
+        </nav>
+      </header>
+
+      <main id="top">
+        <section class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">Terminal-native AI shell agent</p>
+            <h1>Natural language <span class="in">in</span>. Explicit command execution <span class="out">out</span>.</h1>
+            <p class="hero-lead">
+              <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> plans commands in your real shell context, asks for confirmation when it
+              matters, keeps the session state alive, and stays readable the whole time.
+            </p>
+
+            <div class="hero-actions">
+              <a class="button button-primary" href="#quickstart">See quick start</a>
+              <a class="button button-secondary" href="#runtime">Inspect the runtime</a>
+            </div>
+
+            <ul class="hero-points" aria-label="Highlights">
+              <li>OpenAI-compatible, including Ollama-style endpoints.</li>
+              <li>Prompt mode, direct command mode, and shell mode in one session.</li>
+              <li>Plans, confirmations, edits, and observations stay explicit.</li>
+            </ul>
+          </div>
+
+          <div class="hero-terminal" aria-hidden="true">
+            <div class="terminal-window">
+              <div class="terminal-chrome">
+                <span class="dot dot-red"></span>
+                <span class="dot dot-yellow"></span>
+                <span class="dot dot-green"></span>
+                <span class="terminal-title"><span class="shellia-word shellia-word-lower">shell<span class="shellia-ia">ia</span></span> session</span>
+              </div>
+
+              <div class="terminal-body">
+                <p class="terminal-line terminal-line-muted">What do you want <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> to do?</p>
+                <p class="terminal-line">
+                  <span class="prompt-label">you</span>
+                  <span class="prompt-arrow">›</span>
+                  <span class="typed-text" data-typed="run the local PHP file in Docker with the newest installed PHP image"></span>
+                </p>
+
+                <div class="terminal-block terminal-block-plan reveal">
+                  <p class="terminal-block-title">discovery</p>
+                  <p class="terminal-line">Need the PHP file name and the newest installed PHP image first.</p>
+                </div>
+
+                <div class="terminal-block reveal">
+                  <p class="terminal-block-title">step 1/2</p>
+                  <p class="terminal-line"><span class="bullet">•</span> run find . -maxdepth 2 -type f -name '*.php'</p>
+                  <p class="terminal-line terminal-line-output"><span class="bullet">•</span> system output</p>
+                  <p class="terminal-line terminal-line-dim">    ./fitxer_exemple.php</p>
+                </div>
+
+                <div class="terminal-block reveal">
+                  <p class="terminal-block-title">step 2/2</p>
+                  <p class="terminal-line"><span class="bullet">•</span> run docker images php --format '{{.Repository}}:{{.Tag}}'</p>
+                  <p class="terminal-line terminal-line-output"><span class="bullet">•</span> system output</p>
+                  <p class="terminal-line terminal-line-dim">    php:8.5.5</p>
+                </div>
+
+                <div class="terminal-response reveal">
+                  <p class="terminal-response-title shellia-word">Shell<span class="shellia-ia">ia</span></p>
+                  <p class="terminal-line terminal-line-strong">
+                    Executed <code>fitxer_exemple.php</code> with <code>php:8.5.5</code>. Output:
+                    <code>Hello from PHP</code>
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="signal-strip" aria-label="Core ideas">
+          <div>
+            <span class="signal-label">Context-aware</span>
+            <p>Shell, cwd, git state, short-term session memory.</p>
+          </div>
+          <div>
+            <span class="signal-label">Inspectable</span>
+            <p>Plans first, confirmations where needed, output kept visible.</p>
+          </div>
+          <div>
+            <span class="signal-label">Configurable</span>
+            <p>Models, API endpoints, output capture, shell engine behavior.</p>
+          </div>
+        </section>
+
+        <section class="content-section" id="how-it-works">
+          <div class="section-heading">
+            <p class="eyebrow">How it works</p>
+            <h2>Not an autonomous black box. A live shell workflow with a model in the loop.</h2>
+          </div>
+
+          <div class="flow-list">
+            <article>
+              <span class="flow-index">01</span>
+              <h3>Read local context</h3>
+              <p><span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> starts from your actual directory, shell, git state, and recent session memory.</p>
+            </article>
+            <article>
+              <span class="flow-index">02</span>
+              <h3>Plan explicitly</h3>
+              <p>The model proposes concrete commands, <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> reclassifies them locally, and you can inspect or edit them before they run.</p>
+            </article>
+            <article>
+              <span class="flow-index">03</span>
+              <h3>Observe and re-plan</h3>
+              <p>If later steps depend on real output, <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> can pause, inspect, and continue with a better-informed next round.</p>
+            </article>
+            <article>
+              <span class="flow-index">04</span>
+              <h3>Stay in the same session</h3>
+              <p>Prompt mode, <code>!</code> commands, and <code>:shell</code> all keep sharing the same working context.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="content-section runtime-section" id="runtime">
+          <div class="section-heading">
+            <p class="eyebrow">Runtime</p>
+            <h2>One tool, two manual engines, one consistent session.</h2>
+          </div>
+
+          <div class="runtime-grid">
+            <div class="runtime-copy">
+              <p>
+                <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> supports prompt mode for AI planning and direct command execution when you
+                already know what you want to run.
+              </p>
+
+              <ul class="runtime-list">
+                <li><code>shellia ›</code> for natural-language requests.</li>
+                <li><code>!&lt;cmd&gt;</code> for one direct command.</li>
+                <li><code>:shell</code> for a manual shell loop inside the same context.</li>
+                <li><code>:ai</code> to return to prompt mode.</li>
+                <li><code>y / e / i / n</code> to run, edit, force interactive, or cancel AI-proposed steps.</li>
+              </ul>
+            </div>
+
+            <div class="runtime-code">
+              <pre><code>[execution]
+shell_mode   = "interactive"
+command_mode = "plain"
+
+[llm]
+base_url = "https://api.openai.com/v1"
+model    = "gpt-5.4-mini"
+
+[output]
+capture_stdout_bytes = 131072
+capture_stderr_bytes = 262144</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="content-section integrations-section">
+          <div class="section-heading">
+            <p class="eyebrow">Integrations</p>
+            <h2>Bring your own model endpoint. Keep the Shell<span class="shellia-ia">ia</span> workflow.</h2>
+          </div>
+
+          <div class="integration-surface" aria-label="Supported provider types">
+            <div class="integration-surface-copy">
+              <p>
+                <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> talks to any endpoint that behaves like the OpenAI Chat Completions API.
+                Set a base URL, choose a model, provide a key, and keep the same terminal workflow.
+              </p>
+              <p>
+                Hosted providers, local runtimes, and private gateways all fit the same flow.
+              </p>
+            </div>
+
+            <div class="integration-rail-head">
+              <span class="integration-panel-label">OpenAI-compatible</span>
+            </div>
+
+            <div class="integration-rail-row">
+              <span class="integration-group-title">Hosted</span>
+              <ul class="integration-pill-list">
+                <li>OpenAI</li>
+                <li>OpenRouter</li>
+              </ul>
+            </div>
+
+            <div class="integration-rail-row">
+              <span class="integration-group-title">Local</span>
+              <ul class="integration-pill-list">
+                <li>Ollama-compatible endpoints</li>
+                <li>LM Studio</li>
+              </ul>
+            </div>
+
+            <div class="integration-rail-row">
+              <span class="integration-group-title">Private</span>
+              <ul class="integration-pill-list">
+                <li>Local gateways</li>
+                <li>Private OpenAI-style APIs</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section class="content-section quickstart-section" id="quickstart">
+          <div class="section-heading">
+            <p class="eyebrow">Quick start</p>
+            <h2>Start simple, stay explicit, and keep the session alive.</h2>
+          </div>
+
+          <div class="quickstart-grid">
+            <div>
+              <pre><code>go build -o shellia .
+./shellia
+
+# one-shot
+./shellia "run git status"
+
+# create config
+./shellia config init
+
+# direct command
+!pwd
+
+# manual shell loop
+:shell
+pwd
+cd project
+:ai
+
+# ask Shellia to plan
+check if brew has outdated packages
+
+# edit a proposed step before running it
+press e at confirmation</code></pre>
+            </div>
+
+            <div class="quickstart-copy">
+              <p>
+                Start in prompt mode when you want planning, confirmations, and a readable audit of
+                what <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> is about to do.
+              </p>
+              <p>
+                Switch to <code>!</code> for one direct command, or <code>:shell</code> when you want
+                a manual loop in the same live context. The point is not to hide the terminal. The
+                point is to make it easier to drive.
+              </p>
+              <ul class="runtime-list">
+                <li>Use prompt mode for multi-step tasks or when output from one command affects the next.</li>
+                <li>Use <code>e</code> if a proposed command is close but needs your final tweak.</li>
+                <li>Use <code>i</code> when a proposed step should run interactively in a real terminal session.</li>
+                <li>Keep commands explicit. <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> works best when you can inspect every step.</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <footer class="site-footer" aria-label="Site footer">
+          <p>
+            By <strong>Xescode</strong> ·
+            <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> is licensed under
+            <a href="../LICENSE">MPL-2.0</a>
+          </p>
+        </footer>
+      </main>
+    </div>
+
+    <script src="./script.js"></script>
+  </body>
+</html>
