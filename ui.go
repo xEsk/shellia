@@ -318,6 +318,13 @@ type editableRenderState struct {
 	cursorRow int
 }
 
+type cursorAffinity int
+
+const (
+	cursorAffinityForward cursorAffinity = iota
+	cursorAffinityBackward
+)
+
 // readInteractivePrompt mostra una entrada clara i retorna el text introduït.
 func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) (string, error) {
 	fmt.Println()
@@ -347,6 +354,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 
 	buffer := make([]rune, 0, 128)
 	cursor := 0
+	affinity := cursorAffinityForward
 	single := []byte{0}
 	renderState := &editableRenderState{}
 
@@ -356,7 +364,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 		contentWidth = 1
 	}
 
-	renderEditablePrompt(ui, prompt, buffer, cursor, renderState)
+	renderEditablePrompt(ui, prompt, buffer, cursor, affinity, renderState)
 
 	for {
 		_, err := os.Stdin.Read(single)
@@ -372,7 +380,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 			fmt.Print("\r\n")
 			return "exit", nil
 		case 27:
-			exitPrompt, err := applyEscapeSequenceOrExit(fd, &buffer, &cursor, contentWidth)
+			exitPrompt, err := applyEscapeSequenceOrExit(fd, &buffer, &cursor, contentWidth, &affinity)
 			if err != nil {
 				return "", err
 			}
@@ -386,6 +394,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 			}
 			buffer = append(buffer[:cursor-1], buffer[cursor:]...)
 			cursor--
+			affinity = cursorAffinityForward
 		default:
 			r, err := readInputRune(single[0])
 			if err != nil {
@@ -396,9 +405,10 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 			}
 			buffer = append(buffer[:cursor], append([]rune{r}, buffer[cursor:]...)...)
 			cursor++
+			affinity = cursorAffinityForward
 		}
 
-		renderEditablePrompt(ui, prompt, buffer, cursor, renderState)
+		renderEditablePrompt(ui, prompt, buffer, cursor, affinity, renderState)
 	}
 }
 
@@ -588,8 +598,10 @@ func utf8SequenceLength(first byte) int {
 	}
 }
 
-// wrapPromptRunesWithOffsets és com wrapPromptRunes però retorna també l'offset
-// inicial de cada línia dins del buffer original.
+// wrapPromptRunesWithOffsets parteix el buffer segons l'amplada disponible i
+// retorna també l'offset inicial de cada línia dins del buffer original.
+// Manté els espais al final de línia perquè el render i el caret comparteixin
+// exactament el mateix model visual.
 func wrapPromptRunesWithOffsets(buffer []rune, width int) ([]string, []int) {
 	if width < 1 {
 		width = 1
@@ -616,17 +628,13 @@ func wrapPromptRunesWithOffsets(buffer []rune, width int) ([]string, []int) {
 			}
 		}
 
+		chunkWidth := width
 		if lastSpace > 0 {
-			lines = append(lines, strings.TrimRightFunc(string(buffer[start:start+lastSpace]), unicode.IsSpace))
-			start += lastSpace
-			for start < len(buffer) && unicode.IsSpace(buffer[start]) {
-				start++
-			}
-			continue
+			chunkWidth = lastSpace + 1
 		}
 
-		lines = append(lines, string(buffer[start:start+width]))
-		start += width
+		lines = append(lines, string(buffer[start:start+chunkWidth]))
+		start += chunkWidth
 	}
 
 	if len(lines) == 0 {
@@ -635,30 +643,70 @@ func wrapPromptRunesWithOffsets(buffer []rune, width int) ([]string, []int) {
 	return lines, offsets
 }
 
-// moveCursorVertical mou el cursor una fila amunt (delta=-1) o avall (delta=+1)
-// intentant mantenir la mateixa columna visual.
-func moveCursorVertical(buffer []rune, cursor int, contentWidth int, delta int) int {
-	lines, offsets := wrapPromptRunesWithOffsets(buffer, contentWidth)
-	if len(lines) <= 1 {
-		return cursor
+// promptCursorPosition calcula la fila i la columna del caret dins del layout
+// embolicat del prompt a partir dels offsets de cada línia.
+// L'afinitat permet representar un límit de línia com a final de la fila
+// anterior o com a inici de la següent, segons d'on ve el moviment.
+func promptCursorPosition(lines []string, offsets []int, cursor int, affinity cursorAffinity) (int, int) {
+	if len(lines) == 0 || len(offsets) == 0 {
+		return 0, 0
 	}
 
-	cursorRow := 0
-	for row := len(offsets) - 1; row >= 0; row-- {
-		if cursor >= offsets[row] {
-			cursorRow = row
+	if cursor < 0 {
+		cursor = 0
+	}
+	lastRow := len(lines) - 1
+	maxCursor := offsets[lastRow] + len([]rune(lines[lastRow]))
+	if cursor > maxCursor {
+		cursor = maxCursor
+	}
+
+	if affinity == cursorAffinityBackward {
+		for row := 1; row < len(offsets); row++ {
+			if cursor == offsets[row] {
+				return row - 1, len([]rune(lines[row-1]))
+			}
+		}
+	}
+
+	row := 0
+	for index := len(offsets) - 1; index >= 0; index-- {
+		if cursor >= offsets[index] {
+			row = index
 			break
 		}
 	}
 
-	cursorCol := cursor - offsets[cursorRow]
-	if lineLen := len([]rune(lines[cursorRow])); cursorCol > lineLen {
-		cursorCol = lineLen
+	col := cursor - offsets[row]
+	lineLen := len([]rune(lines[row]))
+	if col > lineLen {
+		col = lineLen
+	}
+	return row, col
+}
+
+// moveCursorVertical mou el cursor una fila amunt (delta=-1) o avall (delta=+1)
+// intentant mantenir la mateixa columna visual.
+func moveCursorVertical(buffer []rune, cursor int, contentWidth int, delta int, affinity cursorAffinity) (int, cursorAffinity) {
+	lines, offsets := wrapPromptRunesWithOffsets(buffer, contentWidth)
+	if len(lines) <= 1 {
+		if delta < 0 {
+			return 0, cursorAffinityForward
+		}
+		if delta > 0 {
+			return len(buffer), cursorAffinityForward
+		}
+		return cursor, affinity
 	}
 
+	cursorRow, cursorCol := promptCursorPosition(lines, offsets, cursor, affinity)
+
 	targetRow := cursorRow + delta
-	if targetRow < 0 || targetRow >= len(lines) {
-		return cursor
+	if targetRow < 0 {
+		return 0, cursorAffinityForward
+	}
+	if targetRow >= len(lines) {
+		return len(buffer), cursorAffinityForward
 	}
 
 	col := cursorCol
@@ -666,13 +714,19 @@ func moveCursorVertical(buffer []rune, cursor int, contentWidth int, delta int) 
 		col = targetLineLen
 	}
 
-	return offsets[targetRow] + col
+	targetCursor := offsets[targetRow] + col
+	targetAffinity := cursorAffinityForward
+	if targetRow < len(lines)-1 && col == len([]rune(lines[targetRow])) {
+		targetAffinity = cursorAffinityBackward
+	}
+
+	return targetCursor, targetAffinity
 }
 
 // applyEscapeSequence resol les tecles especials de cursor i edició.
 // contentWidth és l'amplada del contingut editable (sense el prefix); si és 0
 // el moviment vertical queda desactivat (p. ex. a l'editor d'una sola fila).
-func applyEscapeSequence(buffer *[]rune, cursor *int, contentWidth int) error {
+func applyEscapeSequence(buffer *[]rune, cursor *int, contentWidth int, affinity *cursorAffinity) error {
 	sequence := []byte{0, 0}
 	if _, err := os.Stdin.Read(sequence[:1]); err != nil {
 		return err
@@ -687,24 +741,52 @@ func applyEscapeSequence(buffer *[]rune, cursor *int, contentWidth int) error {
 	switch sequence[1] {
 	case 'A':
 		if contentWidth > 0 {
-			*cursor = moveCursorVertical(*buffer, *cursor, contentWidth, -1)
+			currentAffinity := cursorAffinityForward
+			if affinity != nil {
+				currentAffinity = *affinity
+			}
+			nextCursor, nextAffinity := moveCursorVertical(*buffer, *cursor, contentWidth, -1, currentAffinity)
+			*cursor = nextCursor
+			if affinity != nil {
+				*affinity = nextAffinity
+			}
 		}
 	case 'B':
 		if contentWidth > 0 {
-			*cursor = moveCursorVertical(*buffer, *cursor, contentWidth, +1)
+			currentAffinity := cursorAffinityForward
+			if affinity != nil {
+				currentAffinity = *affinity
+			}
+			nextCursor, nextAffinity := moveCursorVertical(*buffer, *cursor, contentWidth, +1, currentAffinity)
+			*cursor = nextCursor
+			if affinity != nil {
+				*affinity = nextAffinity
+			}
 		}
 	case 'C':
 		if *cursor < len(*buffer) {
 			*cursor = *cursor + 1
 		}
+		if affinity != nil {
+			*affinity = cursorAffinityForward
+		}
 	case 'D':
 		if *cursor > 0 {
 			*cursor = *cursor - 1
 		}
+		if affinity != nil {
+			*affinity = cursorAffinityForward
+		}
 	case 'H':
 		*cursor = 0
+		if affinity != nil {
+			*affinity = cursorAffinityForward
+		}
 	case 'F':
 		*cursor = len(*buffer)
+		if affinity != nil {
+			*affinity = cursorAffinityForward
+		}
 	case '3':
 		tilde := []byte{0}
 		if _, err := os.Stdin.Read(tilde); err != nil {
@@ -713,13 +795,16 @@ func applyEscapeSequence(buffer *[]rune, cursor *int, contentWidth int) error {
 		if tilde[0] == '~' && *cursor < len(*buffer) {
 			*buffer = append((*buffer)[:*cursor], (*buffer)[*cursor+1:]...)
 		}
+		if affinity != nil {
+			*affinity = cursorAffinityForward
+		}
 	}
 
 	return nil
 }
 
 // applyEscapeSequenceOrExit interpreta una seqüència d'escapament o tanca el prompt si Esc va sol.
-func applyEscapeSequenceOrExit(fd int, buffer *[]rune, cursor *int, contentWidth int) (bool, error) {
+func applyEscapeSequenceOrExit(fd int, buffer *[]rune, cursor *int, contentWidth int, affinity *cursorAffinity) (bool, error) {
 	ready, err := isInputReady(fd)
 	if err != nil {
 		return false, err
@@ -727,12 +812,12 @@ func applyEscapeSequenceOrExit(fd int, buffer *[]rune, cursor *int, contentWidth
 	if !ready {
 		return true, nil
 	}
-	return false, applyEscapeSequence(buffer, cursor, contentWidth)
+	return false, applyEscapeSequence(buffer, cursor, contentWidth, affinity)
 }
 
 // renderEditablePrompt repinta tot el bloc del prompt editable, gestionant bé el wrap.
-func renderEditablePrompt(ui bool, prompt string, buffer []rune, cursor int, state *editableRenderState) {
-	lines, cursorRow, cursorCol := editablePromptLayout(prompt, buffer, cursor, promptRenderWidth())
+func renderEditablePrompt(ui bool, prompt string, buffer []rune, cursor int, affinity cursorAffinity, state *editableRenderState) {
+	lines, cursorRow, cursorCol := editablePromptLayout(prompt, buffer, cursor, affinity, promptRenderWidth())
 	promptWidth := visibleWidth(prompt)
 
 	clearEditablePrompt(state)
@@ -788,7 +873,7 @@ func clearEditablePrompt(state *editableRenderState) {
 }
 
 // editablePromptLayout calcula les línies visibles i la posició del cursor del prompt editable.
-func editablePromptLayout(prompt string, buffer []rune, cursor int, width int) ([]string, int, int) {
+func editablePromptLayout(prompt string, buffer []rune, cursor int, affinity cursorAffinity, width int) ([]string, int, int) {
 	if width < 2 {
 		width = 2
 	}
@@ -806,13 +891,9 @@ func editablePromptLayout(prompt string, buffer []rune, cursor int, width int) (
 		contentWidth = 1
 	}
 
-	lines := wrapPromptRunes(buffer, contentWidth)
-	cursorLines := wrapPromptRunes(buffer[:cursor], contentWidth)
-	cursorRow := len(cursorLines) - 1
-	if cursorRow < 0 {
-		cursorRow = 0
-	}
-	cursorCol := promptWidth + visibleWidth(cursorLines[cursorRow])
+	lines, offsets := wrapPromptRunesWithOffsets(buffer, contentWidth)
+	cursorRow, contentCol := promptCursorPosition(lines, offsets, cursor, affinity)
+	cursorCol := promptWidth + contentCol
 	return lines, cursorRow, cursorCol
 }
 
@@ -827,47 +908,10 @@ func promptRenderWidth() int {
 	return 79
 }
 
-// wrapPromptRunes parteix el text del prompt en línies, prioritzant salts per paraules.
+// wrapPromptRunes parteix el text del prompt en línies, prioritzant salts per
+// paraules però mantenint tots els espais del buffer.
 func wrapPromptRunes(buffer []rune, width int) []string {
-	if width < 1 {
-		width = 1
-	}
-	if len(buffer) == 0 {
-		return []string{""}
-	}
-
-	lines := make([]string, 0, len(buffer)/width+1)
-	start := 0
-	for start < len(buffer) {
-		remaining := len(buffer) - start
-		if remaining <= width {
-			lines = append(lines, string(buffer[start:]))
-			break
-		}
-
-		lastSpace := -1
-		for index := 0; index < width; index++ {
-			if unicode.IsSpace(buffer[start+index]) {
-				lastSpace = index
-			}
-		}
-
-		if lastSpace > 0 {
-			lines = append(lines, strings.TrimRightFunc(string(buffer[start:start+lastSpace]), unicode.IsSpace))
-			start += lastSpace
-			for start < len(buffer) && unicode.IsSpace(buffer[start]) {
-				start++
-			}
-			continue
-		}
-
-		lines = append(lines, string(buffer[start:start+width]))
-		start += width
-	}
-
-	if len(lines) == 0 {
-		return []string{""}
-	}
+	lines, _ := wrapPromptRunesWithOffsets(buffer, width)
 	return lines
 }
 
