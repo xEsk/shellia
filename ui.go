@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/term"
@@ -312,6 +313,11 @@ func (writer *resultWriter) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
+type editableRenderState struct {
+	rows      int
+	cursorRow int
+}
+
 // readInteractivePrompt mostra una entrada clara i retorna el text introduït.
 func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) (string, error) {
 	fmt.Println()
@@ -342,8 +348,9 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 	buffer := make([]rune, 0, 128)
 	cursor := 0
 	single := []byte{0}
+	renderState := &editableRenderState{}
 
-	renderEditablePrompt(ui, prompt, buffer, cursor)
+	renderEditablePrompt(ui, prompt, buffer, cursor, renderState)
 
 	for {
 		_, err := os.Stdin.Read(single)
@@ -385,7 +392,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 			cursor++
 		}
 
-		renderEditablePrompt(ui, prompt, buffer, cursor)
+		renderEditablePrompt(ui, prompt, buffer, cursor, renderState)
 	}
 }
 
@@ -626,15 +633,145 @@ func applyEscapeSequenceOrExit(fd int, buffer *[]rune, cursor *int) (bool, error
 	return false, applyEscapeSequence(buffer, cursor)
 }
 
-// renderEditablePrompt repinta tota la línia per mantenir el cursor i la UI consistents.
-func renderEditablePrompt(ui bool, prompt string, buffer []rune, cursor int) {
-	text := string(buffer)
-	fmt.Print("\r\033[K")
-	fmt.Print(prompt)
-	fmt.Print(style(ui, colorWhite, text))
-	if tail := len(buffer) - cursor; tail > 0 {
-		fmt.Printf("\033[%dD", tail)
+// renderEditablePrompt repinta tot el bloc del prompt editable, gestionant bé el wrap.
+func renderEditablePrompt(ui bool, prompt string, buffer []rune, cursor int, state *editableRenderState) {
+	lines, cursorRow, cursorCol := editablePromptLayout(prompt, buffer, cursor, promptRenderWidth())
+	promptWidth := visibleWidth(prompt)
+
+	clearEditablePrompt(state)
+
+	for index, line := range lines {
+		if index > 0 {
+			fmt.Print("\r\n")
+		}
+		if index == 0 {
+			fmt.Print(prompt)
+		} else {
+			fmt.Print(strings.Repeat(" ", promptWidth))
+		}
+		fmt.Print(style(ui, colorWhite, line))
 	}
+
+	rows := len(lines)
+	rowsBelow := rows - 1 - cursorRow
+	fmt.Print("\r")
+	if rowsBelow > 0 {
+		fmt.Printf("\033[%dA", rowsBelow)
+	}
+	if cursorCol > 0 {
+		fmt.Printf("\033[%dC", cursorCol)
+	}
+
+	if state != nil {
+		state.rows = rows
+		state.cursorRow = cursorRow
+	}
+}
+
+// clearEditablePrompt neteja totes les files del prompt renderitzat anteriorment.
+func clearEditablePrompt(state *editableRenderState) {
+	if state == nil || state.rows == 0 {
+		return
+	}
+
+	fmt.Print("\r")
+	if state.cursorRow > 0 {
+		fmt.Printf("\033[%dA", state.cursorRow)
+	}
+	for index := 0; index < state.rows; index++ {
+		fmt.Print("\033[2K")
+		if index < state.rows-1 {
+			fmt.Print("\033[1B\r")
+		}
+	}
+	if state.rows > 1 {
+		fmt.Printf("\033[%dA", state.rows-1)
+	}
+	fmt.Print("\r")
+}
+
+// editablePromptLayout calcula les línies visibles i la posició del cursor del prompt editable.
+func editablePromptLayout(prompt string, buffer []rune, cursor int, width int) ([]string, int, int) {
+	if width < 2 {
+		width = 2
+	}
+
+	promptWidth := visibleWidth(prompt)
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(buffer) {
+		cursor = len(buffer)
+	}
+
+	contentWidth := width - promptWidth
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+
+	lines := wrapPromptRunes(buffer, contentWidth)
+	cursorLines := wrapPromptRunes(buffer[:cursor], contentWidth)
+	cursorRow := len(cursorLines) - 1
+	if cursorRow < 0 {
+		cursorRow = 0
+	}
+	cursorCol := promptWidth + visibleWidth(cursorLines[cursorRow])
+	return lines, cursorRow, cursorCol
+}
+
+// promptRenderWidth retorna l'amplada útil per al prompt editable evitant l'última columna.
+func promptRenderWidth() int {
+	fd := int(os.Stdout.Fd())
+	if term.IsTerminal(fd) {
+		if width, _, err := term.GetSize(fd); err == nil && width > 1 {
+			return width - 1
+		}
+	}
+	return 79
+}
+
+// wrapPromptRunes parteix el text del prompt en línies, prioritzant salts per paraules.
+func wrapPromptRunes(buffer []rune, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+	if len(buffer) == 0 {
+		return []string{""}
+	}
+
+	lines := make([]string, 0, len(buffer)/width+1)
+	start := 0
+	for start < len(buffer) {
+		remaining := len(buffer) - start
+		if remaining <= width {
+			lines = append(lines, string(buffer[start:]))
+			break
+		}
+
+		lastSpace := -1
+		for index := 0; index < width; index++ {
+			if unicode.IsSpace(buffer[start+index]) {
+				lastSpace = index
+			}
+		}
+
+		if lastSpace > 0 {
+			lines = append(lines, strings.TrimRightFunc(string(buffer[start:start+lastSpace]), unicode.IsSpace))
+			start += lastSpace
+			for start < len(buffer) && unicode.IsSpace(buffer[start]) {
+				start++
+			}
+			continue
+		}
+
+		lines = append(lines, string(buffer[start:start+width]))
+		start += width
+	}
+
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
 }
 
 // clearScreen neteja la terminal actual.
@@ -840,23 +977,29 @@ func boxWidth() int {
 }
 
 // visibleWidth calcula l'amplada visible d'una cadena ignorant les seqüències ANSI.
+// Les seqüències CSI tenen la forma \033[ <params> <final>, on el byte final és 0x40–0x7E.
+// El caràcter '[' (0x5B) és l'introductor CSI i NO s'ha de tractar com a byte final.
 func visibleWidth(text string) int {
 	width := 0
-	inEscape := false
-	for _, r := range text {
-		if inEscape {
-			// Les seqüències ANSI de color acaben amb 'm'. Altres codis curts (CSI)
-			// acaben amb una lletra ASCII, així que tractem qualsevol @-~ com a final.
-			if r >= '@' && r <= '~' {
-				inEscape = false
+	runes := []rune(text)
+	i := 0
+	for i < len(runes) {
+		r := runes[i]
+		if r == '\033' && i+1 < len(runes) && runes[i+1] == '[' {
+			// Seqüència CSI: \033[ ... byte_final (0x40–0x7E)
+			i += 2 // salta \033 i [
+			for i < len(runes) && !(runes[i] >= '@' && runes[i] <= '~') {
+				i++
 			}
+			i++ // salta el byte final
 			continue
 		}
 		if r == '\033' {
-			inEscape = true
+			i++ // salta ESC solitari
 			continue
 		}
 		width++
+		i++
 	}
 	return width
 }
