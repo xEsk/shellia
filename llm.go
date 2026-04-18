@@ -253,13 +253,28 @@ func callLLM(ctx context.Context, cfg config, ctxInfo contextInfo, instruction s
 
 	resolvedInstruction := resolveInstructionForPlanning(instruction, state)
 
-	return doLLMRequest(reqCtx, cfg, chatCompletionRequest{
+	return callPlanningPrompt(reqCtx, cfg, buildSystemPrompt(), buildUserPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations))
+}
+
+// callDiscoveryRepairLLM retries an empty planning response with a discovery-only repair prompt.
+func callDiscoveryRepairLLM(ctx context.Context, cfg config, ctxInfo contextInfo, instruction string, history []historyEntry, state sessionState, observations []commandExecution, previous llmResponse) (string, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, cfg.RequestTimeout)
+	defer cancel()
+
+	resolvedInstruction := resolveInstructionForPlanning(instruction, state)
+
+	return callPlanningPrompt(reqCtx, cfg, buildSystemPrompt(), buildDiscoveryRepairPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations, previous))
+}
+
+// callPlanningPrompt sends a planning prompt pair to the model and returns the raw JSON response.
+func callPlanningPrompt(ctx context.Context, cfg config, systemPrompt string, userPrompt string) (string, error) {
+	return doLLMRequest(ctx, cfg, chatCompletionRequest{
 		Model:          cfg.Model,
 		Temperature:    0,
 		ResponseFormat: &responseFormat{Type: "json_object"},
 		Messages: []chatMessage{
-			{Role: "system", Content: buildSystemPrompt()},
-			{Role: "user", Content: buildUserPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations)},
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt},
 		},
 	})
 }
@@ -474,6 +489,37 @@ func buildUserPrompt(cfg config, instruction string, resolvedInstruction string,
 		gitStatus,
 		historyBlock,
 	)
+}
+
+// buildDiscoveryRepairPrompt adds focused discovery guidance on top of the normal planning context.
+func buildDiscoveryRepairPrompt(cfg config, instruction string, resolvedInstruction string, ctxInfo contextInfo, history []historyEntry, state sessionState, observations []commandExecution, previous llmResponse) string {
+	basePrompt := buildUserPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations)
+
+	var b strings.Builder
+	b.WriteString(basePrompt)
+	b.WriteString("\nDiscovery repair mode:\n")
+	b.WriteString("- The previous planning response returned no commands.\n")
+	b.WriteString("- Before asking the user for more detail, decide whether the missing information can be discovered locally from this machine.\n")
+	b.WriteString("- Facts such as installed version, binary path, package manager ownership, installation method, config files, repo state, and runtime environment are discoverable local facts.\n")
+	b.WriteString("- If those facts can be discovered safely, return only short discovery or inspection commands for this round and set requires_observation=true.\n")
+	b.WriteString("- In this retry, do not return update, install, uninstall, or destructive action commands yet; discovery only.\n")
+	b.WriteString("- If the missing detail truly depends on user preference, credentials, secrets, remote access, or another system that cannot be inspected from this machine, you may still return no commands.\n")
+	b.WriteString("\nPrevious empty planning response:\n")
+	fmt.Fprintf(&b, "- summary: %s\n", fallbackValue(strings.TrimSpace(previous.Summary), "(empty)"))
+	fmt.Fprintf(&b, "- requires_input: %t\n", previous.RequiresInput)
+	fmt.Fprintf(&b, "- input_reason: %s\n", fallbackValue(strings.TrimSpace(previous.InputReason), "(empty)"))
+	fmt.Fprintf(&b, "- requires_observation: %t\n", previous.RequiresObservation)
+	fmt.Fprintf(&b, "- observation_reason: %s\n", fallbackValue(strings.TrimSpace(previous.ObservationReason), "(empty)"))
+
+	return b.String()
+}
+
+// shouldRetryWithDiscoveryRepair reports whether an empty first planning response deserves one discovery-only retry.
+func shouldRetryWithDiscoveryRepair(response llmResponse, round int, executions []commandExecution) bool {
+	if round != 0 || len(executions) > 0 || len(response.Commands) > 0 {
+		return false
+	}
+	return response.RequiresInput
 }
 
 // trimForSummary trims long output by rune count to avoid splitting multi-byte UTF-8 characters.

@@ -466,6 +466,22 @@ func runTurn(ctx context.Context, ui bool, cfg config, ctxInfo *contextInfo, ins
 			return turnResult{}, err
 		}
 
+		if len(plans) == 0 && shouldRetryWithDiscoveryRepair(parsed, round, allExecutions) {
+			repairedRawResponse, repairErr := callDiscoveryRepairLLM(ctx, cfg, *ctxInfo, instruction, history, state, allExecutions, parsed)
+			if repairErr == nil {
+				repairedParsed, parseErr := parseResponse(repairedRawResponse)
+				if parseErr == nil {
+					repairedSummary, repairedPlans, normalizeErr := normalizePlan(repairedParsed)
+					if normalizeErr == nil {
+						rawResponse = repairedRawResponse
+						parsed = repairedParsed
+						summary = repairedSummary
+						plans = repairedPlans
+					}
+				}
+			}
+		}
+
 		lastSummary = summary
 		lastPlans = plans
 
