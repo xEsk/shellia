@@ -250,19 +250,24 @@ func printWarning(ui bool, message string) {
 	fmt.Fprintf(os.Stderr, "%s %s\n", style(ui, colorYellow+colorBold, "warning"), style(ui, colorWhite+colorBold, message))
 }
 
+// printSeparator shows the standard horizontal separator used between sections.
+func printSeparator(target io.Writer, ui bool) {
+	fmt.Fprintln(target, style(ui, colorDim, strings.Repeat("─", boxWidth())))
+}
+
 // printFinalResult shows the final useful answer for the user (non-streaming fallback).
 func printFinalResult(ui bool, message string) {
 	fmt.Println()
 	fmt.Println(shelliaBrand(ui, false))
 	renderAnswerBlock(os.Stdout, ui, message, nil)
 	fmt.Println()
-	fmt.Println(style(ui, colorDim, strings.Repeat("─", boxWidth())))
+	printSeparator(os.Stdout, ui)
 }
 
 // openResultPanel opens the streaming result block.
 func openResultPanel(ui bool) {
 	fmt.Println()
-	fmt.Println(style(ui, colorDim, strings.Repeat("─", boxWidth())))
+	printSeparator(os.Stdout, ui)
 	fmt.Println()
 	fmt.Println(shelliaBrand(ui, false))
 }
@@ -272,7 +277,7 @@ func closeResultPanel(ui bool) {
 	fmt.Print(styleEnd(ui))
 	fmt.Println()
 	fmt.Println()
-	fmt.Println(style(ui, colorDim, strings.Repeat("─", boxWidth())))
+	printSeparator(os.Stdout, ui)
 }
 
 // resultWriter wraps os.Stdout to prefix each line with a subtle result indent.

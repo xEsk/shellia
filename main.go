@@ -398,6 +398,7 @@ func runInteractive(ctx context.Context, ui bool, cfg config, ctxInfo *contextIn
 			state.LastRetryInstruction = instruction
 			rememberUnfinishedInstruction(&state, instruction)
 			printWarning(ui, "Request cancelled.")
+			printSeparator(os.Stdout, ui)
 			continue
 		}
 		if err != nil {

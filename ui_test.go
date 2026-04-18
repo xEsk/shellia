@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -28,6 +30,18 @@ func TestShelliaVersionBadgeFallsBackToDev(t *testing.T) {
 
 	if got := shelliaVersionBadge(false); got != "dev" {
 		t.Fatalf("shelliaVersionBadge(false) = %q, want %q", got, "dev")
+	}
+}
+
+// TestPrintSeparatorUsesStandardLine checks that the shared separator matches the box width.
+func TestPrintSeparatorUsesStandardLine(t *testing.T) {
+	var buffer bytes.Buffer
+
+	printSeparator(&buffer, false)
+
+	want := strings.Repeat("─", boxWidth()) + "\n"
+	if got := buffer.String(); got != want {
+		t.Fatalf("printSeparator() = %q, want %q", got, want)
 	}
 }
 
