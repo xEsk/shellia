@@ -11,9 +11,11 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/creack/pty"
@@ -49,6 +51,12 @@ type commandRunError struct {
 	TimedOut bool
 }
 
+// interactivePromptError reports that a non-interactive command asked for terminal input.
+type interactivePromptError struct {
+	Command string
+	Prompt  string
+}
+
 // Error returns a short description of the command failure.
 func (err *commandRunError) Error() string {
 	if err == nil {
@@ -60,6 +68,14 @@ func (err *commandRunError) Error() string {
 	return fmt.Sprintf("command failed: %s", err.Command)
 }
 
+// Error returns a short description of the interactive prompt failure.
+func (err *interactivePromptError) Error() string {
+	if err == nil {
+		return ""
+	}
+	return fmt.Sprintf("command requires interactive input or a known non-interactive flag: %s", err.Command)
+}
+
 type manualRenderMode int
 
 const (
@@ -67,6 +83,13 @@ const (
 	manualRenderDirect
 	manualRenderInteractive
 	manualRenderShellInteractive
+)
+
+const interactivePromptTailBytes = 256
+
+var (
+	credentialPromptPattern = regexp.MustCompile(`(?i)\b(pass(?:word|phrase))\s*:\s*$`)
+	yesNoPromptPattern      = regexp.MustCompile(`(?i)([\[\(]\s*(?:y(?:es)?\s*[/,| ]+\s*n(?:o)?|n(?:o)?\s*[/,| ]+\s*y(?:es)?|y\s*n|n\s*y)\s*[\]\)])`)
 )
 
 // capturedStream represents the captured part of a stream, with truncation information.
@@ -77,9 +100,139 @@ type capturedStream struct {
 	Truncated  bool
 }
 
+// interactivePromptDetector watches output streams for prompts that need a real terminal.
+type interactivePromptDetector struct {
+	command string
+	cancel  context.CancelFunc
+
+	mu      sync.Mutex
+	tail    string
+	prompt  string
+	matched bool
+}
+
 // HasOutput reports whether the captured stream contains useful text.
 func (stream capturedStream) HasOutput() bool {
 	return strings.TrimSpace(stream.Text) != ""
+}
+
+// newInteractivePromptDetector creates a shared detector for stdout and stderr.
+func newInteractivePromptDetector(command string, cancel context.CancelFunc) *interactivePromptDetector {
+	return &interactivePromptDetector{
+		command: strings.TrimSpace(command),
+		cancel:  cancel,
+	}
+}
+
+// Write inspects streamed command output and cancels the command when a prompt is detected.
+func (detector *interactivePromptDetector) Write(data []byte) (int, error) {
+	if detector == nil || len(data) == 0 {
+		return len(data), nil
+	}
+
+	text := string(data)
+
+	detector.mu.Lock()
+	if detector.matched {
+		detector.mu.Unlock()
+		return len(data), nil
+	}
+
+	detector.tail = appendInteractivePromptTail(detector.tail, text, interactivePromptTailBytes)
+	prompt, matched := detectInteractivePrompt(detector.tail)
+	if matched {
+		detector.prompt = prompt
+		detector.matched = true
+	}
+	detector.mu.Unlock()
+
+	if matched && detector.cancel != nil {
+		detector.cancel()
+	}
+
+	return len(data), nil
+}
+
+// promptError returns the detected interactive prompt as an error when present.
+func (detector *interactivePromptDetector) promptError() error {
+	if detector == nil {
+		return nil
+	}
+
+	detector.mu.Lock()
+	defer detector.mu.Unlock()
+
+	if !detector.matched {
+		return nil
+	}
+
+	return &interactivePromptError{
+		Command: detector.command,
+		Prompt:  detector.prompt,
+	}
+}
+
+// appendInteractivePromptTail keeps only the most recent bytes needed for prompt detection.
+func appendInteractivePromptTail(current string, chunk string, limit int) string {
+	combined := current + chunk
+	if limit <= 0 || len(combined) <= limit {
+		return combined
+	}
+	return combined[len(combined)-limit:]
+}
+
+// detectInteractivePrompt checks whether the current trailing output line is waiting for terminal input.
+func detectInteractivePrompt(tail string) (string, bool) {
+	if strings.HasSuffix(tail, "\n") || strings.HasSuffix(tail, "\r") {
+		return "", false
+	}
+
+	line := tail
+	if index := strings.LastIndexAny(line, "\r\n"); index >= 0 {
+		line = line[index+1:]
+	}
+
+	cleaned := strings.TrimSpace(stripANSISequences(line))
+	if cleaned == "" {
+		return "", false
+	}
+
+	normalized := normalizeInteractivePromptText(cleaned)
+	if credentialPromptPattern.MatchString(normalized) {
+		return cleaned, true
+	}
+	if strings.Contains(normalized, "?") && yesNoPromptPattern.MatchString(normalized) {
+		return cleaned, true
+	}
+
+	return "", false
+}
+
+// normalizeInteractivePromptText makes prompt detection tolerant of casing and repeated whitespace.
+func normalizeInteractivePromptText(text string) string {
+	return strings.ToLower(strings.Join(strings.Fields(text), " "))
+}
+
+// stripANSISequences removes CSI-style ANSI escape sequences from a string.
+func stripANSISequences(text string) string {
+	var b strings.Builder
+	runes := []rune(text)
+
+	for index := 0; index < len(runes); index++ {
+		if runes[index] == '\033' && index+1 < len(runes) && runes[index+1] == '[' {
+			index += 2
+			for index < len(runes) && !(runes[index] >= '@' && runes[index] <= '~') {
+				index++
+			}
+			continue
+		}
+		if runes[index] == '\033' {
+			continue
+		}
+		b.WriteRune(runes[index])
+	}
+
+	return b.String()
 }
 
 // RenderForPrompt prepares the stream to be sent to the model with a truncation notice.
@@ -298,7 +451,10 @@ func executeCommands(ctx context.Context, ui bool, cfg config, ctxInfo *contextI
 		if err != nil {
 			if box != nil {
 				var runErr *commandRunError
+				var promptErr *interactivePromptError
 				switch {
+				case errors.As(err, &promptErr):
+					box.Text("interactive prompt detected", colorDim)
 				case errors.As(err, &runErr) && runErr.TimedOut:
 					box.Text("timed out", colorDim)
 				case errors.As(err, &runErr):
@@ -307,6 +463,10 @@ func executeCommands(ctx context.Context, ui bool, cfg config, ctxInfo *contextI
 					box.Text("interrupted", colorDim)
 				}
 				box.Close()
+			}
+			var promptErr *interactivePromptError
+			if errors.As(err, &promptErr) {
+				return executions, err
 			}
 			if cfg.ContinueOnError {
 				printWarning(ui, err.Error())
@@ -356,7 +516,10 @@ func executeManualCommand(ctx context.Context, ui bool, cfg config, ctxInfo *con
 	if err != nil {
 		if box != nil {
 			var runErr *commandRunError
+			var promptErr *interactivePromptError
 			switch {
+			case errors.As(err, &promptErr):
+				box.Text("interactive prompt detected", colorDim)
 			case errors.As(err, &runErr) && runErr.TimedOut:
 				box.Text("timed out", colorDim)
 			case errors.As(err, &runErr):
@@ -406,10 +569,11 @@ func executeOneCommand(ctx context.Context, ui bool, cfg config, ctxInfo context
 
 	cmd := exec.CommandContext(cmdCtx, shellPath, "-c", command)
 	cmd.Dir = ctxInfo.CWD
-	cmd.Stdin = os.Stdin
+	cmd.Stdin = nil
 
 	stdoutCapture := &limitedCaptureWriter{limit: cfg.CaptureStdoutBytes}
 	stderrCapture := &limitedCaptureWriter{limit: cfg.CaptureStderrBytes}
+	detector := newInteractivePromptDetector(command, cancel)
 
 	var stdoutStream io.Writer
 	var stderrStream io.Writer
@@ -426,8 +590,8 @@ func executeOneCommand(ctx context.Context, ui bool, cfg config, ctxInfo context
 		stderrStream = stderrWriter
 	}
 
-	cmd.Stdout = io.MultiWriter(stdoutStream, stdoutCapture)
-	cmd.Stderr = io.MultiWriter(stderrStream, stderrCapture)
+	cmd.Stdout = io.MultiWriter(stdoutStream, stdoutCapture, detector)
+	cmd.Stderr = io.MultiWriter(stderrStream, stderrCapture, detector)
 
 	if err := cmd.Start(); err != nil {
 		return commandExecution{}, 1, false, fmt.Errorf("cannot start command %q: %w", command, err)
@@ -462,6 +626,15 @@ func executeOneCommand(ctx context.Context, ui bool, cfg config, ctxInfo context
 		hadOutput = stdoutWriter.started || stderrWriter.started
 	}
 	output = commandExecution{Stdout: stdoutCapture.Stream(), Stderr: stderrCapture.Stream()}
+
+	if promptErr := detector.promptError(); promptErr != nil {
+		code := 1
+		var exitErr *exec.ExitError
+		if errors.As(waitErr, &exitErr) {
+			code = exitErr.ExitCode()
+		}
+		return output, code, hadOutput, promptErr
+	}
 
 	if cmdCtx.Err() == context.DeadlineExceeded {
 		return output, 124, hadOutput, &commandRunError{Command: command, ExitCode: 124, TimedOut: true}

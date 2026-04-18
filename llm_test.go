@@ -44,6 +44,22 @@ func TestShouldRetryWithDiscoveryRepairSkipsLaterRounds(t *testing.T) {
 	}
 }
 
+// TestBuildSystemPromptGuidesInteractivePromptRecovery checks that the planner avoids redundant in-command prompts.
+func TestBuildSystemPromptGuidesInteractivePromptRecovery(t *testing.T) {
+	prompt := buildSystemPrompt()
+
+	requiredSnippets := []string{
+		"Shellia already asks the user to confirm risky commands",
+		"prefer a known non-interactive confirmation flag only when you are confident",
+		"If observed output shows a confirmation prompt or another terminal question",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("buildSystemPrompt() missing %q in %q", snippet, prompt)
+		}
+	}
+}
+
 // TestBuildDiscoveryRepairPromptIncludesContext checks that the discovery repair
 // prompt keeps the normal planning context and adds the repair instructions.
 func TestBuildDiscoveryRepairPromptIncludesContext(t *testing.T) {

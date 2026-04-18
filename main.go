@@ -514,6 +514,9 @@ func runTurn(ctx context.Context, ui bool, cfg config, ctxInfo *contextInfo, ins
 				return turnResult{}, err
 			}
 			allExecutions = append(allExecutions, executions...)
+			if shouldRetryAfterExecutionError(err, round) {
+				continue
+			}
 			if parsed.RequiresObservation {
 				if round == maxPlanRounds-1 {
 					return turnResult{}, fmt.Errorf("planning needs more follow-up rounds than allowed")
@@ -556,6 +559,16 @@ func runTurn(ctx context.Context, ui bool, cfg config, ctxInfo *contextInfo, ins
 		Plans:      lastPlans,
 		Executions: allExecutions,
 	}, nil
+}
+
+// shouldRetryAfterExecutionError reports whether an execution failure should become a new planning observation.
+func shouldRetryAfterExecutionError(err error, round int) bool {
+	if round >= maxPlanRounds-1 {
+		return false
+	}
+
+	var promptErr *interactivePromptError
+	return errors.As(err, &promptErr)
 }
 
 // shouldSkipRedundantRound avoids re-running commands already executed in the same turn.
