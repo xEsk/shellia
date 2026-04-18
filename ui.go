@@ -201,7 +201,7 @@ func printPlan(ui bool, cfg config, summary string, plans []commandPlan, discove
 // printHeader mostra una capçalera compacta amb l'estat global de la sessió.
 func printHeader(ui bool, ctxInfo contextInfo) {
 	fmt.Println()
-	fmt.Println(shelliaBrand(ui, false))
+	fmt.Println(shelliaBrand(ui, false) + style(ui, colorDim, " · ") + shelliaVersionBadge(ui))
 	fmt.Println(style(ui, colorDim, fmt.Sprintf("%s · %s", ctxInfo.CWD, plainHeaderGitValue(ctxInfo))))
 }
 
@@ -214,7 +214,7 @@ func printSection(ui bool, title string, color string) {
 // printSessionBanner mostra l'entrada curta de la sessió interactiva.
 func printSessionBanner(ui bool) {
 	fmt.Println()
-	fmt.Println(shelliaBrand(ui, true) + style(ui, colorDim, " session"))
+	fmt.Println(shelliaBrand(ui, true) + style(ui, colorDim, " session · ") + shelliaVersionBadge(ui))
 	fmt.Println(style(ui, colorWhite, "  Interactive mode"))
 	fmt.Println(style(ui, colorDim, "  !<cmd>  :shell  :ai  :mode  exit  quit  clear  context"))
 }
@@ -921,6 +921,11 @@ func shelliaBrand(ui bool, lower bool) string {
 		left = "shell"
 	}
 	return style(ui, colorWhite+colorBold, left) + style(ui, colorCyan+colorBold, "ia")
+}
+
+// shelliaVersionBadge renderitza la versió actual amb un tractament visual compacte.
+func shelliaVersionBadge(ui bool) string {
+	return badge(ui, colorCyan, fallbackValue(strings.TrimSpace(version), "dev"))
 }
 
 // plainRiskLabel retorna el nivell de risc sense estils ANSI.
