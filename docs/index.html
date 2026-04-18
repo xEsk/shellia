@@ -75,34 +75,10 @@
                 <p class="terminal-line">
                   <span class="prompt-label">you</span>
                   <span class="prompt-arrow">›</span>
-                  <span class="typed-text" data-typed="run the local PHP file in Docker with the newest installed PHP image"></span>
+                  <span class="typed-text"></span>
                 </p>
 
-                <div class="terminal-block terminal-block-plan reveal">
-                  <p class="terminal-block-title">discovery</p>
-                  <p class="terminal-line">Need the PHP file name and the newest installed PHP image first.</p>
-                </div>
-
-                <div class="terminal-block reveal">
-                  <p class="terminal-block-title">step 1/2</p>
-                  <p class="terminal-line"><span class="bullet">•</span> run find . -maxdepth 2 -type f -name '*.php'</p>
-                  <p class="terminal-line terminal-line-output"><span class="bullet">•</span> system output</p>
-                  <p class="terminal-line terminal-line-dim">    ./fitxer_exemple.php</p>
-                </div>
-
-                <div class="terminal-block reveal">
-                  <p class="terminal-block-title">step 2/2</p>
-                  <p class="terminal-line"><span class="bullet">•</span> run docker images php --format '{{.Repository}}:{{.Tag}}'</p>
-                  <p class="terminal-line terminal-line-output"><span class="bullet">•</span> system output</p>
-                  <p class="terminal-line terminal-line-dim">    php:8.5.5</p>
-                </div>
-
-                <div class="terminal-response reveal">
-                  <p class="terminal-response-title shellia-word">Shell<span class="shellia-ia">ia</span></p>
-                  <p class="terminal-line terminal-line-strong">
-                    Executed fitxer_exemple.php with php:8.5.5. Output: Hello from PHP
-                  </p>
-                </div>
+                <div class="terminal-mock" data-terminal-mock></div>
               </div>
             </div>
           </div>
