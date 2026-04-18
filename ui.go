@@ -254,7 +254,7 @@ func printWarning(ui bool, message string) {
 func printFinalResult(ui bool, message string) {
 	fmt.Println()
 	fmt.Println(shelliaBrand(ui, false))
-	fmt.Printf("%s%s\n", answerPrefix(ui), style(ui, colorWhite+colorBold, strings.TrimSpace(message)))
+	renderAnswerBlock(os.Stdout, ui, message, nil)
 	fmt.Println()
 	fmt.Println(style(ui, colorDim, strings.Repeat("─", boxWidth())))
 }
@@ -280,37 +280,110 @@ func closeResultPanel(ui bool) {
 // regardless of whether lineStart is currently true or false.
 type resultWriter struct {
 	ui            bool
-	lineStart     bool
 	wroteAnything bool
+	buffer        strings.Builder
+	state         answerRenderState
 }
 
 func (writer *resultWriter) Write(data []byte) (int, error) {
-	text := string(data)
-	for len(text) > 0 {
-		if writer.lineStart {
-			if _, err := fmt.Fprint(os.Stdout, answerPrefix(writer.ui), styleStart(writer.ui, colorWhite+colorBold)); err != nil {
-				return 0, err
-			}
-			writer.lineStart = false
-			writer.wroteAnything = true
-		}
+	if _, err := writer.buffer.Write(data); err != nil {
+		return 0, err
+	}
 
-		newlineIndex := strings.IndexByte(text, '\n')
-		if newlineIndex == -1 {
-			if _, err := fmt.Fprint(os.Stdout, text); err != nil {
-				return 0, err
-			}
-			return len(data), nil
-		}
-
-		chunk := text[:newlineIndex]
-		if _, err := fmt.Fprint(os.Stdout, chunk, styleEnd(writer.ui), "\n"); err != nil {
+	if len(layoutAnswerLines(writer.buffer.String(), answerContentWidth(writer.ui))) > 0 {
+		writer.wroteAnything = true
+		if err := renderAnswerBlock(os.Stdout, writer.ui, writer.buffer.String(), &writer.state); err != nil {
 			return 0, err
 		}
-		writer.lineStart = true
-		text = text[newlineIndex+1:]
 	}
+
 	return len(data), nil
+}
+
+type answerRenderState struct {
+	rows int
+}
+
+// clearRenderedAnswer clears the previously rendered Shellia answer block.
+func clearRenderedAnswer(target io.Writer, state *answerRenderState) {
+	if state == nil || state.rows == 0 {
+		return
+	}
+
+	fmt.Fprint(target, "\r")
+	if state.rows > 1 {
+		fmt.Fprintf(target, "\033[%dA", state.rows-1)
+	}
+	for index := 0; index < state.rows; index++ {
+		fmt.Fprint(target, "\033[2K")
+		if index < state.rows-1 {
+			fmt.Fprint(target, "\033[1B\r")
+		}
+	}
+	if state.rows > 1 {
+		fmt.Fprintf(target, "\033[%dA", state.rows-1)
+	}
+	fmt.Fprint(target, "\r")
+	state.rows = 0
+}
+
+// answerContentWidth returns the available content width for Shellia answers.
+func answerContentWidth(ui bool) int {
+	width := boxWidth() - visibleWidth(answerPrefix(ui))
+	if width < 1 {
+		return 1
+	}
+	return width
+}
+
+// layoutAnswerLines wraps the Shellia answer by words while preserving explicit blank lines.
+func layoutAnswerLines(message string, width int) []string {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return nil
+	}
+	if width < 1 {
+		width = 1
+	}
+
+	paragraphs := strings.Split(trimmed, "\n")
+	lines := make([]string, 0, len(paragraphs))
+	for _, paragraph := range paragraphs {
+		content := strings.TrimSpace(paragraph)
+		if content == "" {
+			lines = append(lines, "")
+			continue
+		}
+		lines = append(lines, wrapPlainText(content, width)...)
+	}
+
+	return trimTrailingBlankLines(lines)
+}
+
+// renderAnswerBlock renders the Shellia answer with consistent left padding and word wrapping.
+func renderAnswerBlock(target io.Writer, ui bool, message string, state *answerRenderState) error {
+	lines := layoutAnswerLines(message, answerContentWidth(ui))
+	clearRenderedAnswer(target, state)
+	if len(lines) == 0 {
+		return nil
+	}
+
+	prefix := answerPrefix(ui)
+	for index, line := range lines {
+		if index > 0 {
+			if _, err := fmt.Fprint(target, "\r\n"); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprint(target, prefix, style(ui, colorWhite+colorBold, line)); err != nil {
+			return err
+		}
+	}
+
+	if state != nil {
+		state.rows = len(lines)
+	}
+	return nil
 }
 
 type editableRenderState struct {

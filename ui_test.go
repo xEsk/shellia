@@ -162,3 +162,40 @@ func TestMoveCursorVerticalKeepsWrappedLineEnd(t *testing.T) {
 		t.Fatalf("editablePromptLayout() col = %d, want %d", col, wantCol)
 	}
 }
+
+// TestLayoutAnswerLinesWrapsByWords checks that Shellia answers wrap by words instead of characters.
+func TestLayoutAnswerLinesWrapsByWords(t *testing.T) {
+	message := "Cal actualitzar Claude Code, pero falta saber com esta installat al teu Mac per donar la comanda correcta amb seguretat."
+
+	got := layoutAnswerLines(message, 24)
+	want := []string{
+		"Cal actualitzar Claude",
+		"Code, pero falta saber",
+		"com esta installat al",
+		"teu Mac per donar la",
+		"comanda correcta amb",
+		"seguretat.",
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("layoutAnswerLines() = %#v, want %#v", got, want)
+	}
+}
+
+// TestLayoutAnswerLinesPreservesExplicitBlankLines checks that explicit blank lines remain in the rendered answer.
+func TestLayoutAnswerLinesPreservesExplicitBlankLines(t *testing.T) {
+	message := "First paragraph with enough words to wrap.\n\nSecond paragraph."
+
+	got := layoutAnswerLines(message, 18)
+	want := []string{
+		"First paragraph",
+		"with enough words",
+		"to wrap.",
+		"",
+		"Second paragraph.",
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("layoutAnswerLines() = %#v, want %#v", got, want)
+	}
+}

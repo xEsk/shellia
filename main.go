@@ -508,14 +508,17 @@ func runTurn(ctx context.Context, ui bool, cfg config, ctxInfo *contextInfo, ins
 	}
 
 	openResultPanel(ui)
-	w := &resultWriter{ui: ui, lineStart: true}
+	w := &resultWriter{ui: ui}
 	result, streamErr := streamSummarizeExecutions(ctx, cfg, instruction, allExecutions, w)
 	if streamErr != nil || strings.TrimSpace(result) == "" {
 		result = staticFallbackAnswer(lastSummary, allExecutions)
 		// Only print the fallback if streaming never wrote a single byte to the terminal.
 		// If it wrote partial content before erroring, don't print on top of it.
 		if !w.wroteAnything {
-			fmt.Fprint(os.Stdout, answerPrefix(ui)+style(ui, colorWhite+colorBold, result))
+			if err := renderAnswerBlock(os.Stdout, ui, result, &w.state); err != nil {
+				return turnResult{}, err
+			}
+			w.wroteAnything = true
 		}
 	}
 	closeResultPanel(ui)
