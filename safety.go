@@ -147,7 +147,7 @@ func isUserOrSystemModification(tokens []string) bool {
 	return systemRoots[tokens[0]]
 }
 
-// hasShellOperators detects shell operators outside of quoted strings.
+// hasShellOperators detects shell operators and command separators outside of quoted strings.
 // Prevents false positives like: echo "a > b" or grep 'a|b'.
 func hasShellOperators(command string) bool {
 	inSingle := false
@@ -186,14 +186,12 @@ func hasShellOperators(command string) bool {
 			inDouble = true
 		case '\\':
 			i++ // skip escaped character
-		case ';', '`':
+		case ';', '`', '\n', '\r':
 			return true
 		case '|':
 			return true // both | and ||
 		case '&':
-			if i+1 < n && runes[i+1] == '&' {
-				return true
-			}
+			return true // background jobs and &&
 		case '>':
 			return true // both > and >>
 		case '<':
