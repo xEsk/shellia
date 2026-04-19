@@ -8,7 +8,7 @@ import (
 
 const (
 	sessionBannerMinWidth     = 58
-	sessionBannerShortcutLine = "!<cmd>  :shell  :ai  :mode  exit  quit  clear  context"
+	sessionBannerShortcutLine = "!<cmd>  /shell  /ai  /mode  exit  /quit  /clear  /context"
 )
 
 // printSessionBanner shows the polished startup banner for the interactive session.

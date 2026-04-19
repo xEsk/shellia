@@ -79,7 +79,7 @@ func (writer *prefixedWriter) Flush() error {
 	return nil
 }
 
-// Write prints :shell mode output directly with a more subdued tone.
+// Write prints /shell mode output directly with a more subdued tone.
 // It keeps lines aligned at column zero and paints each line in gray.
 func (writer *directShellWriter) Write(data []byte) (int, error) {
 	text := string(data)
@@ -116,7 +116,7 @@ func (writer *directShellWriter) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-// Flush closes the last partial line of :shell mode when present.
+// Flush closes the last partial line of /shell mode when present.
 func (writer *directShellWriter) Flush() error {
 	if writer.lineStart {
 		return nil

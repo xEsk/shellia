@@ -98,7 +98,7 @@ const terminalMocks = [
     ],
   },
   {
-    instruction: ":shell",
+    instruction: "/shell",
     blocks: [
       { type: "divider" },
       {
@@ -119,7 +119,7 @@ const terminalMocks = [
       {
         type: "prompt",
         label: "shell",
-        text: "exit",
+        text: "/exit",
       },
       { type: "divider" },
       {

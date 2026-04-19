@@ -124,7 +124,7 @@
             <article>
               <span class="flow-index">04</span>
               <h3>Stay in the same session</h3>
-              <p>Prompt mode, <code>!</code> commands, and <code>:shell</code> all keep sharing the same working context.</p>
+              <p>Prompt mode, <code>!</code> commands, and <code>/shell</code> all keep sharing the same working context.</p>
             </article>
           </div>
         </section>
@@ -145,8 +145,9 @@
               <ul class="runtime-list">
                 <li><code>you ›</code> for natural-language requests.</li>
                 <li><code>!&lt;cmd&gt;</code> for one direct command.</li>
-                <li><code>:shell</code> for a manual shell loop inside the same context.</li>
-                <li><code>:ai</code> to return to prompt mode.</li>
+                <li><code>/shell</code> for a manual shell loop inside the same context.</li>
+                <li><code>/ai</code> to return to prompt mode.</li>
+                <li><code>exit</code> or <code>/exit</code> to close the session.</li>
                 <li><code>y / e / i / n</code> to run, edit, force interactive, or cancel AI-proposed steps.</li>
               </ul>
             </div>
@@ -297,10 +298,10 @@ capture_stderr_bytes = 262144</code></pre>
 !pwd
 
 # manual shell loop
-:shell
+/shell
 pwd
 cd project
-:ai
+/ai
 
 # ask Shellia to plan
 check if brew has outdated packages
@@ -315,7 +316,7 @@ press e at confirmation</code></pre>
                 what <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> is about to do.
               </p>
               <p>
-                Switch to <code>!</code> for one direct command, or <code>:shell</code> when you want
+                Switch to <code>!</code> for one direct command, or <code>/shell</code> when you want
                 a manual loop in the same live context. The point is not to hide the terminal. The
                 point is to make it easier to drive.
               </p>

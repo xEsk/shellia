@@ -163,16 +163,16 @@ How `!` runs is controlled by `command_mode` in the config:
 - `interactive`
   - runs in an interactive terminal session and Shellia resumes when it exits
 
-#### Persistent shell mode with `:shell`
+#### Persistent shell mode with `/shell`
 
 Switch the prompt into direct command mode:
 
 ```text
-shellia › :shell
+shellia › /shell
 shell › pwd
 shell › cd prova
 shell › ls -la
-shell › :ai
+shell › /ai
 shellia › where am I now?
 ```
 
@@ -185,11 +185,11 @@ Commands executed this way still stay inside Shellia's session state:
 
 Useful commands in interactive mode:
 
-- `:shell` to enter direct shell mode
+- `/shell` to enter direct shell mode
 - `!<cmd>` to run one direct manual command
-- `:ai` or `:prompt` to return to AI mode
-- `:mode` to show the current mode
-- `clear`, `context`, `exit`, `quit`
+- `/ai` to return to AI mode
+- `/mode` to show the current mode
+- `/clear`, `/context`, `exit`, `/exit`, `/quit`
 
 ### One-shot mode
 
@@ -331,7 +331,7 @@ If output is truncated, Shellia marks it explicitly instead of pretending it cap
 Shellia lets you choose how manual commands are executed.
 
 - `shell_mode`
-  - controls how commands run inside `:shell`
+  - controls how commands run inside `/shell`
 - `command_mode`
   - controls how one-off `!<cmd>` commands run
 
