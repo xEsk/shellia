@@ -88,8 +88,10 @@ const (
 const interactivePromptTailBytes = 256
 
 var (
-	credentialPromptPattern = regexp.MustCompile(`(?i)\b(pass(?:word|phrase))\s*:\s*$`)
-	yesNoPromptPattern      = regexp.MustCompile(`(?i)([\[\(]\s*(?:y(?:es)?\s*[/,| ]+\s*n(?:o)?|n(?:o)?\s*[/,| ]+\s*y(?:es)?|y\s*n|n\s*y)\s*[\]\)])`)
+	credentialPromptPattern       = regexp.MustCompile(`(?i)\b(pass(?:word|phrase))\s*:\s*$`)
+	yesNoPromptPattern            = regexp.MustCompile(`(?i)([\[\(]\s*(?:y(?:es)?\s*[/,| ]+\s*n(?:o)?|n(?:o)?\s*[/,| ]+\s*y(?:es)?|y\s*n|n\s*y)\s*[\]\)])`)
+	continuePromptPattern         = regexp.MustCompile(`(?i)\bpress\s+(?:enter|return|any\s+key|a\s+key)\s+to\s+continue\b`)
+	textConfirmationPromptPattern = regexp.MustCompile(`(?i)\btype\s+['"]?[a-z0-9_-]{2,}['"]?\s+to\s+(?:confirm|continue|proceed|delete|destroy)\b`)
 )
 
 // capturedStream represents the captured part of a stream, with truncation information.
@@ -202,6 +204,12 @@ func detectInteractivePrompt(tail string) (string, bool) {
 		return cleaned, true
 	}
 	if strings.Contains(normalized, "?") && yesNoPromptPattern.MatchString(normalized) {
+		return cleaned, true
+	}
+	if continuePromptPattern.MatchString(normalized) {
+		return cleaned, true
+	}
+	if textConfirmationPromptPattern.MatchString(normalized) {
 		return cleaned, true
 	}
 

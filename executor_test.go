@@ -44,9 +44,48 @@ func TestDetectInteractivePromptMatchesLooseCredentialPrompt(t *testing.T) {
 	}
 }
 
+// TestDetectInteractivePromptMatchesContinuePrompt checks common pause prompts.
+func TestDetectInteractivePromptMatchesContinuePrompt(t *testing.T) {
+	cases := []string{
+		"Press Enter to continue",
+		"press return to continue ",
+		"Press any key to continue...",
+		"Press a key to continue",
+	}
+
+	for _, input := range cases {
+		if prompt, ok := detectInteractivePrompt(input); !ok {
+			t.Fatalf("detectInteractivePrompt(%q) = false, want true; prompt %q", input, prompt)
+		}
+	}
+}
+
+// TestDetectInteractivePromptMatchesTextConfirmationPrompt checks typed confirmation prompts.
+func TestDetectInteractivePromptMatchesTextConfirmationPrompt(t *testing.T) {
+	cases := []string{
+		`Type DELETE to confirm`,
+		`type "yes" to continue`,
+		`Type 'destroy' to proceed`,
+		`Please type repo-name to delete`,
+	}
+
+	for _, input := range cases {
+		if prompt, ok := detectInteractivePrompt(input); !ok {
+			t.Fatalf("detectInteractivePrompt(%q) = false, want true; prompt %q", input, prompt)
+		}
+	}
+}
+
 // TestDetectInteractivePromptIgnoresCompletedQuestionLine checks that historical output lines are not treated as active prompts.
 func TestDetectInteractivePromptIgnoresCompletedQuestionLine(t *testing.T) {
 	if prompt, ok := detectInteractivePrompt("Overwrite existing file? [y/N]\n"); ok {
+		t.Fatalf("detectInteractivePrompt() = true with prompt %q, want false", prompt)
+	}
+}
+
+// TestDetectInteractivePromptIgnoresCompletedContinueLine checks completed pause prompts are not treated as active.
+func TestDetectInteractivePromptIgnoresCompletedContinueLine(t *testing.T) {
+	if prompt, ok := detectInteractivePrompt("Press Enter to continue\n"); ok {
 		t.Fatalf("detectInteractivePrompt() = true with prompt %q, want false", prompt)
 	}
 }
