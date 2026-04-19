@@ -54,19 +54,6 @@ const (
 	interactiveModeShell interactiveMode = "shell"
 )
 
-type interactiveCommand string
-
-const (
-	interactiveCommandNone    interactiveCommand = ""
-	interactiveCommandUnknown interactiveCommand = "unknown"
-	interactiveCommandExit    interactiveCommand = "exit"
-	interactiveCommandClear   interactiveCommand = "clear"
-	interactiveCommandContext interactiveCommand = "context"
-	interactiveCommandShell   interactiveCommand = "shell"
-	interactiveCommandAI      interactiveCommand = "ai"
-	interactiveCommandMode    interactiveCommand = "mode"
-)
-
 type observationMemory struct {
 	Command    string
 	Purpose    string
@@ -438,32 +425,6 @@ func runInteractive(ctx context.Context, ui bool, cfg config, ctxInfo *contextIn
 			history = history[len(history)-maxHistoryEntries:]
 		}
 	}
-}
-
-// parseInteractiveCommand maps slash-prefixed control commands to session actions.
-func parseInteractiveCommand(input string) interactiveCommand {
-	switch strings.ToLower(strings.TrimSpace(input)) {
-	case "":
-		return interactiveCommandNone
-	case "/exit", "/quit", "exit":
-		return interactiveCommandExit
-	case "/clear":
-		return interactiveCommandClear
-	case "/context":
-		return interactiveCommandContext
-	case "/shell":
-		return interactiveCommandShell
-	case "/ai":
-		return interactiveCommandAI
-	case "/mode":
-		return interactiveCommandMode
-	}
-
-	firstField := strings.Fields(strings.TrimSpace(input))
-	if len(firstField) > 0 && strings.HasPrefix(firstField[0], "/") && !strings.Contains(firstField[0][1:], "/") {
-		return interactiveCommandUnknown
-	}
-	return interactiveCommandNone
 }
 
 // renderModeForShellSession maps the configured shell mode to the executor mode.

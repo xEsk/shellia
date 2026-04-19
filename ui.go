@@ -469,9 +469,14 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 				}
 				continue
 			}
+			submitted := strings.TrimSpace(string(buffer))
+			clearEditablePrompt(renderState)
+			printSubmittedPrompt(ui, prompt, buffer)
 			fmt.Print("\r\n")
-			return strings.TrimSpace(string(buffer)), nil
+			return submitted, nil
 		case 3:
+			clearEditablePrompt(renderState)
+			printSubmittedPrompt(ui, prompt, buffer)
 			fmt.Print("\r\n")
 			return "exit", nil
 		case 27:
@@ -480,6 +485,8 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 				return "", err
 			}
 			if exitPrompt {
+				clearEditablePrompt(renderState)
+				printSubmittedPrompt(ui, prompt, buffer)
 				fmt.Print("\r\n")
 				return "exit", nil
 			}
@@ -490,6 +497,12 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 			buffer = append(buffer[:cursor-1], buffer[cursor:]...)
 			cursor--
 			affinity = cursorAffinityForward
+		case '\t':
+			if completed, ok := completeInteractiveSlashCommand(string(buffer)); ok {
+				buffer = []rune(completed + " ")
+				cursor = len(buffer)
+				affinity = cursorAffinityForward
+			}
 		default:
 			r, err := readInputRune(single[0])
 			if err != nil {
@@ -510,6 +523,22 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 // promptHasText reports whether the editable prompt contains a real submission.
 func promptHasText(buffer []rune) bool {
 	return strings.TrimSpace(string(buffer)) != ""
+}
+
+// printSubmittedPrompt redraws only the submitted prompt and removes transient UI.
+func printSubmittedPrompt(ui bool, prompt string, buffer []rune) {
+	lines, _, _ := editablePromptLayout(prompt, buffer, len(buffer), cursorAffinityForward, promptRenderWidth())
+	promptWidth := visibleWidth(prompt)
+
+	for index, line := range lines {
+		if index > 0 {
+			fmt.Print("\r\n")
+			fmt.Print(strings.Repeat(" ", promptWidth))
+		} else {
+			fmt.Print(prompt)
+		}
+		fmt.Print(style(ui, colorWhite, line))
+	}
 }
 
 // promptQuestion returns the guiding text for the current interactive mode.
@@ -917,6 +946,7 @@ func applyEscapeSequenceOrExit(fd int, buffer *[]rune, cursor *int, contentWidth
 // renderEditablePrompt repaints the full editable prompt block while handling wrapping correctly.
 func renderEditablePrompt(ui bool, prompt string, buffer []rune, cursor int, affinity cursorAffinity, state *editableRenderState) {
 	lines, cursorRow, cursorCol := editablePromptLayout(prompt, buffer, cursor, affinity, promptRenderWidth())
+	menuLines := commandMenuLines(ui, string(buffer))
 	promptWidth := visibleWidth(prompt)
 
 	clearEditablePrompt(state)
@@ -933,7 +963,12 @@ func renderEditablePrompt(ui bool, prompt string, buffer []rune, cursor int, aff
 		fmt.Print(style(ui, colorWhite, line))
 	}
 
-	rows := len(lines)
+	for _, line := range menuLines {
+		fmt.Print("\r\n")
+		fmt.Print(line)
+	}
+
+	rows := len(lines) + len(menuLines)
 	rowsBelow := rows - 1 - cursorRow
 	fmt.Print("\r")
 	if rowsBelow > 0 {
