@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,6 +29,12 @@ type loopLLMClient struct {
 	responses []loopLLMResponse
 	mu        sync.Mutex
 	requests  []loopLLMRequest
+}
+
+type errorBodyTransport struct{}
+
+type errorReadCloser struct {
+	err error
 }
 
 // newLoopLLMClient installs an OpenAI-compatible fake transport for main loop tests.
@@ -98,6 +105,26 @@ func (fake *loopLLMClient) RoundTrip(r *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	return loopHTTPResponse(r, http.StatusOK, string(encoded), map[string]string{"Content-Type": "application/json"}), nil
+}
+
+// RoundTrip returns a failed response whose body cannot be read.
+func (transport errorBodyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     make(http.Header),
+		Body:       errorReadCloser{err: errors.New("broken error body")},
+		Request:    r,
+	}, nil
+}
+
+// Read always fails to simulate a provider/socket error while reading the error body.
+func (body errorReadCloser) Read(p []byte) (int, error) {
+	return 0, body.err
+}
+
+// Close implements io.Closer for errorReadCloser.
+func (body errorReadCloser) Close() error {
+	return nil
 }
 
 // loopHTTPResponse builds a minimal HTTP response for the fake LLM transport.
@@ -338,5 +365,29 @@ func TestDoLLMStreamReturnsMalformedChunkError(t *testing.T) {
 	}
 	if result != "" || output.String() != "" {
 		t.Fatalf("doLLMStream() result/output = %q/%q, want both empty", result, output.String())
+	}
+}
+
+// TestDoLLMStreamReportsErrorBodyReadFailure checks failed stream diagnostics include body read errors.
+func TestDoLLMStreamReportsErrorBodyReadFailure(t *testing.T) {
+	previousClient := httpClient
+	httpClient = &http.Client{Transport: errorBodyTransport{}}
+	t.Cleanup(func() {
+		httpClient = previousClient
+	})
+
+	cfg := loopTestConfig("http://shellia.test")
+	var output strings.Builder
+	_, err := doLLMStream(context.Background(), cfg, chatCompletionRequest{Model: cfg.Model}, &output)
+	if err == nil {
+		t.Fatalf("doLLMStream() error = nil, want HTTP error")
+	}
+
+	message := err.Error()
+	if !strings.Contains(message, "LLM request failed with status 400") {
+		t.Fatalf("doLLMStream() error = %q, want status", message)
+	}
+	if !strings.Contains(message, "cannot read error response body") || !strings.Contains(message, "broken error body") {
+		t.Fatalf("doLLMStream() error = %q, want body read failure", message)
 	}
 }

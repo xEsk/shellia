@@ -191,15 +191,15 @@ func doLLMStream(ctx context.Context, cfg config, req chatCompletionRequest, w i
 			continue
 		}
 		if isRetryable(resp.StatusCode) {
-			body2, _ := io.ReadAll(resp.Body)
+			errorBody := readHTTPErrorBody(resp.Body)
 			resp.Body.Close()
-			lastErr = fmt.Errorf("LLM request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body2)))
+			lastErr = fmt.Errorf("LLM request failed with status %d: %s", resp.StatusCode, errorBody)
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			body2, _ := io.ReadAll(resp.Body)
+			errorBody := readHTTPErrorBody(resp.Body)
 			resp.Body.Close()
-			return "", fmt.Errorf("LLM request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body2)))
+			return "", fmt.Errorf("LLM request failed with status %d: %s", resp.StatusCode, errorBody)
 		}
 		lastErr = nil
 		break
@@ -244,6 +244,20 @@ func doLLMStream(ctx context.Context, cfg config, req chatCompletionRequest, w i
 	}
 
 	return full.String(), nil
+}
+
+// readHTTPErrorBody returns a compact diagnostic for failed HTTP responses.
+func readHTTPErrorBody(body io.Reader) string {
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return fmt.Sprintf("cannot read error response body: %v", err)
+	}
+
+	text := trimForSummary(string(data), 1200)
+	if text == "" {
+		return "(empty error response body)"
+	}
+	return text
 }
 
 // callLLM sends the instruction and context to the model to obtain an execution plan.
