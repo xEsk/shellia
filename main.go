@@ -329,6 +329,10 @@ func runInteractive(ctx context.Context, ui bool, cfg config, ctxInfo *contextIn
 
 		input, err := readInteractivePrompt(ui, reader, mode, cfg.ShowCommandPopup)
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				fmt.Println()
+				return
+			}
 			exitWithError(ui, fmt.Sprintf("cannot read prompt: %v", err), 1)
 		}
 

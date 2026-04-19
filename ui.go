@@ -429,21 +429,13 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode, 
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {
 		fmt.Print(prompt)
-		line, err := reader.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return "", err
-		}
-		return strings.TrimSpace(line), nil
+		return readFallbackPromptLine(reader)
 	}
 
 	state, err := term.MakeRaw(fd)
 	if err != nil {
 		fmt.Print(prompt)
-		line, readErr := reader.ReadString('\n')
-		if readErr != nil && !errors.Is(readErr, io.EOF) {
-			return "", readErr
-		}
-		return strings.TrimSpace(line), nil
+		return readFallbackPromptLine(reader)
 	}
 	defer term.Restore(fd, state) //nolint:errcheck
 
@@ -527,6 +519,21 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode, 
 
 		renderEditablePrompt(ui, prompt, buffer, cursor, affinity, renderState, showCommandPopup)
 	}
+}
+
+// readFallbackPromptLine reads one prompt line when raw terminal editing is unavailable.
+func readFallbackPromptLine(reader *bufio.Reader) (string, error) {
+	line, err := reader.ReadString('\n')
+	if errors.Is(err, io.EOF) {
+		if line == "" {
+			return "", io.EOF
+		}
+		return strings.TrimSpace(line), nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
 }
 
 // promptHasText reports whether the editable prompt contains a real submission.

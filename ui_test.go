@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -55,6 +58,28 @@ func TestPromptHasTextIgnoresWhitespace(t *testing.T) {
 
 	if !promptHasText([]rune("actualitza el claude-code")) {
 		t.Fatalf("promptHasText(non-empty) = false, want true")
+	}
+}
+
+// TestReadFallbackPromptLineReturnsEOFOnEmptyInput checks closed stdin does not look like an empty prompt.
+func TestReadFallbackPromptLineReturnsEOFOnEmptyInput(t *testing.T) {
+	got, err := readFallbackPromptLine(bufio.NewReader(strings.NewReader("")))
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("readFallbackPromptLine() error = %v, want io.EOF", err)
+	}
+	if got != "" {
+		t.Fatalf("readFallbackPromptLine() = %q, want empty string", got)
+	}
+}
+
+// TestReadFallbackPromptLineReturnsPartialLineOnEOF checks piped input without a newline is still accepted.
+func TestReadFallbackPromptLineReturnsPartialLineOnEOF(t *testing.T) {
+	got, err := readFallbackPromptLine(bufio.NewReader(strings.NewReader("answer without newline")))
+	if err != nil {
+		t.Fatalf("readFallbackPromptLine() error = %v, want nil", err)
+	}
+	if got != "answer without newline" {
+		t.Fatalf("readFallbackPromptLine() = %q, want partial line", got)
 	}
 }
 
