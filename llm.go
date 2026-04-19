@@ -224,7 +224,7 @@ func doLLMStream(ctx context.Context, cfg config, req chatCompletionRequest, w i
 
 		var chunk streamChunk
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			continue // malformed chunk, skip
+			return full.String(), fmt.Errorf("invalid LLM stream chunk: %w: %s", err, trimForSummary(payload, 160))
 		}
 		if len(chunk.Choices) == 0 {
 			continue
