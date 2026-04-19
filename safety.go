@@ -22,130 +22,48 @@ type commandSafety struct {
 	RequiresConfirmation bool
 }
 
+type safetyRule func(command string, tokens []string) (commandSafety, bool)
+
+var safetyRules = []safetyRule{
+	shellOperatorRule,
+	dangerousRootRule,
+	gitRule,
+	dockerRule,
+	filesystemModificationRule,
+	systemModificationRule,
+	findRule,
+	safeRootRule,
+}
+
 // classifyCommand applies a conservative local policy to each command.
 func classifyCommand(command string) commandSafety {
 	tokens := strings.Fields(command)
 	if len(tokens) == 0 {
-		return commandSafety{Classification: classificationDangerous, Risk: riskHigh, RequiresConfirmation: true}
+		return dangerousSafety()
 	}
 
-	if hasShellOperators(command) {
-		return commandSafety{Classification: classificationRisky, Risk: riskMedium, RequiresConfirmation: true}
-	}
-
-	base := tokens[0]
-
-	dangerousRoots := map[string]bool{
-		"sudo": true, "su": true, "rm": true, "dd": true, "mkfs": true, "shutdown": true,
-		"reboot": true, "halt": true, "poweroff": true, "useradd": true, "adduser": true,
-		"usermod": true, "userdel": true, "groupadd": true, "groupdel": true, "passwd": true,
-		"chmod": true, "chown": true, "chgrp": true,
-	}
-	if dangerousRoots[base] {
-		return commandSafety{Classification: classificationDangerous, Risk: riskHigh, RequiresConfirmation: true}
-	}
-
-	if base == "git" && len(tokens) > 1 {
-		// "branch" excluded: `git branch -D` is destructive and subflags can't be checked here.
-		safeGit := map[string]bool{
-			"status": true, "log": true, "show": true, "diff": true, "rev-parse": true, "remote": true,
-		}
-		if safeGit[tokens[1]] {
-			return commandSafety{Classification: classificationSafe, Risk: riskSafe, RequiresConfirmation: false}
-		}
-		return commandSafety{Classification: classificationRisky, Risk: riskMedium, RequiresConfirmation: true}
-	}
-
-	if base == "docker" && len(tokens) > 1 {
-		if isSafeDockerRead(tokens) {
-			return commandSafety{Classification: classificationSafe, Risk: riskSafe, RequiresConfirmation: false}
+	for _, rule := range safetyRules {
+		if result, ok := rule(command, tokens); ok {
+			return result
 		}
 	}
 
-	if isUserOrSystemModification(tokens) {
-		return commandSafety{Classification: classificationRisky, Risk: riskMedium, RequiresConfirmation: true}
-	}
+	return riskySafety()
+}
 
-	if isFilesystemModification(tokens) {
-		return commandSafety{Classification: classificationRisky, Risk: riskMedium, RequiresConfirmation: true}
-	}
+// safeSafety returns the standard safe classification.
+func safeSafety() commandSafety {
+	return commandSafety{Classification: classificationSafe, Risk: riskSafe, RequiresConfirmation: false}
+}
 
-	safeRoots := map[string]bool{
-		"ls": true, "pwd": true, "cat": true, "echo": true, "whoami": true, "id": true,
-		"uname": true, "date": true, "grep": true, "rg": true, "which": true,
-		"whereis": true, "find": true, "head": true, "tail": true, "wc": true, "stat": true,
-		"du": true, "df": true, "ps": true, "man": true,
-	}
-	if safeRoots[base] {
-		return commandSafety{Classification: classificationSafe, Risk: riskSafe, RequiresConfirmation: false}
-	}
-
+// riskySafety returns the standard confirmation-required classification.
+func riskySafety() commandSafety {
 	return commandSafety{Classification: classificationRisky, Risk: riskMedium, RequiresConfirmation: true}
 }
 
-// isSafeDockerRead reports whether the docker command is a read-only inspection.
-func isSafeDockerRead(tokens []string) bool {
-	if len(tokens) < 2 || tokens[0] != "docker" {
-		return false
-	}
-
-	switch tokens[1] {
-	case "images", "ps", "version", "info":
-		return true
-	case "image":
-		return len(tokens) > 2 && tokens[2] == "ls"
-	case "container":
-		return len(tokens) > 2 && tokens[2] == "ls"
-	case "inspect":
-		return true
-	default:
-		return false
-	}
-}
-
-// isFilesystemModification detects potential changes to the filesystem.
-func isFilesystemModification(tokens []string) bool {
-	if len(tokens) == 0 {
-		return false
-	}
-
-	modifyingRoots := map[string]bool{
-		"rm": true, "mv": true, "cp": true, "touch": true, "mkdir": true, "rmdir": true,
-		"install": true, "truncate": true, "tee": true, "sed": true, "awk": true, "perl": true,
-		"tar": true, "unzip": true, "zip": true, "ln": true, "chmod": true, "chown": true, "chgrp": true,
-	}
-	if modifyingRoots[tokens[0]] {
-		return true
-	}
-
-	if tokens[0] == "git" && len(tokens) > 1 {
-		dangerousGit := map[string]bool{
-			"add": true, "apply": true, "am": true, "checkout": true, "switch": true, "restore": true,
-			"pull": true, "merge": true, "rebase": true, "reset": true, "clean": true, "commit": true,
-			"push": true, "stash": true, "tag": true, "branch": true,
-		}
-		return dangerousGit[tokens[1]]
-	}
-
-	return false
-}
-
-// isUserOrSystemModification detects actions on users, services, or packages.
-func isUserOrSystemModification(tokens []string) bool {
-	if len(tokens) == 0 {
-		return false
-	}
-
-	// Note: sudo, su, useradd/adduser/usermod/userdel, groupadd/groupdel, passwd are already
-	// caught by dangerousRoots above, so they are intentionally absent here to avoid dead overlap.
-	systemRoots := map[string]bool{
-		"systemctl": true, "service": true, "launchctl": true,
-		"apt": true, "apt-get": true, "yum": true, "dnf": true, "apk": true,
-		"pacman": true, "brew": true, "pip": true, "pip3": true, "npm": true, "pnpm": true,
-		"yarn": true, "docker": true, "kubectl": true, "sysctl": true,
-	}
-
-	return systemRoots[tokens[0]]
+// dangerousSafety returns the standard high-risk classification.
+func dangerousSafety() commandSafety {
+	return commandSafety{Classification: classificationDangerous, Risk: riskHigh, RequiresConfirmation: true}
 }
 
 // hasShellOperators detects shell operators and command separators outside of quoted strings.

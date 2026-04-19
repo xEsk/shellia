@@ -67,3 +67,37 @@ func TestClassifyCommandAllowsOnlyKnownReadOnlyGitSubcommands(t *testing.T) {
 		}
 	}
 }
+
+// TestClassifyCommandRequiresConfirmationForMutatingFind checks find actions cannot auto-run under yes-safe.
+func TestClassifyCommandRequiresConfirmationForMutatingFind(t *testing.T) {
+	riskyCommands := []string{
+		"find . -delete",
+		"find . -name '*.tmp' -exec rm {} \\;",
+		"find . -execdir chmod 644 {} \\;",
+		"find . -ok rm {} \\;",
+		"find . -okdir rm {} \\;",
+	}
+
+	for _, command := range riskyCommands {
+		got := classifyCommand(command)
+		if got.Classification == classificationSafe || !got.RequiresConfirmation {
+			t.Fatalf("classifyCommand(%q) = %#v, want confirmation required", command, got)
+		}
+	}
+}
+
+// TestClassifyCommandAllowsReadOnlyFind checks common read-only find commands stay safe.
+func TestClassifyCommandAllowsReadOnlyFind(t *testing.T) {
+	safeCommands := []string{
+		"find . -name '*.go'",
+		"find . -type f -maxdepth 2",
+		"find . -mtime -1 -print",
+	}
+
+	for _, command := range safeCommands {
+		got := classifyCommand(command)
+		if got.Classification != classificationSafe || got.RequiresConfirmation {
+			t.Fatalf("classifyCommand(%q) = %#v, want safe without confirmation", command, got)
+		}
+	}
+}
