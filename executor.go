@@ -476,6 +476,9 @@ func executeCommands(ctx context.Context, ui bool, cfg config, ctxInfo *contextI
 		}
 
 		applySessionState(ctxInfo, effectiveCommand, exitCode)
+		if box != nil && cfg.HideSystemOutput {
+			box.Section("completed", colorGreen)
+		}
 		if box != nil {
 			box.Close()
 		}
@@ -534,6 +537,9 @@ func executeManualCommand(ctx context.Context, ui bool, cfg config, ctxInfo *con
 	}
 
 	applySessionState(ctxInfo, command, exitCode)
+	if box != nil && cfg.HideSystemOutput {
+		box.Section("completed", colorGreen)
+	}
 	if box != nil {
 		box.Close()
 	}

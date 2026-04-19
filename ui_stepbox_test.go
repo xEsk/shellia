@@ -49,3 +49,16 @@ func TestPrefixedWriterCanHideSystemOutput(t *testing.T) {
 		t.Fatalf("hidden prefixedWriter rendered output: %q", output)
 	}
 }
+
+// TestStepBoxCanShowCompletedAfterHiddenOutput checks the success marker used when output is hidden.
+func TestStepBoxCanShowCompletedAfterHiddenOutput(t *testing.T) {
+	var buffer bytes.Buffer
+	box := newStepBox(&buffer, false, "step 1/1")
+
+	box.Section("completed", colorGreen)
+	box.Close()
+
+	if !strings.Contains(buffer.String(), "• completed") {
+		t.Fatalf("step box does not contain completed marker: %q", buffer.String())
+	}
+}
