@@ -590,47 +590,47 @@ const (
 	confirmDecisionInteractive
 )
 
-// logConfirmationChoice records the confirmation decision on the same line as the original prompt.
-func logConfirmationChoice(box *stepBox, prompt string, choice string) {
+// renderConfirmationPrompt prints the confirmation prompt and highlights the configured default.
+func renderConfirmationPrompt(box *stepBox, prompt string, defaultChoice confirmationDefault) {
 	if box == nil {
 		return
 	}
 	rendered := style(box.ui, colorYellow+colorBold, "• confirm ") +
 		style(box.ui, colorWhite, prompt) +
+		style(box.ui, colorWhite, " ") +
+		renderConfirmationOptions(box.ui, defaultChoice) +
+		style(box.ui, colorWhite, ": ")
+	box.writeRow(rendered)
+}
+
+// logConfirmationChoice records the confirmation decision on the same line as the original prompt.
+func logConfirmationChoice(box *stepBox, prompt string, defaultChoice confirmationDefault, choice string) {
+	if box == nil {
+		return
+	}
+	rendered := style(box.ui, colorYellow+colorBold, "• confirm ") +
+		style(box.ui, colorWhite, prompt) +
+		style(box.ui, colorWhite, " ") +
+		renderConfirmationOptions(box.ui, defaultChoice) +
+		style(box.ui, colorWhite, ": ") +
 		style(box.ui, colorYellow+colorBold, choice)
 	box.ReplaceLastRenderedRow(rendered)
 }
 
 // promptConfirmation asks for explicit confirmation inside the step box.
-func promptConfirmation(box *stepBox, reader *bufio.Reader, prompt string, initialCommand string) (confirmDecision, string, error) {
-	if box != nil {
-		box.KeyValue("confirm", prompt, colorYellow, colorWhite)
-	}
+func promptConfirmation(box *stepBox, reader *bufio.Reader, prompt string, initialCommand string, defaultChoice confirmationDefault) (confirmDecision, string, error) {
+	renderConfirmationPrompt(box, prompt, defaultChoice)
 
 	key, ok, err := readSingleConfirmationKey()
 	if err == nil && ok {
 		for {
+			if isConfirmationEnterKey(key) && defaultChoice != confirmationDefaultNone {
+				return applyConfirmationChoice(box, reader, prompt, initialCommand, defaultChoice, defaultChoice)
+			}
+
 			lower := strings.ToLower(string(key))
-			switch lower {
-			case "y":
-				logConfirmationChoice(box, prompt, "yes")
-				return confirmDecisionRun, "", nil
-			case "e":
-				logConfirmationChoice(box, prompt, "edit")
-				edited, editErr := box.EditCommand(reader, initialCommand)
-				if editErr != nil {
-					return confirmDecisionCancel, "", editErr
-				}
-				if strings.TrimSpace(edited) == "" {
-					return confirmDecisionCancel, "", nil
-				}
-				return confirmDecisionEdit, edited, nil
-			case "i":
-				logConfirmationChoice(box, prompt, "interactive")
-				return confirmDecisionInteractive, "", nil
-			case "n":
-				logConfirmationChoice(box, prompt, "no")
-				return confirmDecisionCancel, "", nil
+			if choice, found := parseConfirmationChoice(lower); found {
+				return applyConfirmationChoice(box, reader, prompt, initialCommand, defaultChoice, choice)
 			}
 
 			key, ok, err = readSingleConfirmationKey()
@@ -640,18 +640,85 @@ func promptConfirmation(box *stepBox, reader *bufio.Reader, prompt string, initi
 		}
 	}
 
-	line, err := reader.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return confirmDecisionCancel, "", err
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return confirmDecisionCancel, "", err
+		}
+
+		answer := strings.ToLower(strings.TrimSpace(line))
+		if answer == "" {
+			if defaultChoice != confirmationDefaultNone {
+				return applyConfirmationChoice(box, reader, prompt, initialCommand, defaultChoice, defaultChoice)
+			}
+			if errors.Is(err, io.EOF) {
+				logConfirmationChoice(box, prompt, defaultChoice, "no")
+				return confirmDecisionCancel, "", nil
+			}
+			continue
+		}
+
+		if choice, found := parseConfirmationChoice(answer); found {
+			return applyConfirmationChoice(box, reader, prompt, initialCommand, defaultChoice, choice)
+		}
+
+		logConfirmationChoice(box, prompt, defaultChoice, "no")
+		return confirmDecisionCancel, "", nil
+	}
+}
+
+// renderConfirmationOptions renders the accepted confirmation keys and highlights the default key.
+func renderConfirmationOptions(ui bool, defaultChoice confirmationDefault) string {
+	options := []struct {
+		key    string
+		choice confirmationDefault
+	}{
+		{key: "y", choice: confirmationDefaultYes},
+		{key: "e", choice: confirmationDefaultEdit},
+		{key: "i", choice: confirmationDefaultInteractive},
+		{key: "n", choice: confirmationDefaultNo},
 	}
 
-	answer := strings.ToLower(strings.TrimSpace(line))
-	switch answer {
+	var builder strings.Builder
+	builder.WriteString("[")
+	for index, option := range options {
+		if index > 0 {
+			builder.WriteString("/")
+		}
+		color := colorWhite
+		if option.choice == defaultChoice {
+			color = colorYellow + colorBold
+		}
+		builder.WriteString(style(ui, color, option.key))
+	}
+	builder.WriteString("]")
+	return builder.String()
+}
+
+// parseConfirmationChoice maps user input to a supported confirmation action.
+func parseConfirmationChoice(value string) (confirmationDefault, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "y", "yes":
-		logConfirmationChoice(box, prompt, "yes")
-		return confirmDecisionRun, "", nil
+		return confirmationDefaultYes, true
 	case "e", "edit":
-		logConfirmationChoice(box, prompt, "edit")
+		return confirmationDefaultEdit, true
+	case "i", "interactive":
+		return confirmationDefaultInteractive, true
+	case "n", "no":
+		return confirmationDefaultNo, true
+	default:
+		return confirmationDefaultNone, false
+	}
+}
+
+// applyConfirmationChoice applies a parsed confirmation action and logs it in the prompt row.
+func applyConfirmationChoice(box *stepBox, reader *bufio.Reader, prompt string, initialCommand string, defaultChoice confirmationDefault, choice confirmationDefault) (confirmDecision, string, error) {
+	switch choice {
+	case confirmationDefaultYes:
+		logConfirmationChoice(box, prompt, defaultChoice, "yes")
+		return confirmDecisionRun, "", nil
+	case confirmationDefaultEdit:
+		logConfirmationChoice(box, prompt, defaultChoice, "edit")
 		edited, editErr := box.EditCommand(reader, initialCommand)
 		if editErr != nil {
 			return confirmDecisionCancel, "", editErr
@@ -660,13 +727,18 @@ func promptConfirmation(box *stepBox, reader *bufio.Reader, prompt string, initi
 			return confirmDecisionCancel, "", nil
 		}
 		return confirmDecisionEdit, edited, nil
-	case "i", "interactive":
-		logConfirmationChoice(box, prompt, "interactive")
+	case confirmationDefaultInteractive:
+		logConfirmationChoice(box, prompt, defaultChoice, "interactive")
 		return confirmDecisionInteractive, "", nil
 	default:
-		logConfirmationChoice(box, prompt, "no")
+		logConfirmationChoice(box, prompt, defaultChoice, "no")
 		return confirmDecisionCancel, "", nil
 	}
+}
+
+// isConfirmationEnterKey reports whether a raw terminal key is Enter.
+func isConfirmationEnterKey(key byte) bool {
+	return key == '\r' || key == '\n'
 }
 
 // readSingleConfirmationKey tries to read a single key without waiting for Enter.

@@ -423,7 +423,7 @@ func executeCommands(ctx context.Context, ui bool, cfg config, ctxInfo *contextI
 		interactive := plan.Interactive
 
 		if !(cfg.YesSafe && plan.LocalSafe && !plan.Interactive) {
-			decision, editedCommand, err := promptConfirmation(box, reader, fmt.Sprintf("Run step %d/%d? [y/e/i/n]: ", index+1, len(plans)), plan.Command)
+			decision, editedCommand, err := promptConfirmation(box, reader, fmt.Sprintf("Run step %d/%d?", index+1, len(plans)), plan.Command, cfg.ConfirmationDefault)
 			if err != nil {
 				box.Close()
 				return nil, fmt.Errorf("cannot read confirmation: %w", err)
@@ -440,7 +440,7 @@ func executeCommands(ctx context.Context, ui bool, cfg config, ctxInfo *contextI
 			}
 		}
 
-		output, exitCode, _, err := executeOneCommand(ctx, ui, cfg, *ctxInfo, box, effectiveCommand, cfg.CommandTimeout, false, interactive)
+		output, exitCode, hadOutput, err := executeOneCommand(ctx, ui, cfg, *ctxInfo, box, effectiveCommand, cfg.CommandTimeout, false, interactive)
 		executions = append(executions, commandExecution{
 			Command:  effectiveCommand,
 			Purpose:  plan.Purpose,
@@ -476,9 +476,7 @@ func executeCommands(ctx context.Context, ui bool, cfg config, ctxInfo *contextI
 		}
 
 		applySessionState(ctxInfo, effectiveCommand, exitCode)
-		if box != nil && !cfg.ShowSystemOutput {
-			box.Section("completed", colorGreen)
-		}
+		showCompletedMarker(box, hadOutput)
 		if box != nil {
 			box.Close()
 		}
@@ -498,7 +496,7 @@ func executeManualCommand(ctx context.Context, ui bool, cfg config, ctxInfo *con
 		printInfo(ui, "Starting interactive command. Shellia will resume when it exits.")
 	}
 
-	output, exitCode, _, err := executeOneCommand(
+	output, exitCode, hadOutput, err := executeOneCommand(
 		ctx,
 		ui,
 		cfg,
@@ -537,17 +535,23 @@ func executeManualCommand(ctx context.Context, ui bool, cfg config, ctxInfo *con
 	}
 
 	applySessionState(ctxInfo, command, exitCode)
-	if box != nil && !cfg.ShowSystemOutput {
-		box.Section("completed", colorGreen)
-	}
+	showCompletedMarker(box, hadOutput)
 	if box != nil {
 		box.Close()
 	}
 	return execution, nil
 }
 
+// showCompletedMarker prints a compact success marker when the command produced no visible output.
+func showCompletedMarker(box *stepBox, hadOutput bool) {
+	if box == nil || box.closed || hadOutput {
+		return
+	}
+	box.Section("completed", colorGreen)
+}
+
 // executeOneCommand launches a command via the current shell with real-time output streaming.
-// hadOutput is true if any bytes reached stdout or stderr, meaning the step box showed output.
+// hadOutput is true when command output was rendered to the user.
 func executeOneCommand(ctx context.Context, ui bool, cfg config, ctxInfo contextInfo, box *stepBox, command string, timeout time.Duration, directStream bool, interactive bool) (output commandExecution, exitCode int, hadOutput bool, err error) {
 	var cmdCtx context.Context
 	var cancel context.CancelFunc

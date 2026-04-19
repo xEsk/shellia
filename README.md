@@ -145,6 +145,8 @@ When Shellia proposes a command itself, the confirmation prompt also supports:
 - `i` to run that step in interactive terminal mode
 - `n` to cancel
 
+By default, Enter does not choose any option. Set `confirmation_default` to `yes`, `no`, `edit`, or `interactive` to make Enter select that action.
+
 #### One direct command with `!`
 
 Prefix a line with `!` to execute it immediately as a manual shell command:
@@ -272,6 +274,7 @@ timeout_seconds         = 120
 request_timeout_seconds = 60
 yes_safe                = false
 continue_on_error       = false
+confirmation_default    = "none"
 shell_mode              = "interactive"
 command_mode            = "plain"
 
@@ -347,18 +350,28 @@ Shellia lets you choose how manual commands are executed.
   - controls how commands run inside `/shell`
 - `command_mode`
   - controls how one-off `!<cmd>` commands run
+- `confirmation_default`
+  - controls what Enter selects in AI command confirmation prompts
 
-Allowed values:
+Allowed command engine values:
 
 - `plain`
   - normal command execution with Shellia's structured output
 - `interactive`
   - run inside an interactive terminal session and return control to Shellia when the command exits
 
+Allowed confirmation defaults:
+
+- `none`
+  - Enter does not choose anything; type `y`, `e`, `i`, or `n`
+- `yes`, `no`, `edit`, `interactive`
+  - Enter selects that confirmation action
+
 Defaults:
 
 - `shell_mode = "interactive"`
 - `command_mode = "plain"`
+- `confirmation_default = "none"`
 
 ## Safety model
 

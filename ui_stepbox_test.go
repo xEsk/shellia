@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"strings"
 	"testing"
@@ -50,15 +51,72 @@ func TestPrefixedWriterCanSuppressSystemOutput(t *testing.T) {
 	}
 }
 
-// TestStepBoxCanShowCompletedAfterSuppressedOutput checks the success marker used when output is hidden.
-func TestStepBoxCanShowCompletedAfterSuppressedOutput(t *testing.T) {
+// TestShowCompletedMarkerPrintsWithoutOutput checks the success marker used for silent commands.
+func TestShowCompletedMarkerPrintsWithoutOutput(t *testing.T) {
 	var buffer bytes.Buffer
 	box := newStepBox(&buffer, false, "step 1/1")
 
-	box.Section("completed", colorGreen)
+	showCompletedMarker(box, false)
 	box.Close()
 
 	if !strings.Contains(buffer.String(), "• completed") {
 		t.Fatalf("step box does not contain completed marker: %q", buffer.String())
+	}
+}
+
+// TestShowCompletedMarkerSkipsWhenOutputWasShown checks output blocks are not followed by extra status noise.
+func TestShowCompletedMarkerSkipsWhenOutputWasShown(t *testing.T) {
+	var buffer bytes.Buffer
+	box := newStepBox(&buffer, false, "step 1/1")
+
+	box.OutputLabel()
+	box.OutputLine("hello")
+	showCompletedMarker(box, true)
+	box.Close()
+
+	if strings.Contains(buffer.String(), "• completed") {
+		t.Fatalf("step box contains unexpected completed marker: %q", buffer.String())
+	}
+}
+
+// TestPromptConfirmationUsesDefaultOnEnter checks Enter selects the configured default action.
+func TestPromptConfirmationUsesDefaultOnEnter(t *testing.T) {
+	var buffer bytes.Buffer
+	box := newStepBox(&buffer, false, "step 1/1")
+	reader := bufio.NewReader(strings.NewReader("\n"))
+
+	decision, _, err := promptConfirmation(box, reader, "Run step 1/1?", "true", confirmationDefaultYes)
+	if err != nil {
+		t.Fatalf("promptConfirmation() error = %v", err)
+	}
+	if decision != confirmDecisionRun {
+		t.Fatalf("promptConfirmation() decision = %v, want %v", decision, confirmDecisionRun)
+	}
+}
+
+// TestPromptConfirmationRequiresChoiceWithoutDefault checks blank input is ignored without a default.
+func TestPromptConfirmationRequiresChoiceWithoutDefault(t *testing.T) {
+	var buffer bytes.Buffer
+	box := newStepBox(&buffer, false, "step 1/1")
+	reader := bufio.NewReader(strings.NewReader("\ny\n"))
+
+	decision, _, err := promptConfirmation(box, reader, "Run step 1/1?", "true", confirmationDefaultNone)
+	if err != nil {
+		t.Fatalf("promptConfirmation() error = %v", err)
+	}
+	if decision != confirmDecisionRun {
+		t.Fatalf("promptConfirmation() decision = %v, want %v", decision, confirmDecisionRun)
+	}
+}
+
+// TestRenderConfirmationPromptHighlightsDefault checks the default option uses the confirm colour.
+func TestRenderConfirmationPromptHighlightsDefault(t *testing.T) {
+	var buffer bytes.Buffer
+	box := newStepBox(&buffer, true, "step 1/1")
+
+	renderConfirmationPrompt(box, "Run step 1/1?", confirmationDefaultNo)
+
+	if !strings.Contains(buffer.String(), colorYellow+colorBold+"n"+colorReset) {
+		t.Fatalf("confirmation prompt does not highlight default option: %q", buffer.String())
 	}
 }

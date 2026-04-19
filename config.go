@@ -12,10 +12,17 @@ import (
 )
 
 type commandEngineMode string
+type confirmationDefault string
 
 const (
 	commandEnginePlain       commandEngineMode = "plain"
 	commandEngineInteractive commandEngineMode = "interactive"
+
+	confirmationDefaultNone        confirmationDefault = "none"
+	confirmationDefaultYes         confirmationDefault = "yes"
+	confirmationDefaultNo          confirmationDefault = "no"
+	confirmationDefaultEdit        confirmationDefault = "edit"
+	confirmationDefaultInteractive confirmationDefault = "interactive"
 )
 
 type config struct {
@@ -29,6 +36,7 @@ type config struct {
 	RequestTimeout         time.Duration
 	YesSafe                bool
 	ContinueOnError        bool
+	ConfirmationDefault    confirmationDefault
 	CaptureStdoutBytes     int
 	CaptureStderrBytes     int
 	ObservationOutputChars int
@@ -56,6 +64,7 @@ type fileConfig struct {
 		RequestTimeoutSeconds int    `toml:"request_timeout_seconds"`
 		YesSafe               *bool  `toml:"yes_safe"`
 		ContinueOnError       *bool  `toml:"continue_on_error"`
+		ConfirmationDefault   string `toml:"confirmation_default"`
 		ShellMode             string `toml:"shell_mode"`
 		CommandMode           string `toml:"command_mode"`
 	} `toml:"execution"`
@@ -80,6 +89,7 @@ func defaultConfig() config {
 		Model:                  defaultModel,
 		CommandTimeout:         defaultTimeout,
 		RequestTimeout:         60 * time.Second,
+		ConfirmationDefault:    confirmationDefaultNone,
 		CaptureStdoutBytes:     128 * 1024,
 		CaptureStderrBytes:     256 * 1024,
 		ObservationOutputChars: 1200,
@@ -118,6 +128,9 @@ func applyFileConfig(cfg *config, fileCfg fileConfig, err error) {
 	}
 	if fileCfg.Execution.ContinueOnError != nil {
 		cfg.ContinueOnError = *fileCfg.Execution.ContinueOnError
+	}
+	if strings.TrimSpace(fileCfg.Execution.ConfirmationDefault) != "" {
+		cfg.ConfirmationDefault = normalizeConfirmationDefault(fileCfg.Execution.ConfirmationDefault, cfg.ConfirmationDefault)
 	}
 	if strings.TrimSpace(fileCfg.Execution.ShellMode) != "" {
 		cfg.ShellMode = normalizeCommandEngineMode(fileCfg.Execution.ShellMode, cfg.ShellMode)
@@ -240,6 +253,7 @@ timeout_seconds         = 120
 request_timeout_seconds = 60
 yes_safe                = false
 continue_on_error       = false
+confirmation_default    = "none"
 shell_mode              = "interactive"
 command_mode            = "plain"
 
@@ -274,6 +288,24 @@ func normalizeCommandEngineMode(value string, fallback commandEngineMode) comman
 		return commandEnginePlain
 	case string(commandEngineInteractive):
 		return commandEngineInteractive
+	default:
+		return fallback
+	}
+}
+
+// normalizeConfirmationDefault validates the Enter shortcut used in confirmation prompts.
+func normalizeConfirmationDefault(value string, fallback confirmationDefault) confirmationDefault {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "none", "null":
+		return confirmationDefaultNone
+	case "y", "yes":
+		return confirmationDefaultYes
+	case "n", "no":
+		return confirmationDefaultNo
+	case "e", "edit":
+		return confirmationDefaultEdit
+	case "i", "interactive":
+		return confirmationDefaultInteractive
 	default:
 		return fallback
 	}

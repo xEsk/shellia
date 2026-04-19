@@ -385,10 +385,6 @@ func runInteractive(ctx context.Context, ui bool, cfg config, ctxInfo *contextIn
 			}
 
 			updateSessionStateFromExecution(&state, command, execution)
-			noCapturedOutput := !execution.Stdout.HasOutput() && !execution.Stderr.HasOutput()
-			if renderMode == manualRenderInline && (!cfg.ShowSystemOutput || noCapturedOutput) {
-				printInfo(ui, "Command completed.")
-			}
 			continue
 		}
 
