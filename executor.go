@@ -585,8 +585,8 @@ func executeOneCommand(ctx context.Context, ui bool, cfg config, ctxInfo context
 		stdoutStream = &directShellWriter{ui: ui, target: os.Stdout, lineStart: true}
 		stderrStream = &directShellWriter{ui: ui, target: os.Stderr, lineStart: true}
 	} else {
-		stdoutWriter = &prefixedWriter{box: box}
-		stderrWriter = &prefixedWriter{box: box}
+		stdoutWriter = &prefixedWriter{box: box, hidden: cfg.HideSystemOutput}
+		stderrWriter = &prefixedWriter{box: box, hidden: cfg.HideSystemOutput}
 		stdoutStream = stdoutWriter
 		stderrStream = stderrWriter
 	}

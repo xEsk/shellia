@@ -33,6 +33,7 @@ type config struct {
 	CaptureStderrBytes     int
 	ObservationOutputChars int
 	SummaryOutputChars     int
+	HideSystemOutput       bool
 	ShellMode              commandEngineMode
 	CommandMode            commandEngineMode
 	Debug                  bool
@@ -58,10 +59,11 @@ type fileConfig struct {
 		CommandMode           string `toml:"command_mode"`
 	} `toml:"execution"`
 	Output struct {
-		CaptureStdoutBytes     int `toml:"capture_stdout_bytes"`
-		CaptureStderrBytes     int `toml:"capture_stderr_bytes"`
-		ObservationOutputChars int `toml:"observation_output_chars"`
-		SummaryOutputChars     int `toml:"summary_output_chars"`
+		CaptureStdoutBytes     int   `toml:"capture_stdout_bytes"`
+		CaptureStderrBytes     int   `toml:"capture_stderr_bytes"`
+		ObservationOutputChars int   `toml:"observation_output_chars"`
+		SummaryOutputChars     int   `toml:"summary_output_chars"`
+		HideSystemOutput       *bool `toml:"hide_system_output"`
 	} `toml:"output"`
 	UI struct {
 		Verbose *bool `toml:"verbose"`
@@ -130,6 +132,9 @@ func applyFileConfig(cfg *config, fileCfg fileConfig, err error) {
 	}
 	if fileCfg.Output.SummaryOutputChars > 0 {
 		cfg.SummaryOutputChars = fileCfg.Output.SummaryOutputChars
+	}
+	if fileCfg.Output.HideSystemOutput != nil {
+		cfg.HideSystemOutput = *fileCfg.Output.HideSystemOutput
 	}
 	if fileCfg.UI.Verbose != nil {
 		cfg.Verbose = *fileCfg.UI.Verbose
@@ -236,6 +241,7 @@ capture_stdout_bytes     = 131072
 capture_stderr_bytes     = 262144
 observation_output_chars = 1200
 summary_output_chars     = 4000
+hide_system_output       = false
 
 [ui]
 verbose  = false

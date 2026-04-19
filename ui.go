@@ -29,6 +29,7 @@ const (
 
 type prefixedWriter struct {
 	box     *stepBox
+	hidden  bool
 	started bool
 	buffer  string
 }
@@ -43,6 +44,10 @@ type directShellWriter struct {
 // Write applies a visual prefix to each line of shell output.
 // It returns len(data) on success, or 0 + error if writing to the target fails.
 func (writer *prefixedWriter) Write(data []byte) (int, error) {
+	if writer.hidden {
+		return len(data), nil
+	}
+
 	writer.buffer += string(data)
 	for len(writer.buffer) > 0 {
 		if !writer.started {
@@ -69,6 +74,10 @@ func (writer *prefixedWriter) Write(data []byte) (int, error) {
 
 // Flush forces printing of the last partial line in the buffer when present.
 func (writer *prefixedWriter) Flush() error {
+	if writer.hidden {
+		return nil
+	}
+
 	if !writer.started || writer.buffer == "" {
 		return nil
 	}
