@@ -280,11 +280,12 @@ capture_stdout_bytes     = 131072
 capture_stderr_bytes     = 262144
 observation_output_chars = 1200
 summary_output_chars     = 4000
-hide_system_output       = false
 
 [ui]
-verbose  = false
-no_color = false
+verbose            = false
+no_color           = false
+show_system_output = true
+show_command_popup = true
 ```
 
 ### Configuration precedence
@@ -310,6 +311,17 @@ Compatibility fallback variables:
 - `OPENAI_MODEL`
 - `OPENAI_API_KEY`
 
+### UI controls
+
+- `show_command_popup`
+  - shows the slash-command popup while typing `/` when set to `true`
+- `show_system_output`
+  - shows live `system output` blocks in the terminal when set to `true`; captured output is still kept for planning and summaries when set to `false`
+- `no_color`
+  - disables ANSI colours
+- `verbose`
+  - shows extra technical details in plans
+
 ### Output capture controls
 
 Shellia streams command output live to the terminal, but it also keeps a bounded in-memory capture so later planning and summarization do not send huge logs to the model.
@@ -324,8 +336,6 @@ These settings control that behavior:
   - how much captured output is sent back to the model during iterative planning
 - `summary_output_chars`
   - how much captured output is sent to the model for the final answer
-- `hide_system_output`
-  - hides live `system output` blocks in the terminal when set to `true`; captured output is still kept for planning and summaries
 
 If output is truncated, Shellia marks it explicitly instead of pretending it captured everything.
 

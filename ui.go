@@ -421,7 +421,7 @@ const (
 )
 
 // readInteractivePrompt shows a clear prompt and returns the entered text.
-func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) (string, error) {
+func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode, showCommandPopup bool) (string, error) {
 	fmt.Println()
 	fmt.Println(promptQuestionLine(ui, mode))
 	prompt := promptPrefix(ui, mode)
@@ -459,7 +459,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 		contentWidth = 1
 	}
 
-	renderEditablePrompt(ui, prompt, buffer, cursor, affinity, renderState)
+	renderEditablePrompt(ui, prompt, buffer, cursor, affinity, renderState, showCommandPopup)
 
 	for {
 		_, err := os.Stdin.Read(single)
@@ -474,7 +474,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 					buffer = buffer[:0]
 					cursor = 0
 					affinity = cursorAffinityForward
-					renderEditablePrompt(ui, prompt, buffer, cursor, affinity, renderState)
+					renderEditablePrompt(ui, prompt, buffer, cursor, affinity, renderState, showCommandPopup)
 				}
 				continue
 			}
@@ -525,7 +525,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 			affinity = cursorAffinityForward
 		}
 
-		renderEditablePrompt(ui, prompt, buffer, cursor, affinity, renderState)
+		renderEditablePrompt(ui, prompt, buffer, cursor, affinity, renderState, showCommandPopup)
 	}
 }
 
@@ -953,9 +953,12 @@ func applyEscapeSequenceOrExit(fd int, buffer *[]rune, cursor *int, contentWidth
 }
 
 // renderEditablePrompt repaints the full editable prompt block while handling wrapping correctly.
-func renderEditablePrompt(ui bool, prompt string, buffer []rune, cursor int, affinity cursorAffinity, state *editableRenderState) {
+func renderEditablePrompt(ui bool, prompt string, buffer []rune, cursor int, affinity cursorAffinity, state *editableRenderState, showCommandPopup bool) {
 	lines, cursorRow, cursorCol := editablePromptLayout(prompt, buffer, cursor, affinity, promptRenderWidth())
-	menuLines := commandMenuLines(ui, string(buffer))
+	var menuLines []string
+	if showCommandPopup {
+		menuLines = commandMenuLines(ui, string(buffer))
+	}
 	promptWidth := visibleWidth(prompt)
 
 	clearEditablePrompt(state)

@@ -33,13 +33,14 @@ type config struct {
 	CaptureStderrBytes     int
 	ObservationOutputChars int
 	SummaryOutputChars     int
-	HideSystemOutput       bool
+	ShowSystemOutput       bool
 	ShellMode              commandEngineMode
 	CommandMode            commandEngineMode
 	Debug                  bool
 	RawResponse            bool
 	NoColor                bool
 	Verbose                bool
+	ShowCommandPopup       bool
 }
 
 // fileConfig mirrors the structure of ~/.shellia/config.toml.
@@ -59,15 +60,16 @@ type fileConfig struct {
 		CommandMode           string `toml:"command_mode"`
 	} `toml:"execution"`
 	Output struct {
-		CaptureStdoutBytes     int   `toml:"capture_stdout_bytes"`
-		CaptureStderrBytes     int   `toml:"capture_stderr_bytes"`
-		ObservationOutputChars int   `toml:"observation_output_chars"`
-		SummaryOutputChars     int   `toml:"summary_output_chars"`
-		HideSystemOutput       *bool `toml:"hide_system_output"`
+		CaptureStdoutBytes     int `toml:"capture_stdout_bytes"`
+		CaptureStderrBytes     int `toml:"capture_stderr_bytes"`
+		ObservationOutputChars int `toml:"observation_output_chars"`
+		SummaryOutputChars     int `toml:"summary_output_chars"`
 	} `toml:"output"`
 	UI struct {
-		Verbose *bool `toml:"verbose"`
-		NoColor *bool `toml:"no_color"`
+		Verbose          *bool `toml:"verbose"`
+		NoColor          *bool `toml:"no_color"`
+		ShowSystemOutput *bool `toml:"show_system_output"`
+		ShowCommandPopup *bool `toml:"show_command_popup"`
 	} `toml:"ui"`
 }
 
@@ -82,8 +84,10 @@ func defaultConfig() config {
 		CaptureStderrBytes:     256 * 1024,
 		ObservationOutputChars: 1200,
 		SummaryOutputChars:     4000,
+		ShowSystemOutput:       true,
 		ShellMode:              commandEngineInteractive,
 		CommandMode:            commandEnginePlain,
+		ShowCommandPopup:       true,
 	}
 }
 
@@ -133,14 +137,17 @@ func applyFileConfig(cfg *config, fileCfg fileConfig, err error) {
 	if fileCfg.Output.SummaryOutputChars > 0 {
 		cfg.SummaryOutputChars = fileCfg.Output.SummaryOutputChars
 	}
-	if fileCfg.Output.HideSystemOutput != nil {
-		cfg.HideSystemOutput = *fileCfg.Output.HideSystemOutput
-	}
 	if fileCfg.UI.Verbose != nil {
 		cfg.Verbose = *fileCfg.UI.Verbose
 	}
 	if fileCfg.UI.NoColor != nil {
 		cfg.NoColor = *fileCfg.UI.NoColor
+	}
+	if fileCfg.UI.ShowSystemOutput != nil {
+		cfg.ShowSystemOutput = *fileCfg.UI.ShowSystemOutput
+	}
+	if fileCfg.UI.ShowCommandPopup != nil {
+		cfg.ShowCommandPopup = *fileCfg.UI.ShowCommandPopup
 	}
 }
 
@@ -241,11 +248,12 @@ capture_stdout_bytes     = 131072
 capture_stderr_bytes     = 262144
 observation_output_chars = 1200
 summary_output_chars     = 4000
-hide_system_output       = false
 
 [ui]
-verbose  = false
-no_color = false
+verbose            = false
+no_color           = false
+show_system_output = true
+show_command_popup = true
 `
 }
 

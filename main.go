@@ -319,7 +319,7 @@ func runInteractive(ctx context.Context, ui bool, cfg config, ctxInfo *contextIn
 			return
 		}
 
-		input, err := readInteractivePrompt(ui, reader, mode)
+		input, err := readInteractivePrompt(ui, reader, mode, cfg.ShowCommandPopup)
 		if err != nil {
 			exitWithError(ui, fmt.Sprintf("cannot read prompt: %v", err), 1)
 		}
@@ -386,7 +386,7 @@ func runInteractive(ctx context.Context, ui bool, cfg config, ctxInfo *contextIn
 
 			updateSessionStateFromExecution(&state, command, execution)
 			noCapturedOutput := !execution.Stdout.HasOutput() && !execution.Stderr.HasOutput()
-			if renderMode == manualRenderInline && (cfg.HideSystemOutput || noCapturedOutput) {
+			if renderMode == manualRenderInline && (!cfg.ShowSystemOutput || noCapturedOutput) {
 				printInfo(ui, "Command completed.")
 			}
 			continue

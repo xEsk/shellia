@@ -476,7 +476,7 @@ func executeCommands(ctx context.Context, ui bool, cfg config, ctxInfo *contextI
 		}
 
 		applySessionState(ctxInfo, effectiveCommand, exitCode)
-		if box != nil && cfg.HideSystemOutput {
+		if box != nil && !cfg.ShowSystemOutput {
 			box.Section("completed", colorGreen)
 		}
 		if box != nil {
@@ -537,7 +537,7 @@ func executeManualCommand(ctx context.Context, ui bool, cfg config, ctxInfo *con
 	}
 
 	applySessionState(ctxInfo, command, exitCode)
-	if box != nil && cfg.HideSystemOutput {
+	if box != nil && !cfg.ShowSystemOutput {
 		box.Section("completed", colorGreen)
 	}
 	if box != nil {
@@ -591,8 +591,8 @@ func executeOneCommand(ctx context.Context, ui bool, cfg config, ctxInfo context
 		stdoutStream = &directShellWriter{ui: ui, target: os.Stdout, lineStart: true}
 		stderrStream = &directShellWriter{ui: ui, target: os.Stderr, lineStart: true}
 	} else {
-		stdoutWriter = &prefixedWriter{box: box, hidden: cfg.HideSystemOutput}
-		stderrWriter = &prefixedWriter{box: box, hidden: cfg.HideSystemOutput}
+		stdoutWriter = &prefixedWriter{box: box, hidden: !cfg.ShowSystemOutput}
+		stderrWriter = &prefixedWriter{box: box, hidden: !cfg.ShowSystemOutput}
 		stdoutStream = stdoutWriter
 		stderrStream = stderrWriter
 	}

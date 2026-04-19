@@ -4,21 +4,38 @@ import "testing"
 
 // TestDefaultConfigShowsSystemOutput checks the visible-output default stays unchanged.
 func TestDefaultConfigShowsSystemOutput(t *testing.T) {
-	if defaultConfig().HideSystemOutput {
-		t.Fatalf("defaultConfig().HideSystemOutput = true, want false")
+	if !defaultConfig().ShowSystemOutput {
+		t.Fatalf("defaultConfig().ShowSystemOutput = false, want true")
+	}
+	if !defaultConfig().ShowCommandPopup {
+		t.Fatalf("defaultConfig().ShowCommandPopup = false, want true")
 	}
 }
 
-// TestApplyFileConfigCanHideSystemOutput checks the output visibility config flag.
-func TestApplyFileConfigCanHideSystemOutput(t *testing.T) {
+// TestApplyFileConfigCanDisableSystemOutput checks the UI output visibility config flag.
+func TestApplyFileConfigCanDisableSystemOutput(t *testing.T) {
 	cfg := defaultConfig()
-	hide := true
+	show := false
 	fileCfg := fileConfig{}
-	fileCfg.Output.HideSystemOutput = &hide
+	fileCfg.UI.ShowSystemOutput = &show
 
 	applyFileConfig(&cfg, fileCfg, nil)
 
-	if !cfg.HideSystemOutput {
-		t.Fatalf("HideSystemOutput = false, want true")
+	if cfg.ShowSystemOutput {
+		t.Fatalf("ShowSystemOutput = true, want false")
+	}
+}
+
+// TestApplyFileConfigCanHideCommandPopup checks the command popup visibility config flag.
+func TestApplyFileConfigCanHideCommandPopup(t *testing.T) {
+	cfg := defaultConfig()
+	show := false
+	fileCfg := fileConfig{}
+	fileCfg.UI.ShowCommandPopup = &show
+
+	applyFileConfig(&cfg, fileCfg, nil)
+
+	if cfg.ShowCommandPopup {
+		t.Fatalf("ShowCommandPopup = true, want false")
 	}
 }

@@ -31,8 +31,8 @@ func TestStepBoxCloseAvoidsDoubleSpacing(t *testing.T) {
 	}
 }
 
-// TestPrefixedWriterCanHideSystemOutput checks output can be captured elsewhere without rendering.
-func TestPrefixedWriterCanHideSystemOutput(t *testing.T) {
+// TestPrefixedWriterCanSuppressSystemOutput checks output can be captured elsewhere without rendering.
+func TestPrefixedWriterCanSuppressSystemOutput(t *testing.T) {
 	var buffer bytes.Buffer
 	box := newStepBox(&buffer, false, "step 1/1")
 	writer := &prefixedWriter{box: box, hidden: true}
@@ -50,8 +50,8 @@ func TestPrefixedWriterCanHideSystemOutput(t *testing.T) {
 	}
 }
 
-// TestStepBoxCanShowCompletedAfterHiddenOutput checks the success marker used when output is hidden.
-func TestStepBoxCanShowCompletedAfterHiddenOutput(t *testing.T) {
+// TestStepBoxCanShowCompletedAfterSuppressedOutput checks the success marker used when output is hidden.
+func TestStepBoxCanShowCompletedAfterSuppressedOutput(t *testing.T) {
 	var buffer bytes.Buffer
 	box := newStepBox(&buffer, false, "step 1/1")
 
