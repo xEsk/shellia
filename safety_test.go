@@ -34,3 +34,36 @@ func TestHasShellOperatorsIgnoresQuotedAndEscapedSeparators(t *testing.T) {
 		}
 	}
 }
+
+// TestClassifyCommandAllowsOnlyKnownReadOnlyGitSubcommands checks git does not fall through as generically safe.
+func TestClassifyCommandAllowsOnlyKnownReadOnlyGitSubcommands(t *testing.T) {
+	safeCommands := []string{
+		"git status",
+		"git log",
+		"git show HEAD",
+		"git diff",
+		"git rev-parse --show-toplevel",
+		"git remote -v",
+	}
+
+	for _, command := range safeCommands {
+		got := classifyCommand(command)
+		if got.Classification != classificationSafe || got.RequiresConfirmation {
+			t.Fatalf("classifyCommand(%q) = %#v, want safe without confirmation", command, got)
+		}
+	}
+
+	riskyCommands := []string{
+		"git config user.name Shellia",
+		"git fetch",
+		"git branch",
+		"git worktree list",
+	}
+
+	for _, command := range riskyCommands {
+		got := classifyCommand(command)
+		if got.Classification == classificationSafe || !got.RequiresConfirmation {
+			t.Fatalf("classifyCommand(%q) = %#v, want confirmation required", command, got)
+		}
+	}
+}

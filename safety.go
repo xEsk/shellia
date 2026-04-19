@@ -53,6 +53,7 @@ func classifyCommand(command string) commandSafety {
 		if safeGit[tokens[1]] {
 			return commandSafety{Classification: classificationSafe, Risk: riskSafe, RequiresConfirmation: false}
 		}
+		return commandSafety{Classification: classificationRisky, Risk: riskMedium, RequiresConfirmation: true}
 	}
 
 	if base == "docker" && len(tokens) > 1 {
@@ -71,7 +72,7 @@ func classifyCommand(command string) commandSafety {
 
 	safeRoots := map[string]bool{
 		"ls": true, "pwd": true, "cat": true, "echo": true, "whoami": true, "id": true,
-		"uname": true, "date": true, "git": true, "grep": true, "rg": true, "which": true,
+		"uname": true, "date": true, "grep": true, "rg": true, "which": true,
 		"whereis": true, "find": true, "head": true, "tail": true, "wc": true, "stat": true,
 		"du": true, "df": true, "ps": true, "man": true,
 	}
