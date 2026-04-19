@@ -12,7 +12,7 @@ Shellia is a terminal-native AI shell agent CLI. It converts natural language in
 go build -o shellia .           # Build local binary
 go run .                        # Interactive mode
 go run . "run git status"       # One-shot mode
-go test ./...                   # Run test suite
+env GOCACHE=/tmp/go-build go test -count=1 ./...  # Run test suite in sandboxed environments
 gofmt -w *.go                   # Format before opening a PR
 ```
 
@@ -39,9 +39,10 @@ main.go → parseArgs() → runInteractive() or one-shot
 | File | Responsibility |
 |------|---------------|
 | `main.go` | Entry point, arg parsing, interactive session loop, turn orchestration |
+| `runtime.go` | Runtime dependency injection for core loops: stdio, HTTP client, command runners |
 | `llm.go` | OpenAI-compatible API calls, prompt building, response parsing, streaming |
 | `executor.go` | Command execution with PTY, bounded output capture, working directory tracking |
-| `safety.go` | Local risk classification (safe/risky/dangerous) before any LLM trust |
+| `safety.go` + `safety_rules.go` | Local risk classification (safe/risky/dangerous) before any LLM trust |
 | `config.go` | TOML config loading; precedence: defaults → `~/.shellia/config.toml` → env vars → CLI flags |
 | `session_memory.go` | Session state across turns (pending intent, created files, runtime hints, observations) |
 | `ui.go` + `ui_stepbox.go` | Terminal rendering, ANSI colors, step boxes, plan visualization |
@@ -50,9 +51,17 @@ main.go → parseArgs() → runInteractive() or one-shot
 **Key types:**
 
 - `config` — merged configuration from all sources
+- `runtimeDeps` — injectable process dependencies for core loop tests and orchestration
 - `commandPlan` — LLM-generated plan for a single command (command, purpose, risk, interactive flag)
 - `commandExecution` — post-execution result including captured stdout/stderr and exit code
 - `sessionState` — rolling per-session memory for follow-up turns
+
+**Runtime dependencies and tests:**
+
+- `runInteractive`, `runTurn`, and executor entry points receive `runtimeDeps`.
+- New loop or executor tests should inject temp files for `Stdin`, `Stdout`, `Stderr`, a fake `HTTPClient`, and fake runners when useful.
+- Do not replace `os.Stdin`, `os.Stdout`, `os.Stderr`, or package-level HTTP state in new tests unless testing a true process-level wrapper.
+- Keep direct `os.*` access in thin compatibility wrappers, terminal primitives, or process entry points. New core logic should accept `runtimeDeps`, `io.Reader`/`io.Writer`, or `*http.Client`.
 
 **Safety classification pipeline** (local, not LLM-decided):
 1. Shell operators (|, &, >, ;, `) → Risky
@@ -68,5 +77,5 @@ main.go → parseArgs() → runInteractive() or one-shot
 
 - Comments may be in English or Catalan — match the language of the surrounding file.
 - Document new functions when the surrounding file does so.
-- No test files exist yet; add focused `_test.go` files near affected code using the standard `testing` package.
+- Add focused `_test.go` files near affected code using the standard `testing` package.
 - Reuse existing helpers before adding abstractions.

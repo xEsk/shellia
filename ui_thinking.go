@@ -25,7 +25,11 @@ const (
 
 // startThinkingIndicator renders a subtle animated Thinking status on the current line.
 func startThinkingIndicator(ui bool, target io.Writer) *thinkingIndicator {
-	fd := int(os.Stdout.Fd())
+	output, ok := target.(*os.File)
+	if !ok {
+		return nil
+	}
+	fd := int(output.Fd())
 	if !term.IsTerminal(fd) {
 		return nil
 	}

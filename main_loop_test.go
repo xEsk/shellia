@@ -37,18 +37,10 @@ type errorReadCloser struct {
 	err error
 }
 
-// newLoopLLMClient installs an OpenAI-compatible fake transport for main loop tests.
+// newLoopLLMClient builds an OpenAI-compatible fake transport for main loop tests.
 func newLoopLLMClient(t *testing.T, responses ...loopLLMResponse) *loopLLMClient {
 	t.Helper()
-
-	fake := &loopLLMClient{responses: responses}
-	previousClient := httpClient
-	httpClient = &http.Client{Transport: fake}
-	t.Cleanup(func() {
-		httpClient = previousClient
-	})
-
-	return fake
+	return &loopLLMClient{responses: responses}
 }
 
 // RoundTrip serves fake LLM responses without opening a local network listener.
@@ -105,6 +97,11 @@ func (fake *loopLLMClient) RoundTrip(r *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	return loopHTTPResponse(r, http.StatusOK, string(encoded), map[string]string{"Content-Type": "application/json"}), nil
+}
+
+// HTTPClient returns an isolated client backed by the fake transport.
+func (fake *loopLLMClient) HTTPClient() *http.Client {
+	return &http.Client{Transport: fake}
 }
 
 // RoundTrip returns a failed response whose body cannot be read.
@@ -192,7 +189,7 @@ func loopTestContext(t *testing.T) contextInfo {
 }
 
 // captureMainLoopIO replaces stdin/stdout with temporary files for deterministic loop tests.
-func captureMainLoopIO(t *testing.T, input string, fn func()) string {
+func captureMainLoopIO(t *testing.T, input string, client *http.Client, fn func(runtimeDeps)) string {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -212,18 +209,18 @@ func captureMainLoopIO(t *testing.T, input string, fn func()) string {
 		t.Fatalf("CreateTemp(stdout) error = %v", err)
 	}
 
-	previousStdin := os.Stdin
-	previousStdout := os.Stdout
-	os.Stdin = stdinFile
-	os.Stdout = stdoutFile
 	defer func() {
-		os.Stdin = previousStdin
-		os.Stdout = previousStdout
 		stdinFile.Close()  //nolint:errcheck
 		stdoutFile.Close() //nolint:errcheck
 	}()
 
-	fn()
+	deps := defaultRuntimeDeps()
+	deps.Stdin = stdinFile
+	deps.Stdout = stdoutFile
+	deps.Stderr = stdoutFile
+	deps.HTTPClient = client
+
+	fn(deps)
 
 	if _, err := stdoutFile.Seek(0, io.SeekStart); err != nil {
 		t.Fatalf("Seek(stdout) error = %v", err)
@@ -244,9 +241,9 @@ func TestRunTurnReturnsFinalAnswerWithoutCommands(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 
 	var result turnResult
-	output := captureMainLoopIO(t, "", func() {
+	output := captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
 		var err error
-		result, err = runTurn(context.Background(), false, cfg, &ctxInfo, "answer directly", nil, sessionState{})
+		result, err = runTurn(context.Background(), deps, false, cfg, &ctxInfo, "answer directly", nil, sessionState{})
 		if err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
@@ -278,9 +275,9 @@ func TestRunTurnExecutesSafePlanAndStreamsSummary(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 
 	var result turnResult
-	captureMainLoopIO(t, "", func() {
+	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
 		var err error
-		result, err = runTurn(context.Background(), false, cfg, &ctxInfo, "print marker", nil, sessionState{})
+		result, err = runTurn(context.Background(), deps, false, cfg, &ctxInfo, "print marker", nil, sessionState{})
 		if err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
@@ -316,8 +313,8 @@ func TestRunInteractiveProcessesPromptThenExit(t *testing.T) {
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
 
-	output := captureMainLoopIO(t, "answer something\n/exit\n", func() {
-		runInteractive(context.Background(), false, cfg, &ctxInfo)
+	output := captureMainLoopIO(t, "answer something\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		runInteractive(context.Background(), deps, false, cfg, &ctxInfo)
 	})
 
 	if fake.requestCount() != 1 {
@@ -337,8 +334,8 @@ func TestRunInteractiveIgnoresEmptyPrompt(t *testing.T) {
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
 
-	captureMainLoopIO(t, "\n/exit\n", func() {
-		runInteractive(context.Background(), false, cfg, &ctxInfo)
+	captureMainLoopIO(t, "\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		runInteractive(context.Background(), deps, false, cfg, &ctxInfo)
 	})
 
 	if fake.requestCount() != 0 {
@@ -356,7 +353,7 @@ func TestDoLLMStreamReturnsMalformedChunkError(t *testing.T) {
 	cfg := loopTestConfig(fake.URL())
 
 	var output strings.Builder
-	result, err := doLLMStream(context.Background(), cfg, chatCompletionRequest{Model: cfg.Model}, &output)
+	result, err := doLLMStream(context.Background(), fake.HTTPClient(), cfg, chatCompletionRequest{Model: cfg.Model}, &output)
 	if err == nil {
 		t.Fatalf("doLLMStream() error = nil, want malformed chunk error")
 	}
@@ -370,15 +367,10 @@ func TestDoLLMStreamReturnsMalformedChunkError(t *testing.T) {
 
 // TestDoLLMStreamReportsErrorBodyReadFailure checks failed stream diagnostics include body read errors.
 func TestDoLLMStreamReportsErrorBodyReadFailure(t *testing.T) {
-	previousClient := httpClient
-	httpClient = &http.Client{Transport: errorBodyTransport{}}
-	t.Cleanup(func() {
-		httpClient = previousClient
-	})
-
 	cfg := loopTestConfig("http://shellia.test")
 	var output strings.Builder
-	_, err := doLLMStream(context.Background(), cfg, chatCompletionRequest{Model: cfg.Model}, &output)
+	client := &http.Client{Transport: errorBodyTransport{}}
+	_, err := doLLMStream(context.Background(), client, cfg, chatCompletionRequest{Model: cfg.Model}, &output)
 	if err == nil {
 		t.Fatalf("doLLMStream() error = nil, want HTTP error")
 	}

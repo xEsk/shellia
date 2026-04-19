@@ -13,8 +13,13 @@ const (
 
 // printSessionBanner shows the polished startup banner for the interactive session.
 func printSessionBanner(ui bool) {
-	fmt.Println()
-	renderSessionBanner(os.Stdout, ui, boxWidth())
+	printSessionBannerTo(os.Stdout, ui)
+}
+
+// printSessionBannerTo shows the polished startup banner on the provided target.
+func printSessionBannerTo(target io.Writer, ui bool) {
+	fmt.Fprintln(target)
+	renderSessionBanner(target, ui, boxWidthFor(target))
 }
 
 // renderSessionBanner writes the startup banner using a compact grey panel when ANSI is available.

@@ -3,9 +3,24 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 )
+
+// nonTerminalStdin returns a temporary file usable as non-TTY stdin in prompt tests.
+func nonTerminalStdin(t *testing.T) *os.File {
+	t.Helper()
+
+	file, err := os.CreateTemp(t.TempDir(), "stdin")
+	if err != nil {
+		t.Fatalf("CreateTemp(stdin) error = %v", err)
+	}
+	t.Cleanup(func() {
+		file.Close() //nolint:errcheck
+	})
+	return file
+}
 
 // TestStepBoxCloseAvoidsDoubleSpacing checks that closing one step box and opening
 // the next does not leave two blank rows before the separator.
@@ -20,7 +35,7 @@ func TestStepBoxCloseAvoidsDoubleSpacing(t *testing.T) {
 	second := newStepBox(&buffer, false, "step 2/2")
 	second.Close()
 
-	separator := strings.Repeat("─", boxWidth())
+	separator := strings.Repeat("─", boxWidthFor(&buffer))
 	doubleGap := "  hello\n\n\n" + separator
 	if strings.Contains(buffer.String(), doubleGap) {
 		t.Fatalf("step box output contains a double blank gap before the separator: %q", buffer.String())
@@ -85,7 +100,7 @@ func TestPromptConfirmationUsesDefaultOnEnter(t *testing.T) {
 	box := newStepBox(&buffer, false, "step 1/1")
 	reader := bufio.NewReader(strings.NewReader("\n"))
 
-	decision, _, err := promptConfirmation(box, reader, "Run step 1/1?", "true", confirmationDefaultYes)
+	decision, _, err := promptConfirmation(box, reader, nonTerminalStdin(t), "Run step 1/1?", "true", confirmationDefaultYes)
 	if err != nil {
 		t.Fatalf("promptConfirmation() error = %v", err)
 	}
@@ -100,7 +115,7 @@ func TestPromptConfirmationRequiresChoiceWithoutDefault(t *testing.T) {
 	box := newStepBox(&buffer, false, "step 1/1")
 	reader := bufio.NewReader(strings.NewReader("\ny\n"))
 
-	decision, _, err := promptConfirmation(box, reader, "Run step 1/1?", "true", confirmationDefaultNone)
+	decision, _, err := promptConfirmation(box, reader, nonTerminalStdin(t), "Run step 1/1?", "true", confirmationDefaultNone)
 	if err != nil {
 		t.Fatalf("promptConfirmation() error = %v", err)
 	}

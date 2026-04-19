@@ -421,17 +421,18 @@ func getGitContext(cwd string) gitContext {
 }
 
 // executeCommands runs the sequential plan, stopping on the first unrecoverable error.
-func executeCommands(ctx context.Context, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan) ([]commandExecution, error) {
-	reader := bufio.NewReader(os.Stdin)
+func executeCommands(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan) ([]commandExecution, error) {
+	deps = deps.withDefaults()
+	reader := bufio.NewReader(deps.Stdin)
 	executions := make([]commandExecution, 0, len(plans))
 
 	for index, plan := range plans {
-		box := printCommandExecution(ui, cfg, index+1, len(plans), plan)
+		box := printCommandExecutionTo(deps.Stdout, ui, cfg, index+1, len(plans), plan)
 		effectiveCommand := plan.Command
 		interactive := plan.Interactive
 
 		if !(cfg.YesSafe && plan.LocalSafe && !plan.Interactive) {
-			decision, editedCommand, err := promptConfirmation(box, reader, fmt.Sprintf("Run step %d/%d?", index+1, len(plans)), plan.Command, cfg.ConfirmationDefault)
+			decision, editedCommand, err := promptConfirmation(box, reader, deps.Stdin, fmt.Sprintf("Run step %d/%d?", index+1, len(plans)), plan.Command, cfg.ConfirmationDefault)
 			if err != nil {
 				box.Close()
 				return nil, fmt.Errorf("cannot read confirmation: %w", err)
@@ -448,7 +449,7 @@ func executeCommands(ctx context.Context, ui bool, cfg config, ctxInfo *contextI
 			}
 		}
 
-		output, exitCode, hadOutput, err := executeOneCommand(ctx, ui, cfg, *ctxInfo, box, effectiveCommand, cfg.CommandTimeout, false, interactive)
+		output, exitCode, hadOutput, err := executeOneCommand(ctx, deps, ui, cfg, *ctxInfo, box, effectiveCommand, cfg.CommandTimeout, false, interactive)
 		executions = append(executions, commandExecution{
 			Command:  effectiveCommand,
 			Purpose:  plan.Purpose,
@@ -477,7 +478,7 @@ func executeCommands(ctx context.Context, ui bool, cfg config, ctxInfo *contextI
 				return executions, err
 			}
 			if cfg.ContinueOnError {
-				printWarning(ui, err.Error())
+				printWarningTo(deps.Stderr, ui, err.Error())
 				continue
 			}
 			return executions, err
@@ -494,18 +495,20 @@ func executeCommands(ctx context.Context, ui bool, cfg config, ctxInfo *contextI
 }
 
 // executeManualCommand runs a direct shell command inside the current Shellia session.
-func executeManualCommand(ctx context.Context, ui bool, cfg config, ctxInfo *contextInfo, command string, renderMode manualRenderMode) (commandExecution, error) {
+func executeManualCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo, command string, renderMode manualRenderMode) (commandExecution, error) {
+	deps = deps.withDefaults()
 	var box *stepBox
 	if renderMode == manualRenderInline {
-		box = newStepBox(os.Stdout, ui, "shell")
+		box = newStepBox(deps.Stdout, ui, "shell")
 		box.Spacer()
 		box.Command(command)
 	} else if renderMode == manualRenderInteractive {
-		printInfo(ui, "Starting interactive command. Shellia will resume when it exits.")
+		printInfoTo(deps.Stdout, ui, "Starting interactive command. Shellia will resume when it exits.")
 	}
 
 	output, exitCode, hadOutput, err := executeOneCommand(
 		ctx,
+		deps,
 		ui,
 		cfg,
 		*ctxInfo,
@@ -560,7 +563,8 @@ func showCompletedMarker(box *stepBox, hadOutput bool) {
 
 // executeOneCommand launches a command via the current shell with real-time output streaming.
 // hadOutput is true when command output was rendered to the user.
-func executeOneCommand(ctx context.Context, ui bool, cfg config, ctxInfo contextInfo, box *stepBox, command string, timeout time.Duration, directStream bool, interactive bool) (output commandExecution, exitCode int, hadOutput bool, err error) {
+func executeOneCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo contextInfo, box *stepBox, command string, timeout time.Duration, directStream bool, interactive bool) (output commandExecution, exitCode int, hadOutput bool, err error) {
+	deps = deps.withDefaults()
 	var cmdCtx context.Context
 	var cancel context.CancelFunc
 
@@ -583,7 +587,7 @@ func executeOneCommand(ctx context.Context, ui bool, cfg config, ctxInfo context
 			box.Text("Shellia will resume when the command exits.", colorDim)
 			box.Close()
 		}
-		return executeInteractiveCommand(cmdCtx, ui, cfg, ctxInfo, shellPath, command)
+		return executeInteractiveCommand(cmdCtx, deps, ui, cfg, ctxInfo, shellPath, command)
 	}
 
 	cmd := exec.CommandContext(cmdCtx, shellPath, "-c", command)
@@ -600,8 +604,8 @@ func executeOneCommand(ctx context.Context, ui bool, cfg config, ctxInfo context
 	var stderrWriter *prefixedWriter
 
 	if directStream {
-		stdoutStream = &directShellWriter{ui: ui, target: os.Stdout, lineStart: true}
-		stderrStream = &directShellWriter{ui: ui, target: os.Stderr, lineStart: true}
+		stdoutStream = &directShellWriter{ui: ui, target: deps.Stdout, lineStart: true}
+		stderrStream = &directShellWriter{ui: ui, target: deps.Stderr, lineStart: true}
 	} else {
 		stdoutWriter = &prefixedWriter{box: box, hidden: !cfg.ShowSystemOutput}
 		stderrWriter = &prefixedWriter{box: box, hidden: !cfg.ShowSystemOutput}
@@ -677,7 +681,8 @@ func executeOneCommand(ctx context.Context, ui bool, cfg config, ctxInfo context
 
 // executeInteractiveCommand temporarily hands over the terminal to a process that
 // needs a real interactive session and captures part of its output.
-func executeInteractiveCommand(ctx context.Context, ui bool, cfg config, ctxInfo contextInfo, shellPath string, command string) (output commandExecution, exitCode int, hadOutput bool, err error) {
+func executeInteractiveCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo contextInfo, shellPath string, command string) (output commandExecution, exitCode int, hadOutput bool, err error) {
+	deps = deps.withDefaults()
 	cmd := exec.CommandContext(ctx, shellPath, "-c", command)
 	cmd.Dir = ctxInfo.CWD
 
@@ -688,9 +693,9 @@ func executeInteractiveCommand(ctx context.Context, ui bool, cfg config, ctxInfo
 	defer ptmx.Close() //nolint:errcheck
 
 	stdoutCapture := &limitedCaptureWriter{limit: cfg.CaptureStdoutBytes}
-	stream := io.MultiWriter(os.Stdout, stdoutCapture)
+	stream := io.MultiWriter(deps.Stdout, stdoutCapture)
 
-	fd := int(os.Stdin.Fd())
+	fd := int(deps.Stdin.Fd())
 	restoreTerminal := func() {}
 	restoreBlocking := func() {}
 	if term.IsTerminal(fd) {
@@ -709,11 +714,11 @@ func executeInteractiveCommand(ctx context.Context, ui bool, cfg config, ctxInfo
 	defer restoreTerminal()
 	defer restoreBlocking()
 
-	if _, err := fmt.Fprintln(os.Stdout); err != nil {
+	if _, err := fmt.Fprintln(deps.Stdout); err != nil {
 		return commandExecution{}, 1, false, err
 	}
 
-	_ = pty.InheritSize(os.Stdin, ptmx)
+	_ = pty.InheritSize(deps.Stdin, ptmx)
 
 	copyDone := make(chan error, 1)
 	go func() {

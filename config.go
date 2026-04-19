@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -206,6 +207,11 @@ func settingsPath() (string, error) {
 
 // initConfigFile creates ~/.shellia/config.toml with an initial readable template.
 func initConfigFile(ui bool) error {
+	return initConfigFileTo(os.Stdout, ui)
+}
+
+// initConfigFileTo creates ~/.shellia/config.toml and reports the result on the provided target.
+func initConfigFileTo(target io.Writer, ui bool) error {
 	path, err := settingsPath()
 	if err != nil {
 		return err
@@ -217,7 +223,7 @@ func initConfigFile(ui bool) error {
 	}
 
 	if _, err := os.Stat(path); err == nil {
-		renderPanel(os.Stdout, ui, "config", colorYellow, []string{
+		renderPanel(target, ui, "config", colorYellow, []string{
 			"Config already exists.",
 			path,
 		})
@@ -230,7 +236,7 @@ func initConfigFile(ui bool) error {
 		return fmt.Errorf("cannot write config file: %w", err)
 	}
 
-	renderPanel(os.Stdout, ui, "config", colorGreen, []string{
+	renderPanel(target, ui, "config", colorGreen, []string{
 		"Config created.",
 		path,
 	})

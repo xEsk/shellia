@@ -42,7 +42,7 @@ func TestPrintSeparatorUsesStandardLine(t *testing.T) {
 
 	printSeparator(&buffer, false)
 
-	want := strings.Repeat("─", boxWidth()) + "\n"
+	want := strings.Repeat("─", boxWidthFor(&buffer)) + "\n"
 	if got := buffer.String(); got != want {
 		t.Fatalf("printSeparator() = %q, want %q", got, want)
 	}

@@ -12,10 +12,6 @@ import (
 	"time"
 )
 
-// httpClient is shared across all LLM requests for connection pooling.
-// Timeouts are enforced via per-request context, not on the client itself.
-var httpClient = &http.Client{}
-
 const (
 	maxRetries     = 3
 	retryBaseDelay = 500 * time.Millisecond
@@ -81,10 +77,13 @@ func isRetryable(statusCode int) bool {
 
 // doLLMRequest is the single non-streaming HTTP entry point for all model calls.
 // It retries up to maxRetries times on transient errors (429, 5xx) with exponential backoff.
-func doLLMRequest(ctx context.Context, cfg config, req chatCompletionRequest) (string, error) {
+func doLLMRequest(ctx context.Context, client *http.Client, cfg config, req chatCompletionRequest) (string, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return "", fmt.Errorf("cannot encode LLM request: %w", err)
+	}
+	if client == nil {
+		client = http.DefaultClient
 	}
 
 	url := strings.TrimRight(cfg.BaseURL, "/") + "/chat/completions"
@@ -112,7 +111,7 @@ func doLLMRequest(ctx context.Context, cfg config, req chatCompletionRequest) (s
 		httpReq.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 		httpReq.Header.Set("Content-Type", "application/json")
 
-		resp, err := httpClient.Do(httpReq)
+		resp, err := client.Do(httpReq)
 		if err != nil {
 			lastErr = fmt.Errorf("LLM request failed: %w", err)
 			continue
@@ -156,11 +155,14 @@ func doLLMRequest(ctx context.Context, cfg config, req chatCompletionRequest) (s
 // doLLMStream performs a streaming LLM request.
 // Delta tokens are written to w as they arrive; the full accumulated string is returned.
 // The initial HTTP response is retried on transient errors before the stream is consumed.
-func doLLMStream(ctx context.Context, cfg config, req chatCompletionRequest, w io.Writer) (string, error) {
+func doLLMStream(ctx context.Context, client *http.Client, cfg config, req chatCompletionRequest, w io.Writer) (string, error) {
 	req.Stream = true
 	body, err := json.Marshal(req)
 	if err != nil {
 		return "", fmt.Errorf("cannot encode LLM request: %w", err)
+	}
+	if client == nil {
+		client = http.DefaultClient
 	}
 
 	url := strings.TrimRight(cfg.BaseURL, "/") + "/chat/completions"
@@ -185,7 +187,7 @@ func doLLMStream(ctx context.Context, cfg config, req chatCompletionRequest, w i
 		httpReq.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 		httpReq.Header.Set("Content-Type", "application/json")
 
-		resp, err = httpClient.Do(httpReq)
+		resp, err = client.Do(httpReq)
 		if err != nil {
 			lastErr = fmt.Errorf("LLM stream request failed: %w", err)
 			continue
@@ -261,28 +263,28 @@ func readHTTPErrorBody(body io.Reader) string {
 }
 
 // callLLM sends the instruction and context to the model to obtain an execution plan.
-func callLLM(ctx context.Context, cfg config, ctxInfo contextInfo, instruction string, history []historyEntry, state sessionState, observations []commandExecution) (string, error) {
+func callLLM(ctx context.Context, client *http.Client, cfg config, ctxInfo contextInfo, instruction string, history []historyEntry, state sessionState, observations []commandExecution) (string, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, cfg.RequestTimeout)
 	defer cancel()
 
 	resolvedInstruction := resolveInstructionForPlanning(instruction, state)
 
-	return callPlanningPrompt(reqCtx, cfg, buildSystemPrompt(), buildUserPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations))
+	return callPlanningPrompt(reqCtx, client, cfg, buildSystemPrompt(), buildUserPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations))
 }
 
 // callDiscoveryRepairLLM retries an empty planning response with a discovery-only repair prompt.
-func callDiscoveryRepairLLM(ctx context.Context, cfg config, ctxInfo contextInfo, instruction string, history []historyEntry, state sessionState, observations []commandExecution, previous llmResponse) (string, error) {
+func callDiscoveryRepairLLM(ctx context.Context, client *http.Client, cfg config, ctxInfo contextInfo, instruction string, history []historyEntry, state sessionState, observations []commandExecution, previous llmResponse) (string, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, cfg.RequestTimeout)
 	defer cancel()
 
 	resolvedInstruction := resolveInstructionForPlanning(instruction, state)
 
-	return callPlanningPrompt(reqCtx, cfg, buildSystemPrompt(), buildDiscoveryRepairPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations, previous))
+	return callPlanningPrompt(reqCtx, client, cfg, buildSystemPrompt(), buildDiscoveryRepairPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations, previous))
 }
 
 // callPlanningPrompt sends a planning prompt pair to the model and returns the raw JSON response.
-func callPlanningPrompt(ctx context.Context, cfg config, systemPrompt string, userPrompt string) (string, error) {
-	return doLLMRequest(ctx, cfg, chatCompletionRequest{
+func callPlanningPrompt(ctx context.Context, client *http.Client, cfg config, systemPrompt string, userPrompt string) (string, error) {
+	return doLLMRequest(ctx, client, cfg, chatCompletionRequest{
 		Model:          cfg.Model,
 		Temperature:    0,
 		ResponseFormat: &responseFormat{Type: "json_object"},
@@ -295,7 +297,7 @@ func callPlanningPrompt(ctx context.Context, cfg config, systemPrompt string, us
 
 // streamSummarizeExecutions streams a short final answer based on real command output.
 // Tokens are written to w as they arrive; the full string is returned for history.
-func streamSummarizeExecutions(ctx context.Context, cfg config, instruction string, executions []commandExecution, w io.Writer) (string, error) {
+func streamSummarizeExecutions(ctx context.Context, client *http.Client, cfg config, instruction string, executions []commandExecution, w io.Writer) (string, error) {
 	var transcript strings.Builder
 	for index, execution := range executions {
 		fmt.Fprintf(&transcript, "Step %d\n", index+1)
@@ -308,7 +310,7 @@ func streamSummarizeExecutions(ctx context.Context, cfg config, instruction stri
 	reqCtx, cancel := context.WithTimeout(ctx, cfg.RequestTimeout)
 	defer cancel()
 
-	return doLLMStream(reqCtx, cfg, chatCompletionRequest{
+	return doLLMStream(reqCtx, client, cfg, chatCompletionRequest{
 		Model:       cfg.Model,
 		Temperature: 0,
 		Messages: []chatMessage{

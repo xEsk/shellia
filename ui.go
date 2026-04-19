@@ -163,6 +163,11 @@ func exitWithError(ui bool, message string, code int) {
 
 // printContext shows the detected context when debug mode is enabled.
 func printContext(ui bool, ctxInfo contextInfo) {
+	printContextTo(os.Stdout, ui, ctxInfo)
+}
+
+// printContextTo shows the detected context on the provided target.
+func printContextTo(target io.Writer, ui bool, ctxInfo contextInfo) {
 	lines := []string{
 		metaLine(ui, "cwd", ctxInfo.CWD),
 		metaLine(ui, "user", ctxInfo.User),
@@ -176,18 +181,23 @@ func printContext(ui bool, ctxInfo contextInfo) {
 	} else {
 		lines = append(lines, fmt.Sprintf("%s\n%s", metaLabel(ui, "status"), indentLines(ctxInfo.Git.StatusShort, shellStreamPrefix(ui))))
 	}
-	renderPanel(os.Stdout, ui, "context", colorBlue, lines)
+	renderPanel(target, ui, "context", colorBlue, lines)
 }
 
 // printPlan presents the summary and the commands proposed by the model.
 func printPlan(ui bool, cfg config, summary string, plans []commandPlan, discovery bool) {
+	printPlanTo(os.Stdout, ui, cfg, summary, plans, discovery)
+}
+
+// printPlanTo presents the summary and the commands proposed by the model on the provided target.
+func printPlanTo(target io.Writer, ui bool, cfg config, summary string, plans []commandPlan, discovery bool) {
 	title := "plan"
 	titleColor := colorMagenta
 	if discovery {
 		title = "discovery"
 		titleColor = colorCyan
 	}
-	renderPanel(os.Stdout, ui, title, titleColor, []string{style(ui, colorWhite+colorBold, summary)})
+	renderPanel(target, ui, title, titleColor, []string{style(ui, colorWhite+colorBold, summary)})
 
 	if len(plans) == 0 || !cfg.Verbose {
 		return
@@ -204,25 +214,40 @@ func printPlan(ui bool, cfg config, summary string, plans []commandPlan, discove
 			"",
 		)
 	}
-	renderPanel(os.Stdout, ui, "steps", colorDim, trimTrailingBlankLines(lines))
+	renderPanel(target, ui, "steps", colorDim, trimTrailingBlankLines(lines))
 }
 
 // printHeader shows a compact header with the global session state.
 func printHeader(ui bool, ctxInfo contextInfo) {
-	fmt.Println()
-	fmt.Println(shelliaBrand(ui, false) + style(ui, colorDim, " · ") + shelliaVersionBadge(ui))
-	fmt.Println(style(ui, colorDim, fmt.Sprintf("%s · %s", ctxInfo.CWD, plainHeaderGitValue(ctxInfo))))
+	printHeaderTo(os.Stdout, ui, ctxInfo)
+}
+
+// printHeaderTo shows a compact header with the global session state on the provided target.
+func printHeaderTo(target io.Writer, ui bool, ctxInfo contextInfo) {
+	fmt.Fprintln(target)
+	fmt.Fprintln(target, shelliaBrand(ui, false)+style(ui, colorDim, " · ")+shelliaVersionBadge(ui))
+	fmt.Fprintln(target, style(ui, colorDim, fmt.Sprintf("%s · %s", ctxInfo.CWD, plainHeaderGitValue(ctxInfo))))
 }
 
 // printSection draws a section header with stronger visual hierarchy.
 func printSection(ui bool, title string, color string) {
-	fmt.Println()
-	fmt.Println(style(ui, color+colorBold, title))
+	printSectionTo(os.Stdout, ui, title, color)
+}
+
+// printSectionTo draws a section header with stronger visual hierarchy on the provided target.
+func printSectionTo(target io.Writer, ui bool, title string, color string) {
+	fmt.Fprintln(target)
+	fmt.Fprintln(target, style(ui, color+colorBold, title))
 }
 
 // printCommandExecution presents the active command inside a step box before running it.
 func printCommandExecution(ui bool, cfg config, index int, total int, plan commandPlan) *stepBox {
-	box := newStepBox(os.Stdout, ui, fmt.Sprintf("step %d/%d", index, total))
+	return printCommandExecutionTo(os.Stdout, ui, cfg, index, total, plan)
+}
+
+// printCommandExecutionTo presents the active command inside a step box on the provided target.
+func printCommandExecutionTo(target io.Writer, ui bool, cfg config, index int, total int, plan commandPlan) *stepBox {
+	box := newStepBox(target, ui, fmt.Sprintf("step %d/%d", index, total))
 	box.Spacer()
 	box.Command(plan.Command)
 	box.Spacer()
@@ -238,49 +263,79 @@ func printCommandExecution(ui bool, cfg config, index int, total int, plan comma
 
 // printInfo shows a short informational message.
 func printInfo(ui bool, message string) {
-	fmt.Printf("%s %s\n", shelliaBrand(ui, false), style(ui, colorWhite+colorBold, message))
+	printInfoTo(os.Stdout, ui, message)
+}
+
+// printInfoTo shows a short informational message on the provided target.
+func printInfoTo(target io.Writer, ui bool, message string) {
+	fmt.Fprintf(target, "%s %s\n", shelliaBrand(ui, false), style(ui, colorWhite+colorBold, message))
 }
 
 // printModeStatus shows an interactive mode state change with cleaner output.
 func printModeStatus(ui bool, message string) {
-	renderPanel(os.Stdout, ui, "mode", colorCyan, []string{
+	printModeStatusTo(os.Stdout, ui, message)
+}
+
+// printModeStatusTo shows an interactive mode state change on the provided target.
+func printModeStatusTo(target io.Writer, ui bool, message string) {
+	renderPanel(target, ui, "mode", colorCyan, []string{
 		style(ui, colorWhite+colorBold, message),
 	})
 }
 
 // printWarning shows a non-fatal warning.
 func printWarning(ui bool, message string) {
-	fmt.Fprintf(os.Stderr, "%s %s\n", style(ui, colorYellow+colorBold, "warning"), style(ui, colorWhite+colorBold, message))
+	printWarningTo(os.Stderr, ui, message)
+}
+
+// printWarningTo shows a non-fatal warning on the provided target.
+func printWarningTo(target io.Writer, ui bool, message string) {
+	fmt.Fprintf(target, "%s %s\n", style(ui, colorYellow+colorBold, "warning"), style(ui, colorWhite+colorBold, message))
 }
 
 // printSeparator shows the standard horizontal separator used between sections.
 func printSeparator(target io.Writer, ui bool) {
-	fmt.Fprintln(target, style(ui, colorDim, strings.Repeat("─", boxWidth())))
+	fmt.Fprintln(target, style(ui, colorDim, strings.Repeat("─", boxWidthFor(target))))
 }
 
 // printFinalResult shows the final useful answer for the user (non-streaming fallback).
 func printFinalResult(ui bool, message string) {
-	fmt.Println()
-	fmt.Println(shelliaBrand(ui, false))
-	renderAnswerBlock(os.Stdout, ui, message, nil)
-	fmt.Println()
-	printSeparator(os.Stdout, ui)
+	printFinalResultTo(os.Stdout, ui, message)
+}
+
+// printFinalResultTo shows the final useful answer on the provided target.
+func printFinalResultTo(target io.Writer, ui bool, message string) {
+	fmt.Fprintln(target)
+	fmt.Fprintln(target, shelliaBrand(ui, false))
+	renderAnswerBlock(target, ui, message, nil)
+	fmt.Fprintln(target)
+	printSeparator(target, ui)
 }
 
 // openResultPanel opens the streaming result block.
 func openResultPanel(ui bool) {
-	fmt.Println()
-	printSeparator(os.Stdout, ui)
-	fmt.Println()
-	fmt.Println(shelliaBrand(ui, false))
+	openResultPanelTo(os.Stdout, ui)
+}
+
+// openResultPanelTo opens the streaming result block on the provided target.
+func openResultPanelTo(target io.Writer, ui bool) {
+	fmt.Fprintln(target)
+	printSeparator(target, ui)
+	fmt.Fprintln(target)
+	fmt.Fprintln(target, shelliaBrand(ui, false))
 }
 
 // closeResultPanel visually closes the streaming result.
 func closeResultPanel(ui bool) {
-	fmt.Print(styleEnd(ui))
-	fmt.Println()
-	fmt.Println()
-	printSeparator(os.Stdout, ui)
+	closeResultPanelTo(os.Stdout, ui)
+}
+
+// closeResultPanelTo visually closes the streaming result on the provided target.
+func closeResultPanelTo(target io.Writer, ui bool) {
+	fmt.Fprint(target, styleEnd(ui))
+	fmt.Fprintln(target)
+	fmt.Fprintln(target)
+	printSeparator(target, ui)
 }
 
 // resultWriter wraps os.Stdout to prefix each line with a subtle result indent.
@@ -288,6 +343,7 @@ func closeResultPanel(ui bool) {
 // regardless of whether lineStart is currently true or false.
 type resultWriter struct {
 	ui            bool
+	target        io.Writer
 	wroteAnything bool
 	buffer        strings.Builder
 	state         answerRenderState
@@ -306,7 +362,11 @@ func (writer *resultWriter) Write(data []byte) (int, error) {
 
 	if len(layoutAnswerLines(writer.buffer.String(), answerContentWidth(writer.ui))) > 0 {
 		writer.wroteAnything = true
-		if err := renderAnswerBlock(os.Stdout, writer.ui, writer.buffer.String(), &writer.state); err != nil {
+		target := writer.target
+		if target == nil {
+			target = os.Stdout
+		}
+		if err := renderAnswerBlock(target, writer.ui, writer.buffer.String(), &writer.state); err != nil {
 			return 0, err
 		}
 	}
@@ -421,20 +481,27 @@ const (
 )
 
 // readInteractivePrompt shows a clear prompt and returns the entered text.
-func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode, showCommandPopup bool) (string, error) {
-	fmt.Println()
-	fmt.Println(promptQuestionLine(ui, mode))
+func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout io.Writer, mode interactiveMode, showCommandPopup bool) (string, error) {
+	if stdin == nil {
+		stdin = os.Stdin
+	}
+	if stdout == nil {
+		stdout = os.Stdout
+	}
+
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, promptQuestionLine(ui, mode))
 	prompt := promptPrefix(ui, mode)
 
-	fd := int(os.Stdin.Fd())
+	fd := int(stdin.Fd())
 	if !term.IsTerminal(fd) {
-		fmt.Print(prompt)
+		fmt.Fprint(stdout, prompt)
 		return readFallbackPromptLine(reader)
 	}
 
 	state, err := term.MakeRaw(fd)
 	if err != nil {
-		fmt.Print(prompt)
+		fmt.Fprint(stdout, prompt)
 		return readFallbackPromptLine(reader)
 	}
 	defer term.Restore(fd, state) //nolint:errcheck
@@ -446,15 +513,16 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode, 
 	renderState := &editableRenderState{}
 
 	promptWidth := visibleWidth(prompt)
-	contentWidth := promptRenderWidth() - promptWidth
+	renderWidth := promptRenderWidthFor(stdout)
+	contentWidth := renderWidth - promptWidth
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
 
-	renderEditablePrompt(ui, prompt, buffer, cursor, affinity, renderState, showCommandPopup)
+	renderEditablePromptTo(stdout, ui, prompt, buffer, cursor, affinity, renderState, showCommandPopup)
 
 	for {
-		_, err := os.Stdin.Read(single)
+		_, err := stdin.Read(single)
 		if err != nil {
 			return "", err
 		}
@@ -466,29 +534,29 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode, 
 					buffer = buffer[:0]
 					cursor = 0
 					affinity = cursorAffinityForward
-					renderEditablePrompt(ui, prompt, buffer, cursor, affinity, renderState, showCommandPopup)
+					renderEditablePromptTo(stdout, ui, prompt, buffer, cursor, affinity, renderState, showCommandPopup)
 				}
 				continue
 			}
 			submitted := strings.TrimSpace(string(buffer))
-			clearEditablePrompt(renderState)
-			printSubmittedPrompt(ui, prompt, buffer)
-			fmt.Print("\r\n")
+			clearEditablePromptTo(stdout, renderState)
+			printSubmittedPromptTo(stdout, ui, prompt, buffer)
+			fmt.Fprint(stdout, "\r\n")
 			return submitted, nil
 		case 3:
-			clearEditablePrompt(renderState)
-			printSubmittedPrompt(ui, prompt, buffer)
-			fmt.Print("\r\n")
+			clearEditablePromptTo(stdout, renderState)
+			printSubmittedPromptTo(stdout, ui, prompt, buffer)
+			fmt.Fprint(stdout, "\r\n")
 			return "exit", nil
 		case 27:
-			exitPrompt, err := applyEscapeSequenceOrExit(fd, &buffer, &cursor, contentWidth, &affinity)
+			exitPrompt, err := applyEscapeSequenceOrExit(stdin, fd, &buffer, &cursor, contentWidth, &affinity)
 			if err != nil {
 				return "", err
 			}
 			if exitPrompt {
-				clearEditablePrompt(renderState)
-				printSubmittedPrompt(ui, prompt, buffer)
-				fmt.Print("\r\n")
+				clearEditablePromptTo(stdout, renderState)
+				printSubmittedPromptTo(stdout, ui, prompt, buffer)
+				fmt.Fprint(stdout, "\r\n")
 				return "exit", nil
 			}
 		case 127, 8:
@@ -505,7 +573,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode, 
 				affinity = cursorAffinityForward
 			}
 		default:
-			r, err := readInputRune(single[0])
+			r, err := readInputRuneFrom(stdin, single[0])
 			if err != nil {
 				if errors.Is(err, errDiscardRune) {
 					continue
@@ -517,7 +585,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode, 
 			affinity = cursorAffinityForward
 		}
 
-		renderEditablePrompt(ui, prompt, buffer, cursor, affinity, renderState, showCommandPopup)
+		renderEditablePromptTo(stdout, ui, prompt, buffer, cursor, affinity, renderState, showCommandPopup)
 	}
 }
 
@@ -543,17 +611,22 @@ func promptHasText(buffer []rune) bool {
 
 // printSubmittedPrompt redraws only the submitted prompt and removes transient UI.
 func printSubmittedPrompt(ui bool, prompt string, buffer []rune) {
-	lines, _, _ := editablePromptLayout(prompt, buffer, len(buffer), cursorAffinityForward, promptRenderWidth())
+	printSubmittedPromptTo(os.Stdout, ui, prompt, buffer)
+}
+
+// printSubmittedPromptTo redraws only the submitted prompt on the provided target.
+func printSubmittedPromptTo(target io.Writer, ui bool, prompt string, buffer []rune) {
+	lines, _, _ := editablePromptLayout(prompt, buffer, len(buffer), cursorAffinityForward, promptRenderWidthFor(target))
 	promptWidth := visibleWidth(prompt)
 
 	for index, line := range lines {
 		if index > 0 {
-			fmt.Print("\r\n")
-			fmt.Print(strings.Repeat(" ", promptWidth))
+			fmt.Fprint(target, "\r\n")
+			fmt.Fprint(target, strings.Repeat(" ", promptWidth))
 		} else {
-			fmt.Print(prompt)
+			fmt.Fprint(target, prompt)
 		}
-		fmt.Print(style(ui, colorWhite, line))
+		fmt.Fprint(target, style(ui, colorWhite, line))
 	}
 }
 
@@ -625,22 +698,22 @@ func logConfirmationChoice(box *stepBox, prompt string, defaultChoice confirmati
 }
 
 // promptConfirmation asks for explicit confirmation inside the step box.
-func promptConfirmation(box *stepBox, reader *bufio.Reader, prompt string, initialCommand string, defaultChoice confirmationDefault) (confirmDecision, string, error) {
+func promptConfirmation(box *stepBox, reader *bufio.Reader, stdin *os.File, prompt string, initialCommand string, defaultChoice confirmationDefault) (confirmDecision, string, error) {
 	renderConfirmationPrompt(box, prompt, defaultChoice)
 
-	key, ok, err := readSingleConfirmationKey()
+	key, ok, err := readSingleConfirmationKey(stdin)
 	if err == nil && ok {
 		for {
 			if isConfirmationEnterKey(key) && defaultChoice != confirmationDefaultNone {
-				return applyConfirmationChoice(box, reader, prompt, initialCommand, defaultChoice, defaultChoice)
+				return applyConfirmationChoice(box, reader, stdin, prompt, initialCommand, defaultChoice, defaultChoice)
 			}
 
 			lower := strings.ToLower(string(key))
 			if choice, found := parseConfirmationChoice(lower); found {
-				return applyConfirmationChoice(box, reader, prompt, initialCommand, defaultChoice, choice)
+				return applyConfirmationChoice(box, reader, stdin, prompt, initialCommand, defaultChoice, choice)
 			}
 
-			key, ok, err = readSingleConfirmationKey()
+			key, ok, err = readSingleConfirmationKey(stdin)
 			if err != nil || !ok {
 				break
 			}
@@ -656,7 +729,7 @@ func promptConfirmation(box *stepBox, reader *bufio.Reader, prompt string, initi
 		answer := strings.ToLower(strings.TrimSpace(line))
 		if answer == "" {
 			if defaultChoice != confirmationDefaultNone {
-				return applyConfirmationChoice(box, reader, prompt, initialCommand, defaultChoice, defaultChoice)
+				return applyConfirmationChoice(box, reader, stdin, prompt, initialCommand, defaultChoice, defaultChoice)
 			}
 			if errors.Is(err, io.EOF) {
 				logConfirmationChoice(box, prompt, defaultChoice, "no")
@@ -666,7 +739,7 @@ func promptConfirmation(box *stepBox, reader *bufio.Reader, prompt string, initi
 		}
 
 		if choice, found := parseConfirmationChoice(answer); found {
-			return applyConfirmationChoice(box, reader, prompt, initialCommand, defaultChoice, choice)
+			return applyConfirmationChoice(box, reader, stdin, prompt, initialCommand, defaultChoice, choice)
 		}
 
 		logConfirmationChoice(box, prompt, defaultChoice, "no")
@@ -719,14 +792,14 @@ func parseConfirmationChoice(value string) (confirmationDefault, bool) {
 }
 
 // applyConfirmationChoice applies a parsed confirmation action and logs it in the prompt row.
-func applyConfirmationChoice(box *stepBox, reader *bufio.Reader, prompt string, initialCommand string, defaultChoice confirmationDefault, choice confirmationDefault) (confirmDecision, string, error) {
+func applyConfirmationChoice(box *stepBox, reader *bufio.Reader, stdin *os.File, prompt string, initialCommand string, defaultChoice confirmationDefault, choice confirmationDefault) (confirmDecision, string, error) {
 	switch choice {
 	case confirmationDefaultYes:
 		logConfirmationChoice(box, prompt, defaultChoice, "yes")
 		return confirmDecisionRun, "", nil
 	case confirmationDefaultEdit:
 		logConfirmationChoice(box, prompt, defaultChoice, "edit")
-		edited, editErr := box.EditCommand(reader, initialCommand)
+		edited, editErr := box.EditCommand(reader, stdin, initialCommand)
 		if editErr != nil {
 			return confirmDecisionCancel, "", editErr
 		}
@@ -749,8 +822,12 @@ func isConfirmationEnterKey(key byte) bool {
 }
 
 // readSingleConfirmationKey tries to read a single key without waiting for Enter.
-func readSingleConfirmationKey() (byte, bool, error) {
-	fd := int(os.Stdin.Fd())
+func readSingleConfirmationKey(stdin *os.File) (byte, bool, error) {
+	if stdin == nil {
+		stdin = os.Stdin
+	}
+
+	fd := int(stdin.Fd())
 	if !term.IsTerminal(fd) {
 		return 0, false, nil
 	}
@@ -762,7 +839,7 @@ func readSingleConfirmationKey() (byte, bool, error) {
 	defer term.Restore(fd, state) //nolint:errcheck
 
 	buffer := []byte{0}
-	_, err = os.Stdin.Read(buffer)
+	_, err = stdin.Read(buffer)
 	if err != nil {
 		return 0, false, err
 	}
@@ -774,6 +851,11 @@ var errDiscardRune = errors.New("discard rune")
 
 // readInputRune decodes a complete UTF-8 rune from the first byte already read.
 func readInputRune(first byte) (rune, error) {
+	return readInputRuneFrom(os.Stdin, first)
+}
+
+// readInputRuneFrom decodes a complete UTF-8 rune from the provided input reader.
+func readInputRuneFrom(reader io.Reader, first byte) (rune, error) {
 	if first < utf8.RuneSelf {
 		if first < 32 && first != '\t' {
 			return 0, errDiscardRune
@@ -789,7 +871,7 @@ func readInputRune(first byte) (rune, error) {
 	buf := make([]byte, size)
 	buf[0] = first
 	for index := 1; index < size; index++ {
-		if _, err := os.Stdin.Read(buf[index : index+1]); err != nil {
+		if _, err := reader.Read(buf[index : index+1]); err != nil {
 			return 0, err
 		}
 	}
@@ -943,14 +1025,19 @@ func moveCursorVertical(buffer []rune, cursor int, contentWidth int, delta int, 
 // contentWidth is the width of the editable content (without the prefix); if it is 0
 // vertical movement is disabled (for example in the single-line editor).
 func applyEscapeSequence(buffer *[]rune, cursor *int, contentWidth int, affinity *cursorAffinity) error {
+	return applyEscapeSequenceFrom(os.Stdin, buffer, cursor, contentWidth, affinity)
+}
+
+// applyEscapeSequenceFrom handles special cursor and editing keys from the provided input reader.
+func applyEscapeSequenceFrom(reader io.Reader, buffer *[]rune, cursor *int, contentWidth int, affinity *cursorAffinity) error {
 	sequence := []byte{0, 0}
-	if _, err := os.Stdin.Read(sequence[:1]); err != nil {
+	if _, err := reader.Read(sequence[:1]); err != nil {
 		return err
 	}
 	if sequence[0] != '[' {
 		return nil
 	}
-	if _, err := os.Stdin.Read(sequence[1:2]); err != nil {
+	if _, err := reader.Read(sequence[1:2]); err != nil {
 		return err
 	}
 
@@ -1005,7 +1092,7 @@ func applyEscapeSequence(buffer *[]rune, cursor *int, contentWidth int, affinity
 		}
 	case '3':
 		tilde := []byte{0}
-		if _, err := os.Stdin.Read(tilde); err != nil {
+		if _, err := reader.Read(tilde); err != nil {
 			return err
 		}
 		if tilde[0] == '~' && *cursor < len(*buffer) {
@@ -1020,7 +1107,7 @@ func applyEscapeSequence(buffer *[]rune, cursor *int, contentWidth int, affinity
 }
 
 // applyEscapeSequenceOrExit interprets an escape sequence or closes the prompt if Esc is pressed alone.
-func applyEscapeSequenceOrExit(fd int, buffer *[]rune, cursor *int, contentWidth int, affinity *cursorAffinity) (bool, error) {
+func applyEscapeSequenceOrExit(reader io.Reader, fd int, buffer *[]rune, cursor *int, contentWidth int, affinity *cursorAffinity) (bool, error) {
 	ready, err := isInputReady(fd)
 	if err != nil {
 		return false, err
@@ -1028,45 +1115,50 @@ func applyEscapeSequenceOrExit(fd int, buffer *[]rune, cursor *int, contentWidth
 	if !ready {
 		return true, nil
 	}
-	return false, applyEscapeSequence(buffer, cursor, contentWidth, affinity)
+	return false, applyEscapeSequenceFrom(reader, buffer, cursor, contentWidth, affinity)
 }
 
 // renderEditablePrompt repaints the full editable prompt block while handling wrapping correctly.
 func renderEditablePrompt(ui bool, prompt string, buffer []rune, cursor int, affinity cursorAffinity, state *editableRenderState, showCommandPopup bool) {
-	lines, cursorRow, cursorCol := editablePromptLayout(prompt, buffer, cursor, affinity, promptRenderWidth())
+	renderEditablePromptTo(os.Stdout, ui, prompt, buffer, cursor, affinity, state, showCommandPopup)
+}
+
+// renderEditablePromptTo repaints the full editable prompt block on the provided target.
+func renderEditablePromptTo(target io.Writer, ui bool, prompt string, buffer []rune, cursor int, affinity cursorAffinity, state *editableRenderState, showCommandPopup bool) {
+	lines, cursorRow, cursorCol := editablePromptLayout(prompt, buffer, cursor, affinity, promptRenderWidthFor(target))
 	var menuLines []string
 	if showCommandPopup {
 		menuLines = commandMenuLines(ui, string(buffer))
 	}
 	promptWidth := visibleWidth(prompt)
 
-	clearEditablePrompt(state)
+	clearEditablePromptTo(target, state)
 
 	for index, line := range lines {
 		if index > 0 {
-			fmt.Print("\r\n")
+			fmt.Fprint(target, "\r\n")
 		}
 		if index == 0 {
-			fmt.Print(prompt)
+			fmt.Fprint(target, prompt)
 		} else {
-			fmt.Print(strings.Repeat(" ", promptWidth))
+			fmt.Fprint(target, strings.Repeat(" ", promptWidth))
 		}
-		fmt.Print(style(ui, colorWhite, line))
+		fmt.Fprint(target, style(ui, colorWhite, line))
 	}
 
 	for _, line := range menuLines {
-		fmt.Print("\r\n")
-		fmt.Print(line)
+		fmt.Fprint(target, "\r\n")
+		fmt.Fprint(target, line)
 	}
 
 	rows := len(lines) + len(menuLines)
 	rowsBelow := rows - 1 - cursorRow
-	fmt.Print("\r")
+	fmt.Fprint(target, "\r")
 	if rowsBelow > 0 {
-		fmt.Printf("\033[%dA", rowsBelow)
+		fmt.Fprintf(target, "\033[%dA", rowsBelow)
 	}
 	if cursorCol > 0 {
-		fmt.Printf("\033[%dC", cursorCol)
+		fmt.Fprintf(target, "\033[%dC", cursorCol)
 	}
 
 	if state != nil {
@@ -1077,24 +1169,29 @@ func renderEditablePrompt(ui bool, prompt string, buffer []rune, cursor int, aff
 
 // clearEditablePrompt clears all rows from the previously rendered prompt.
 func clearEditablePrompt(state *editableRenderState) {
+	clearEditablePromptTo(os.Stdout, state)
+}
+
+// clearEditablePromptTo clears all rows from the previously rendered prompt on the provided target.
+func clearEditablePromptTo(target io.Writer, state *editableRenderState) {
 	if state == nil || state.rows == 0 {
 		return
 	}
 
-	fmt.Print("\r")
+	fmt.Fprint(target, "\r")
 	if state.cursorRow > 0 {
-		fmt.Printf("\033[%dA", state.cursorRow)
+		fmt.Fprintf(target, "\033[%dA", state.cursorRow)
 	}
 	for index := 0; index < state.rows; index++ {
-		fmt.Print("\033[2K")
+		fmt.Fprint(target, "\033[2K")
 		if index < state.rows-1 {
-			fmt.Print("\033[1B\r")
+			fmt.Fprint(target, "\033[1B\r")
 		}
 	}
 	if state.rows > 1 {
-		fmt.Printf("\033[%dA", state.rows-1)
+		fmt.Fprintf(target, "\033[%dA", state.rows-1)
 	}
-	fmt.Print("\r")
+	fmt.Fprint(target, "\r")
 }
 
 // editablePromptLayout computes the visible lines and cursor position for the editable prompt.
@@ -1124,7 +1221,17 @@ func editablePromptLayout(prompt string, buffer []rune, cursor int, affinity cur
 
 // promptRenderWidth returns the usable width for the editable prompt while avoiding the last column.
 func promptRenderWidth() int {
-	fd := int(os.Stdout.Fd())
+	return promptRenderWidthFor(os.Stdout)
+}
+
+// promptRenderWidthFor returns the usable prompt width for the provided target.
+func promptRenderWidthFor(target io.Writer) int {
+	output, ok := target.(*os.File)
+	if !ok {
+		return 79
+	}
+
+	fd := int(output.Fd())
 	if term.IsTerminal(fd) {
 		if width, _, err := term.GetSize(fd); err == nil && width > 1 {
 			return width - 1
@@ -1142,7 +1249,12 @@ func wrapPromptRunes(buffer []rune, width int) []string {
 
 // clearScreen clears the current terminal.
 func clearScreen() {
-	fmt.Print("\033[2J\033[H")
+	clearScreenTo(os.Stdout)
+}
+
+// clearScreenTo clears the current terminal on the provided target.
+func clearScreenTo(target io.Writer) {
+	fmt.Fprint(target, "\033[2J\033[H")
 }
 
 // renderPanel draws a light visual block to better distinguish the Shellia UI.
@@ -1333,7 +1445,17 @@ const boxHorizontalMargin = 4
 
 // boxWidth computes the total width of the step box using the current terminal size.
 func boxWidth() int {
-	fd := int(os.Stdout.Fd())
+	return boxWidthFor(os.Stdout)
+}
+
+// boxWidthFor computes the total width of the step box using the provided target terminal size.
+func boxWidthFor(target io.Writer) int {
+	output, ok := target.(*os.File)
+	if !ok {
+		return 80
+	}
+
+	fd := int(output.Fd())
 	if term.IsTerminal(fd) {
 		width, _, err := term.GetSize(fd)
 		if err == nil && width > 0 {

@@ -25,7 +25,7 @@ func newStepBox(target io.Writer, ui bool, title string) *stepBox {
 	box := &stepBox{
 		target: target,
 		ui:     ui,
-		width:  boxWidth(),
+		width:  boxWidthFor(target),
 	}
 	fmt.Fprintln(target)
 	fmt.Fprintln(target, box.separatorLine())
@@ -73,7 +73,13 @@ func (box *stepBox) ReplaceLastRenderedRow(rendered string) {
 		return
 	}
 
-	fd := int(os.Stdout.Fd())
+	output, ok := box.target.(*os.File)
+	if !ok {
+		fmt.Fprintln(box.target, rendered)
+		return
+	}
+
+	fd := int(output.Fd())
 	if !term.IsTerminal(fd) {
 		fmt.Fprintln(box.target, rendered)
 		return
@@ -99,16 +105,19 @@ func (box *stepBox) OutputLine(text string) {
 }
 
 // EditCommand shows an editable line inside the box to adjust the proposed command.
-func (box *stepBox) EditCommand(reader *bufio.Reader, initial string) (string, error) {
+func (box *stepBox) EditCommand(reader *bufio.Reader, stdin *os.File, initial string) (string, error) {
 	if box == nil {
 		return strings.TrimSpace(initial), nil
+	}
+	if stdin == nil {
+		stdin = os.Stdin
 	}
 
 	box.Spacer()
 	prefixPlain := "• edit "
 	prefixRendered := style(box.ui, colorYellow+colorBold, "• edit ")
 
-	fd := int(os.Stdin.Fd())
+	fd := int(stdin.Fd())
 	buffer := []rune(initial)
 	cursor := len(buffer)
 
@@ -136,7 +145,7 @@ func (box *stepBox) EditCommand(reader *bufio.Reader, initial string) (string, e
 	single := []byte{0}
 	box.renderEditableRow(prefixPlain, prefixRendered, buffer, cursor)
 	for {
-		_, err := os.Stdin.Read(single)
+		_, err := stdin.Read(single)
 		if err != nil {
 			fmt.Fprint(box.target, "\r\n")
 			return "", err
@@ -150,7 +159,7 @@ func (box *stepBox) EditCommand(reader *bufio.Reader, initial string) (string, e
 			fmt.Fprint(box.target, "\r\n")
 			return "", nil
 		case 27:
-			if err := applyEscapeSequence(&buffer, &cursor, 0, nil); err != nil {
+			if err := applyEscapeSequenceFrom(stdin, &buffer, &cursor, 0, nil); err != nil {
 				fmt.Fprint(box.target, "\r\n")
 				return "", err
 			}
@@ -161,7 +170,7 @@ func (box *stepBox) EditCommand(reader *bufio.Reader, initial string) (string, e
 			buffer = append(buffer[:cursor-1], buffer[cursor:]...)
 			cursor--
 		default:
-			r, err := readInputRune(single[0])
+			r, err := readInputRuneFrom(stdin, single[0])
 			if err != nil {
 				if errors.Is(err, errDiscardRune) {
 					continue

@@ -79,6 +79,8 @@ type turnResult struct {
 }
 
 func main() {
+	deps := defaultRuntimeDeps()
+
 	cfg, err := parseArgs(os.Args[1:])
 	if err != nil {
 		if errors.Is(err, errHelp) {
@@ -91,7 +93,7 @@ func main() {
 
 	switch cfg.CommandKind {
 	case "config-init":
-		if err := initConfigFile(ui); err != nil {
+		if err := initConfigFileTo(deps.Stdout, ui); err != nil {
 			exitWithError(ui, err.Error(), 1)
 		}
 		return
@@ -100,7 +102,7 @@ func main() {
 		if err != nil {
 			exitWithError(ui, err.Error(), 1)
 		}
-		renderPanel(os.Stdout, ui, "config", colorCyan, []string{path})
+		renderPanel(deps.Stdout, ui, "config", colorCyan, []string{path})
 		return
 	}
 
@@ -114,11 +116,11 @@ func main() {
 	defer stop()
 
 	if cfg.Interactive {
-		runInteractive(appCtx, ui, cfg, &ctxInfo)
+		runInteractive(appCtx, deps, ui, cfg, &ctxInfo)
 		return
 	}
 
-	_, err = runTurn(appCtx, ui, cfg, &ctxInfo, cfg.Instruction, nil, sessionState{})
+	_, err = runTurn(appCtx, deps, ui, cfg, &ctxInfo, cfg.Instruction, nil, sessionState{})
 	if err != nil {
 		switch {
 		case errors.Is(err, errAborted), errors.Is(err, context.Canceled):
@@ -293,23 +295,24 @@ func usageFunc(fs *flag.FlagSet) func() {
 // runInteractive opens a persistent session where each prompt extends the conversation context.
 // A fresh signal context is created per turn so Ctrl+C cancels only the current LLM call,
 // allowing the loop to continue for the next request.
-func runInteractive(ctx context.Context, ui bool, cfg config, ctxInfo *contextInfo) {
-	reader := bufio.NewReader(os.Stdin)
+func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo) {
+	deps = deps.withDefaults()
+	reader := bufio.NewReader(deps.Stdin)
 	history := make([]historyEntry, 0, maxHistoryEntries)
 	state := sessionState{}
 	mode := interactiveModeAI
 
-	printSessionBanner(ui)
+	printSessionBannerTo(deps.Stdout, ui)
 
 	if strings.TrimSpace(cfg.Instruction) != "" {
 		turnCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
-		turn, err := runTurn(turnCtx, ui, cfg, ctxInfo, cfg.Instruction, history, state)
+		turn, err := runTurn(turnCtx, deps, ui, cfg, ctxInfo, cfg.Instruction, history, state)
 		stop()
 		if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {
 			state.LastRetryInstruction = cfg.Instruction
 			rememberUnfinishedInstruction(&state, cfg.Instruction)
 		} else if err != nil {
-			printWarning(ui, err.Error())
+			printWarningTo(deps.Stderr, ui, err.Error())
 			state.LastRetryInstruction = cfg.Instruction
 			rememberUnfinishedInstruction(&state, cfg.Instruction)
 		} else {
@@ -327,10 +330,10 @@ func runInteractive(ctx context.Context, ui bool, cfg config, ctxInfo *contextIn
 			return
 		}
 
-		input, err := readInteractivePrompt(ui, reader, mode, cfg.ShowCommandPopup)
+		input, err := readInteractivePrompt(ui, reader, deps.Stdin, deps.Stdout, mode, cfg.ShowCommandPopup)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				fmt.Println()
+				fmt.Fprintln(deps.Stdout)
 				return
 			}
 			exitWithError(ui, fmt.Sprintf("cannot read prompt: %v", err), 1)
@@ -341,28 +344,28 @@ func runInteractive(ctx context.Context, ui bool, cfg config, ctxInfo *contextIn
 		if command != interactiveCommandNone {
 			switch command {
 			case interactiveCommandUnknown:
-				printWarning(ui, "Unknown command: "+trimmed)
+				printWarningTo(deps.Stderr, ui, "Unknown command: "+trimmed)
 				continue
 			case interactiveCommandExit:
-				fmt.Println()
-				printInfo(ui, "Session closed.")
+				fmt.Fprintln(deps.Stdout)
+				printInfoTo(deps.Stdout, ui, "Session closed.")
 				return
 			case interactiveCommandClear:
-				clearScreen()
+				clearScreenTo(deps.Stdout)
 				continue
 			case interactiveCommandContext:
-				printContext(ui, *ctxInfo)
+				printContextTo(deps.Stdout, ui, *ctxInfo)
 				continue
 			case interactiveCommandShell:
 				mode = interactiveModeShell
-				printModeStatus(ui, fmt.Sprintf("Shell mode enabled (%s).", cfg.ShellMode))
+				printModeStatusTo(deps.Stdout, ui, fmt.Sprintf("Shell mode enabled (%s).", cfg.ShellMode))
 				continue
 			case interactiveCommandAI:
 				mode = interactiveModeAI
-				printModeStatus(ui, "Prompt mode enabled.")
+				printModeStatusTo(deps.Stdout, ui, "Prompt mode enabled.")
 				continue
 			case interactiveCommandMode:
-				printModeStatus(ui, "Current mode: "+string(mode))
+				printModeStatusTo(deps.Stdout, ui, "Current mode: "+string(mode))
 				continue
 			}
 		}
@@ -379,20 +382,20 @@ func runInteractive(ctx context.Context, ui bool, cfg config, ctxInfo *contextIn
 				renderMode = renderModeForManualCommand(cfg)
 			}
 			if command == "" {
-				printWarning(ui, "Missing shell command.")
+				printWarningTo(deps.Stderr, ui, "Missing shell command.")
 				continue
 			}
 
 			turnCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
-			execution, err := executeManualCommand(turnCtx, ui, cfg, ctxInfo, command, renderMode)
+			execution, err := deps.ExecuteManualCommand(turnCtx, deps, ui, cfg, ctxInfo, command, renderMode)
 			stop()
 
 			if errors.Is(err, context.Canceled) {
-				printWarning(ui, "Command cancelled.")
+				printWarningTo(deps.Stderr, ui, "Command cancelled.")
 				continue
 			}
 			if err != nil {
-				printWarning(ui, err.Error())
+				printWarningTo(deps.Stderr, ui, err.Error())
 				continue
 			}
 
@@ -403,24 +406,24 @@ func runInteractive(ctx context.Context, ui bool, cfg config, ctxInfo *contextIn
 		instruction := input
 		if isRetryInstruction(input) && strings.TrimSpace(state.LastRetryInstruction) != "" {
 			instruction = state.LastRetryInstruction
-			printInfo(ui, fmt.Sprintf("Retrying: %s", instruction))
+			printInfoTo(deps.Stdout, ui, fmt.Sprintf("Retrying: %s", instruction))
 		}
 
 		// Per-turn signal context: Ctrl+C cancels only this turn, not the whole session.
 		turnCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
-		turn, err := runTurn(turnCtx, ui, cfg, ctxInfo, instruction, history, state)
+		turn, err := runTurn(turnCtx, deps, ui, cfg, ctxInfo, instruction, history, state)
 		stop()
 
 		if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {
 			state.LastRetryInstruction = instruction
 			rememberUnfinishedInstruction(&state, instruction)
-			printWarning(ui, "Request cancelled.")
-			fmt.Println()
-			printSeparator(os.Stdout, ui)
+			printWarningTo(deps.Stderr, ui, "Request cancelled.")
+			fmt.Fprintln(deps.Stdout)
+			printSeparator(deps.Stdout, ui)
 			continue
 		}
 		if err != nil {
-			printWarning(ui, err.Error())
+			printWarningTo(deps.Stderr, ui, err.Error())
 			state.LastRetryInstruction = instruction
 			rememberUnfinishedInstruction(&state, instruction)
 			continue
@@ -453,19 +456,20 @@ func renderModeForManualCommand(cfg config) manualRenderMode {
 }
 
 // runTurn executes a full plan → confirm → execute → answer cycle.
-func runTurn(ctx context.Context, ui bool, cfg config, ctxInfo *contextInfo, instruction string, history []historyEntry, state sessionState) (turnResult, error) {
+func runTurn(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo, instruction string, history []historyEntry, state sessionState) (turnResult, error) {
+	deps = deps.withDefaults()
 	if cfg.Debug || cfg.Verbose {
-		printContext(ui, *ctxInfo)
+		printContextTo(deps.Stdout, ui, *ctxInfo)
 	}
 
-	printHeader(ui, *ctxInfo)
+	printHeaderTo(deps.Stdout, ui, *ctxInfo)
 	allExecutions := make([]commandExecution, 0, 4)
 	lastSummary := ""
 	lastPlans := []commandPlan(nil)
 
 	for round := 0; round < maxPlanRounds; round++ {
-		thinking := startThinkingIndicator(ui, os.Stdout)
-		rawResponse, err := callLLM(ctx, cfg, *ctxInfo, instruction, history, state, allExecutions)
+		thinking := startThinkingIndicator(ui, deps.Stdout)
+		rawResponse, err := callLLM(ctx, deps.HTTPClient, cfg, *ctxInfo, instruction, history, state, allExecutions)
 		if thinking != nil {
 			thinking.stop()
 		}
@@ -474,9 +478,9 @@ func runTurn(ctx context.Context, ui bool, cfg config, ctxInfo *contextInfo, ins
 		}
 
 		if cfg.RawResponse {
-			printSection(ui, "Raw LLM response", colorBlue)
-			fmt.Println(rawResponse)
-			fmt.Println()
+			printSectionTo(deps.Stdout, ui, "Raw LLM response", colorBlue)
+			fmt.Fprintln(deps.Stdout, rawResponse)
+			fmt.Fprintln(deps.Stdout)
 		}
 
 		parsed, err := parseResponse(rawResponse)
@@ -490,8 +494,8 @@ func runTurn(ctx context.Context, ui bool, cfg config, ctxInfo *contextInfo, ins
 		}
 
 		if len(plans) == 0 && shouldRetryWithDiscoveryRepair(parsed, round, allExecutions) {
-			thinking = startThinkingIndicator(ui, os.Stdout)
-			repairedRawResponse, repairErr := callDiscoveryRepairLLM(ctx, cfg, *ctxInfo, instruction, history, state, allExecutions, parsed)
+			thinking = startThinkingIndicator(ui, deps.Stdout)
+			repairedRawResponse, repairErr := callDiscoveryRepairLLM(ctx, deps.HTTPClient, cfg, *ctxInfo, instruction, history, state, allExecutions, parsed)
 			if thinking != nil {
 				thinking.stop()
 			}
@@ -513,7 +517,7 @@ func runTurn(ctx context.Context, ui bool, cfg config, ctxInfo *contextInfo, ins
 		lastPlans = plans
 
 		if len(plans) == 0 {
-			printFinalResult(ui, summary)
+			printFinalResultTo(deps.Stdout, ui, summary)
 			return turnResult{Result: summary, Summary: summary, Actionable: false, Plans: plans}, nil
 		}
 
@@ -521,8 +525,8 @@ func runTurn(ctx context.Context, ui bool, cfg config, ctxInfo *contextInfo, ins
 			break
 		}
 
-		printPlan(ui, cfg, summary, plans, parsed.RequiresObservation)
-		executions, err := executeCommands(ctx, ui, cfg, ctxInfo, plans)
+		printPlanTo(deps.Stdout, ui, cfg, summary, plans, parsed.RequiresObservation)
+		executions, err := deps.ExecuteCommands(ctx, deps, ui, cfg, ctxInfo, plans)
 		if err != nil {
 			if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {
 				return turnResult{}, err
@@ -553,22 +557,22 @@ func runTurn(ctx context.Context, ui bool, cfg config, ctxInfo *contextInfo, ins
 		}
 	}
 
-	openResultPanel(ui)
-	w := &resultWriter{ui: ui, thinking: startThinkingIndicator(ui, os.Stdout)}
-	result, streamErr := streamSummarizeExecutions(ctx, cfg, instruction, allExecutions, w)
+	openResultPanelTo(deps.Stdout, ui)
+	w := &resultWriter{ui: ui, target: deps.Stdout, thinking: startThinkingIndicator(ui, deps.Stdout)}
+	result, streamErr := streamSummarizeExecutions(ctx, deps.HTTPClient, cfg, instruction, allExecutions, w)
 	w.stopThinking()
 	if streamErr != nil || strings.TrimSpace(result) == "" {
 		result = staticFallbackAnswer(lastSummary, allExecutions)
 		// Only print the fallback if streaming never wrote a single byte to the terminal.
 		// If it wrote partial content before erroring, don't print on top of it.
 		if !w.wroteAnything {
-			if err := renderAnswerBlock(os.Stdout, ui, result, &w.state); err != nil {
+			if err := renderAnswerBlock(deps.Stdout, ui, result, &w.state); err != nil {
 				return turnResult{}, err
 			}
 			w.wroteAnything = true
 		}
 	}
-	closeResultPanel(ui)
+	closeResultPanelTo(deps.Stdout, ui)
 	return turnResult{
 		Result:     strings.TrimSpace(result),
 		Summary:    lastSummary,
