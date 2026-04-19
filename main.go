@@ -139,11 +139,16 @@ func main() {
 
 // parseArgs processes CLI config and validates the minimum required values.
 func parseArgs(args []string) (config, error) {
-	cfg := loadBaseConfig()
-
 	if kind, ok := parseConfigSubcommand(args); ok {
+		cfg := defaultConfig()
+		applyEnvConfig(&cfg)
 		cfg.CommandKind = kind
 		return cfg, nil
+	}
+
+	cfg, err := loadBaseConfig()
+	if err != nil {
+		return config{}, err
 	}
 
 	fs, timeoutSecs, reqTimeoutSecs := buildFlagSet(&cfg)
@@ -165,12 +170,15 @@ func parseArgs(args []string) (config, error) {
 }
 
 // loadBaseConfig applies defaults → file → env in order.
-func loadBaseConfig() config {
+func loadBaseConfig() (config, error) {
 	cfg := defaultConfig()
-	fileCfg, fileErr := loadFileConfig()
-	applyFileConfig(&cfg, fileCfg, fileErr)
+	fileCfg, err := loadFileConfig()
+	if err != nil {
+		return config{}, err
+	}
+	applyFileConfig(&cfg, fileCfg)
 	applyEnvConfig(&cfg)
-	return cfg
+	return cfg, nil
 }
 
 // parseConfigSubcommand detects `shellia config init|path` and returns the command kind.

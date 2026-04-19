@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 // TestDefaultConfigShowsSystemOutput checks the visible-output default stays unchanged.
 func TestDefaultConfigShowsSystemOutput(t *testing.T) {
@@ -22,7 +27,7 @@ func TestApplyFileConfigCanDisableSystemOutput(t *testing.T) {
 	fileCfg := fileConfig{}
 	fileCfg.UI.ShowSystemOutput = &show
 
-	applyFileConfig(&cfg, fileCfg, nil)
+	applyFileConfig(&cfg, fileCfg)
 
 	if cfg.ShowSystemOutput {
 		t.Fatalf("ShowSystemOutput = true, want false")
@@ -36,7 +41,7 @@ func TestApplyFileConfigCanHideCommandPopup(t *testing.T) {
 	fileCfg := fileConfig{}
 	fileCfg.UI.ShowCommandPopup = &show
 
-	applyFileConfig(&cfg, fileCfg, nil)
+	applyFileConfig(&cfg, fileCfg)
 
 	if cfg.ShowCommandPopup {
 		t.Fatalf("ShowCommandPopup = true, want false")
@@ -49,7 +54,7 @@ func TestApplyFileConfigCanSetConfirmationDefault(t *testing.T) {
 	fileCfg := fileConfig{}
 	fileCfg.Execution.ConfirmationDefault = "yes"
 
-	applyFileConfig(&cfg, fileCfg, nil)
+	applyFileConfig(&cfg, fileCfg)
 
 	if cfg.ConfirmationDefault != confirmationDefaultYes {
 		t.Fatalf("ConfirmationDefault = %q, want %q", cfg.ConfirmationDefault, confirmationDefaultYes)
@@ -71,5 +76,27 @@ func TestNormalizeConfirmationDefaultAcceptsShortAliases(t *testing.T) {
 		if got := normalizeConfirmationDefault(input, confirmationDefaultNo); got != want {
 			t.Fatalf("normalizeConfirmationDefault(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+// TestLoadBaseConfigRejectsInvalidConfig checks broken TOML is surfaced instead of ignored.
+func TestLoadBaseConfigRejectsInvalidConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	path := filepath.Join(home, ".shellia", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte("[llm]\nmodel =\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err := loadBaseConfig()
+	if err == nil {
+		t.Fatalf("loadBaseConfig() error = nil, want invalid config error")
+	}
+	if !strings.Contains(err.Error(), "invalid config file") || !strings.Contains(err.Error(), path) {
+		t.Fatalf("loadBaseConfig() error = %q, want invalid config path", err)
 	}
 }

@@ -103,11 +103,7 @@ func defaultConfig() config {
 
 // applyFileConfig merges the persistent file into the base config.
 // Boolean fields are only applied when explicitly present in the file.
-func applyFileConfig(cfg *config, fileCfg fileConfig, err error) {
-	if err != nil {
-		return
-	}
-
+func applyFileConfig(cfg *config, fileCfg fileConfig) {
 	if strings.TrimSpace(fileCfg.LLM.BaseURL) != "" {
 		cfg.BaseURL = strings.TrimSpace(fileCfg.LLM.BaseURL)
 	}
@@ -193,7 +189,7 @@ func loadFileConfig() (fileConfig, error) {
 
 	var cfg fileConfig
 	if _, err := toml.Decode(string(data), &cfg); err != nil {
-		return fileConfig{}, fmt.Errorf("invalid config file: %w", err)
+		return fileConfig{}, fmt.Errorf("invalid config file %s: %w", path, err)
 	}
 
 	return cfg, nil
