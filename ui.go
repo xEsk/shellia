@@ -460,6 +460,15 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 
 		switch single[0] {
 		case '\r', '\n':
+			if !promptHasText(buffer) {
+				if len(buffer) > 0 {
+					buffer = buffer[:0]
+					cursor = 0
+					affinity = cursorAffinityForward
+					renderEditablePrompt(ui, prompt, buffer, cursor, affinity, renderState)
+				}
+				continue
+			}
 			fmt.Print("\r\n")
 			return strings.TrimSpace(string(buffer)), nil
 		case 3:
@@ -496,6 +505,11 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, mode interactiveMode) 
 
 		renderEditablePrompt(ui, prompt, buffer, cursor, affinity, renderState)
 	}
+}
+
+// promptHasText reports whether the editable prompt contains a real submission.
+func promptHasText(buffer []rune) bool {
+	return strings.TrimSpace(string(buffer)) != ""
 }
 
 // promptQuestion returns the guiding text for the current interactive mode.

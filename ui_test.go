@@ -45,6 +45,19 @@ func TestPrintSeparatorUsesStandardLine(t *testing.T) {
 	}
 }
 
+// TestPromptHasTextIgnoresWhitespace checks that Enter on an empty prompt is ignored.
+func TestPromptHasTextIgnoresWhitespace(t *testing.T) {
+	for _, input := range []string{"", "   ", "\t"} {
+		if promptHasText([]rune(input)) {
+			t.Fatalf("promptHasText(%q) = true, want false", input)
+		}
+	}
+
+	if !promptHasText([]rune("actualitza el claude-code")) {
+		t.Fatalf("promptHasText(non-empty) = false, want true")
+	}
+}
+
 // TestWrapPromptRunesWithOffsetsPreservesWhitespace checks that wrapping keeps
 // buffer spaces to preserve the exact caret mapping.
 func TestWrapPromptRunesWithOffsetsPreservesWhitespace(t *testing.T) {
