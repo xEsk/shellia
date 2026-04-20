@@ -582,7 +582,6 @@ func executeOneCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg confi
 
 	if interactive {
 		if box != nil {
-			box.Spacer()
 			box.Section("interactive session", colorYellow)
 			box.Text("Shellia will resume when the command exits.", colorDim)
 			box.Close()
