@@ -57,3 +57,39 @@ func TestRenderCommandBoxPreservesCommandSpacing(t *testing.T) {
 		t.Fatalf("renderCommandBox() did not preserve command spacing: %q", got)
 	}
 }
+
+// TestRenderCommandBoxPreservesExplicitNewlines checks multiline commands stay inside the panel.
+func TestRenderCommandBoxPreservesExplicitNewlines(t *testing.T) {
+	command := "cat <<'EOF' > hola.txt\nhola\nhola\nhola\nEOF"
+	got := renderCommandBox(true, command, 80)
+
+	if len(got) != 7 {
+		t.Fatalf("renderCommandBox() returned %d rows, want 7", len(got))
+	}
+
+	panelWidth := visibleWidth(got[0])
+	for _, line := range got {
+		if strings.Contains(line, "\n") {
+			t.Fatalf("renderCommandBox() row contains embedded newline: %q", line)
+		}
+		if !strings.Contains(line, commandBoxBackground) {
+			t.Fatalf("renderCommandBox() row does not contain command box background: %q", line)
+		}
+		if width := visibleWidth(line); width != panelWidth {
+			t.Fatalf("renderCommandBox() row width = %d, want %d: %q", width, panelWidth, line)
+		}
+	}
+
+	plainRows := make([]string, 0, len(got))
+	for _, line := range got {
+		plainRows = append(plainRows, stripANSISequences(line))
+	}
+	if !strings.Contains(plainRows[1], "  run › cat <<'EOF' > hola.txt") {
+		t.Fatalf("renderCommandBox() first command row is not prefixed correctly: %q", plainRows[1])
+	}
+	for _, row := range plainRows[2:6] {
+		if !strings.Contains(row, "        ") {
+			t.Fatalf("renderCommandBox() multiline row is not indented to command level: %q", row)
+		}
+	}
+}

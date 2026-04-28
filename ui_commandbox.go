@@ -61,7 +61,7 @@ func commandBoxPanelWidth(command string, maxWidth int) int {
 		maxWidth = minFeasibleWidth
 	}
 
-	width := commandBoxHorizontalPadding*2 + visibleWidth(commandBoxPrompt+" "+command)
+	width := commandBoxHorizontalPadding*2 + visibleWidth(commandBoxPrompt+" ") + commandBoxLongestLineWidth(command)
 	if width < commandBoxMinPanelWidth && commandBoxMinPanelWidth <= maxWidth {
 		width = commandBoxMinPanelWidth
 	}
@@ -70,6 +70,19 @@ func commandBoxPanelWidth(command string, maxWidth int) int {
 	}
 
 	return width
+}
+
+// commandBoxLongestLineWidth returns the widest physical line in a multiline command.
+func commandBoxLongestLineWidth(command string) int {
+	lines := strings.Split(command, "\n")
+	widest := 0
+	for _, line := range lines {
+		width := visibleWidth(strings.TrimSuffix(line, "\r"))
+		if width > widest {
+			widest = width
+		}
+	}
+	return widest
 }
 
 // commandBoxWrapWidth returns how much command text fits after the prompt marker.
@@ -83,16 +96,46 @@ func commandBoxWrapWidth(panelWidth int) int {
 
 // commandBoxRenderedContentLine returns one coloured row of command content.
 func commandBoxRenderedContentLine(commandLine string, panelWidth int, first bool) string {
+	indent := strings.Repeat(" ", visibleWidth(commandBoxPrompt+" "))
 	if first {
-		return greyPanelRow(panelWidth,
+		return commandBoxRenderedRow(panelWidth,
 			greyPanelSegment{text: commandBoxPrompt, color: commandBoxPromptForeground},
 			greyPanelSegment{text: " " + commandLine},
 		)
 	}
 
-	return greyPanelRow(panelWidth,
-		greyPanelSegment{text: strings.Repeat(" ", visibleWidth(commandBoxPrompt+" ")) + commandLine},
+	return commandBoxRenderedRow(panelWidth,
+		greyPanelSegment{text: indent + commandLine},
 	)
+}
+
+// commandBoxRenderedRow renders one command panel row with fixed left and right padding.
+func commandBoxRenderedRow(panelWidth int, segments ...greyPanelSegment) string {
+	contentWidth := 0
+	for _, segment := range segments {
+		contentWidth += visibleWidth(segment.text)
+	}
+
+	rightPadding := panelWidth - commandBoxHorizontalPadding - contentWidth
+	if rightPadding < commandBoxHorizontalPadding {
+		rightPadding = commandBoxHorizontalPadding
+	}
+
+	var b strings.Builder
+	b.WriteString(commandBoxBackground)
+	b.WriteString(strings.Repeat(" ", commandBoxHorizontalPadding))
+	for _, segment := range segments {
+		if segment.color != "" {
+			b.WriteString(segment.color)
+		} else {
+			b.WriteString(commandBoxForeground)
+		}
+		b.WriteString(segment.text)
+	}
+	b.WriteString(commandBoxForeground)
+	b.WriteString(strings.Repeat(" ", rightPadding))
+	b.WriteString(colorReset)
+	return b.String()
 }
 
 // renderPlainCommandBox returns the no-colour fallback for the command panel.
@@ -108,11 +151,26 @@ func renderPlainCommandBox(contentLines []string) []string {
 	return lines
 }
 
-// wrapCommandText splits a command into visible lines while preserving shell spacing where possible.
+// wrapCommandText splits a command into visible lines while preserving shell spacing and explicit newlines.
 func wrapCommandText(command string, width int) []string {
 	if width <= 0 {
 		return []string{command}
 	}
+	if command == "" {
+		return []string{""}
+	}
+
+	physicalLines := strings.Split(command, "\n")
+	lines := make([]string, 0, 1)
+	for _, line := range physicalLines {
+		lines = append(lines, wrapCommandLineText(strings.TrimSuffix(line, "\r"), width)...)
+	}
+
+	return lines
+}
+
+// wrapCommandLineText wraps one physical command line to the available visible width.
+func wrapCommandLineText(command string, width int) []string {
 	if command == "" {
 		return []string{""}
 	}
