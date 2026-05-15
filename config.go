@@ -46,8 +46,8 @@ type config struct {
 	ShellMode              commandEngineMode
 	CommandMode            commandEngineMode
 	PlanOnly               bool
-	ConfirmPlan            bool
-	ConfirmPlanOnly        bool
+	AskConfirmPlan            bool
+	AskConfirmPlanOnly        bool
 	Debug                  bool
 	RawResponse            bool
 	NoColor                bool
@@ -68,8 +68,8 @@ type fileConfig struct {
 		RequestTimeoutSeconds int    `toml:"request_timeout_seconds"`
 		YesSafe               *bool  `toml:"yes_safe"`
 		ContinueOnError       *bool  `toml:"continue_on_error"`
-		ConfirmPlan           *bool  `toml:"confirm_plan"`
-		ConfirmPlanOnly       *bool  `toml:"confirm_plan_only"`
+		AskConfirmPlan           *bool  `toml:"ask_confirm_plan"`
+		AskConfirmPlanOnly       *bool  `toml:"ask_confirm_plan_only"`
 		ConfirmationDefault   string `toml:"confirmation_default"`
 		ShellMode             string `toml:"shell_mode"`
 		CommandMode           string `toml:"command_mode"`
@@ -101,8 +101,8 @@ func defaultConfig() config {
 		ObservationOutputChars: 1200,
 		SummaryOutputChars:     4000,
 		ShowSystemOutput:       true,
-		ConfirmPlan:            true,
-		ConfirmPlanOnly:        true,
+		AskConfirmPlan:            true,
+		AskConfirmPlanOnly:        true,
 		ShellMode:              commandEngineInteractive,
 		CommandMode:            commandEnginePlain,
 		ShowCommandPopup:       true,
@@ -133,11 +133,11 @@ func applyFileConfig(cfg *config, fileCfg fileConfig) {
 	if fileCfg.Execution.ContinueOnError != nil {
 		cfg.ContinueOnError = *fileCfg.Execution.ContinueOnError
 	}
-	if fileCfg.Execution.ConfirmPlan != nil {
-		cfg.ConfirmPlan = *fileCfg.Execution.ConfirmPlan
+	if fileCfg.Execution.AskConfirmPlan != nil {
+		cfg.AskConfirmPlan = *fileCfg.Execution.AskConfirmPlan
 	}
-	if fileCfg.Execution.ConfirmPlanOnly != nil {
-		cfg.ConfirmPlanOnly = *fileCfg.Execution.ConfirmPlanOnly
+	if fileCfg.Execution.AskConfirmPlanOnly != nil {
+		cfg.AskConfirmPlanOnly = *fileCfg.Execution.AskConfirmPlanOnly
 	}
 	if strings.TrimSpace(fileCfg.Execution.ConfirmationDefault) != "" {
 		cfg.ConfirmationDefault = normalizeConfirmationDefault(fileCfg.Execution.ConfirmationDefault, cfg.ConfirmationDefault)
@@ -268,8 +268,8 @@ timeout_seconds         = 120
 request_timeout_seconds = 60
 yes_safe                = false
 continue_on_error       = false
-confirm_plan            = true
-confirm_plan_only       = true
+ask_confirm_plan        = true
+ask_confirm_plan_only   = true
 confirmation_default    = "none"
 shell_mode              = "interactive"
 command_mode            = "plain"

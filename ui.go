@@ -199,7 +199,7 @@ func printPlanTo(target io.Writer, ui bool, cfg config, summary string, plans []
 	}
 	renderPanel(target, ui, title, titleColor, []string{style(ui, colorWhite+colorBold, summary)})
 
-	if len(plans) == 0 || (!cfg.Verbose && !cfg.PlanOnly) {
+	if len(plans) == 0 || (!cfg.Verbose && !cfg.PlanOnly && !cfg.AskConfirmPlan) {
 		return
 	}
 

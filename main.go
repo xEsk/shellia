@@ -212,8 +212,8 @@ func buildFlagSet(cfg *config) (*flag.FlagSet, *int, *int) {
 	fs.IntVar(&reqTimeoutSecs, "request-timeout", reqTimeoutSecs, "HTTP request timeout in seconds")
 	fs.BoolVar(&cfg.YesSafe, "yes-safe", cfg.YesSafe, "auto-execute safe commands without confirmation")
 	fs.BoolVar(&cfg.ContinueOnError, "continue-on-error", cfg.ContinueOnError, "continue if a command fails")
-	fs.BoolVar(&cfg.ConfirmPlan, "confirm-plan", cfg.ConfirmPlan, "ask for confirmation before executing the plan")
-	fs.BoolVar(&cfg.ConfirmPlanOnly, "confirm-plan-only", cfg.ConfirmPlanOnly, "ask for confirmation after showing the plan in plan-only mode")
+	fs.BoolVar(&cfg.AskConfirmPlan, "ask-confirm-plan", cfg.AskConfirmPlan, "ask for confirmation before executing the plan")
+	fs.BoolVar(&cfg.AskConfirmPlanOnly, "ask-confirm-plan-only", cfg.AskConfirmPlanOnly, "ask for confirmation after showing the plan in plan-only mode")
 	fs.BoolVar(&cfg.Interactive, "interactive", false, "start or maintain an interactive session")
 	fs.BoolVar(&cfg.Interactive, "i", false, "short alias for --interactive")
 	fs.BoolVar(&cfg.PlanOnly, "plan", cfg.PlanOnly, "show the command plan without executing it")
@@ -561,7 +561,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo
 		if len(plans) == 0 {
 			printFinalResultTo(deps.Stdout, ui, summary)
 			if cfg.PlanOnly {
-				printPlanOnlyGuidanceTo(deps.Stdout, ui, parsed, cfg.ConfirmPlanOnly)
+				printPlanOnlyGuidanceTo(deps.Stdout, ui, parsed, cfg.AskConfirmPlanOnly)
 			}
 			return turnResult{Result: summary, Summary: summary, Actionable: false, Plans: plans}, nil
 		}
@@ -572,10 +572,10 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo
 
 		printPlanTo(deps.Stdout, ui, cfg, summary, plans, parsed.RequiresObservation)
 		if cfg.PlanOnly {
-			printPlanOnlyGuidanceTo(deps.Stdout, ui, parsed, cfg.ConfirmPlanOnly)
+			printPlanOnlyGuidanceTo(deps.Stdout, ui, parsed, cfg.AskConfirmPlanOnly)
 		}
 
-		skipConfirm := (cfg.PlanOnly && !cfg.ConfirmPlanOnly) || (!cfg.PlanOnly && !cfg.ConfirmPlan)
+		skipConfirm := (cfg.PlanOnly && !cfg.AskConfirmPlanOnly) || (!cfg.PlanOnly && !cfg.AskConfirmPlan)
 		if skipConfirm {
 			if cfg.PlanOnly {
 				return turnResult{Result: planOnlyResult(summary, parsed), Summary: summary, Actionable: len(plans) > 0, Plans: plans}, nil
