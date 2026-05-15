@@ -408,6 +408,8 @@ func buildSystemPrompt() string {
 		"If a command cannot be built yet because a mandatory user-provided detail is still missing, return no commands and set requires_input=true. " +
 		"When requires_input=true, also set input_reason to a short explanation of which detail is missing. " +
 		"If the observed outputs already answer the user's question, return no commands and put the answer in summary instead of asking to run more commands. " +
+		"However, if the current user instruction explicitly asks to repeat, rerun, retry, or execute an earlier action again, treat it as a fresh execution request. " +
+		"You may briefly mention that the recent observation probably made the repeat unnecessary, but still propose the command again when it is concrete and safe enough to run through Shellia's normal confirmation flow. " +
 		"Do not repeat an inspection command that was already executed and already provided the needed information, unless the user explicitly asks to rerun it. " +
 		"When only a small detail is missing, prefer a short safe inspection or verification command over returning no commands. " +
 		"When investigating how a local tool or dependency is installed or managed, do not stop after a single unsuccessful ownership check if other plausible local discovery paths still exist. " +

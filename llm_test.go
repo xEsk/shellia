@@ -60,6 +60,23 @@ func TestBuildSystemPromptGuidesInteractivePromptRecovery(t *testing.T) {
 	}
 }
 
+// TestBuildSystemPromptAllowsExplicitReruns checks that the planner does not
+// treat previous observations as a hard stop when the user asks to rerun work.
+func TestBuildSystemPromptAllowsExplicitReruns(t *testing.T) {
+	prompt := buildSystemPrompt()
+
+	requiredSnippets := []string{
+		"explicitly asks to repeat, rerun, retry, or execute an earlier action again",
+		"treat it as a fresh execution request",
+		"still propose the command again",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("buildSystemPrompt() missing %q in %q", snippet, prompt)
+		}
+	}
+}
+
 // TestBuildDiscoveryRepairPromptIncludesContext checks that the discovery repair
 // prompt keeps the normal planning context and adds the repair instructions.
 func TestBuildDiscoveryRepairPromptIncludesContext(t *testing.T) {
