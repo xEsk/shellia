@@ -411,7 +411,7 @@ func TestRunTurnPlanOnlyExecutesAcceptedPlan(t *testing.T) {
 	var gotPlans []commandPlan
 
 	var result turnResult
-	output := captureMainLoopIO(t, "sí\n", fake.HTTPClient(), func(deps runtimeDeps) {
+	output := captureMainLoopIO(t, "y\n", fake.HTTPClient(), func(deps runtimeDeps) {
 		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) ([]commandExecution, error) {
 			gotPlans = append([]commandPlan{}, plans...)
 			return []commandExecution{{

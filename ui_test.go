@@ -83,23 +83,27 @@ func TestReadFallbackPromptLineReturnsPartialLineOnEOF(t *testing.T) {
 	}
 }
 
-// TestParsePlanExecutionChoiceAcceptsSupportedAnswers checks plan-level confirmation answers.
-func TestParsePlanExecutionChoiceAcceptsSupportedAnswers(t *testing.T) {
+// TestParseConfirmationChoiceAcceptsSupportedAnswers checks the shared parser for all accepted inputs.
+func TestParseConfirmationChoiceAcceptsSupportedAnswers(t *testing.T) {
 	tests := map[string]struct {
-		run bool
-		ok  bool
+		choice confirmationDefault
+		ok     bool
 	}{
-		"yes":     {run: true, ok: true},
-		"si":      {run: true, ok: true},
-		"sí":      {run: true, ok: true},
-		"no":      {run: false, ok: true},
-		"unknown": {run: false, ok: false},
+		"y":           {choice: confirmationDefaultYes, ok: true},
+		"yes":         {choice: confirmationDefaultYes, ok: true},
+		"n":           {choice: confirmationDefaultNo, ok: true},
+		"no":          {choice: confirmationDefaultNo, ok: true},
+		"e":           {choice: confirmationDefaultEdit, ok: true},
+		"edit":        {choice: confirmationDefaultEdit, ok: true},
+		"i":           {choice: confirmationDefaultInteractive, ok: true},
+		"interactive": {choice: confirmationDefaultInteractive, ok: true},
+		"unknown":     {choice: confirmationDefaultNone, ok: false},
 	}
 
 	for input, want := range tests {
-		gotRun, gotOK := parsePlanExecutionChoice(input)
-		if gotRun != want.run || gotOK != want.ok {
-			t.Fatalf("parsePlanExecutionChoice(%q) = (%t, %t), want (%t, %t)", input, gotRun, gotOK, want.run, want.ok)
+		gotChoice, gotOK := parseConfirmationChoice(input)
+		if gotChoice != want.choice || gotOK != want.ok {
+			t.Fatalf("parseConfirmationChoice(%q) = (%v, %t), want (%v, %t)", input, gotChoice, gotOK, want.choice, want.ok)
 		}
 	}
 }

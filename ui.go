@@ -251,6 +251,20 @@ func printPlanOnlyGuidanceTo(target io.Writer, ui bool, response llmResponse) {
 	}
 }
 
+// buildConfirmRow builds the styled "• confirm <question> <options>: <answer>" row.
+// Pass an empty answer when rendering the initial prompt before input is collected.
+func buildConfirmRow(ui bool, question, options, answer string) string {
+	row := style(ui, colorYellow+colorBold, "• confirm ") +
+		style(ui, colorWhite, question) +
+		style(ui, colorWhite, " ") +
+		options +
+		style(ui, colorWhite, ": ")
+	if answer != "" {
+		row += style(ui, colorYellow+colorBold, answer)
+	}
+	return row
+}
+
 // promptPlanExecution asks whether the already rendered plan should be executed.
 func promptPlanExecution(target io.Writer, ui bool, stdin *os.File) (bool, error) {
 	box := newStepBox(target, ui, "confirm")
@@ -260,22 +274,22 @@ func promptPlanExecution(target io.Writer, ui bool, stdin *os.File) (bool, error
 
 	key, ok, err := readSingleConfirmationKey(stdin)
 	if err == nil && ok {
-		if run, found := parsePlanExecutionChoice(string(key)); found {
+		if choice, found := parseConfirmationChoice(string(key)); found {
+			run := choice == confirmationDefaultYes
 			logPlanExecutionChoice(box, run)
 			return run, nil
 		}
 	}
 
-	answer, err := readPlanExecutionAnswer(stdin)
-	if err != nil {
+	reader := bufio.NewReader(stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
 		return false, err
 	}
+	answer := strings.ToLower(strings.TrimSpace(line))
 
-	run, ok := parsePlanExecutionChoice(answer)
-	if !ok {
-		logPlanExecutionChoice(box, false)
-		return false, nil
-	}
+	choice, ok := parseConfirmationChoice(answer)
+	run := ok && choice == confirmationDefaultYes
 	logPlanExecutionChoice(box, run)
 	return run, nil
 }
@@ -285,11 +299,7 @@ func renderPlanExecutionPrompt(box *stepBox) {
 	if box == nil {
 		return
 	}
-	rendered := style(box.ui, colorYellow+colorBold, "• confirm ") +
-		style(box.ui, colorWhite, "Execute this plan? ") +
-		renderPlanExecutionOptions(box.ui) +
-		style(box.ui, colorWhite, ": ")
-	box.writeRow(rendered)
+	box.writeRow(buildConfirmRow(box.ui, "Execute this plan?", renderPlanExecutionOptions(box.ui), ""))
 }
 
 // logPlanExecutionChoice records the plan-level confirmation decision.
@@ -301,52 +311,12 @@ func logPlanExecutionChoice(box *stepBox, run bool) {
 	if run {
 		choice = "yes"
 	}
-	rendered := style(box.ui, colorYellow+colorBold, "• confirm ") +
-		style(box.ui, colorWhite, "Execute this plan? ") +
-		renderPlanExecutionOptions(box.ui) +
-		style(box.ui, colorWhite, ": ") +
-		style(box.ui, colorYellow+colorBold, choice)
-	box.ReplaceLastRenderedRow(rendered)
+	box.ReplaceLastRenderedRow(buildConfirmRow(box.ui, "Execute this plan?", renderPlanExecutionOptions(box.ui), choice))
 }
 
 // renderPlanExecutionOptions renders the accepted plan confirmation keys.
 func renderPlanExecutionOptions(ui bool) string {
 	return "[" + style(ui, colorWhite, "y") + "/" + style(ui, colorWhite, "n") + "]"
-}
-
-// readPlanExecutionAnswer reads one confirmation line without buffering later prompts.
-func readPlanExecutionAnswer(stdin *os.File) (string, error) {
-	var builder strings.Builder
-	buffer := make([]byte, 1)
-
-	for {
-		n, err := stdin.Read(buffer)
-		if n > 0 {
-			value := buffer[0]
-			if value == '\n' || value == '\r' {
-				return builder.String(), nil
-			}
-			builder.WriteByte(value)
-		}
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return builder.String(), nil
-			}
-			return "", err
-		}
-	}
-}
-
-// parsePlanExecutionChoice maps a plan-level confirmation answer to a decision.
-func parsePlanExecutionChoice(value string) (bool, bool) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "y", "yes":
-		return true, true
-	case "n", "no":
-		return false, true
-	default:
-		return false, false
-	}
 }
 
 // planOnlyResult returns the session result text recorded for a non-executing plan turn.
@@ -819,12 +789,7 @@ func renderConfirmationPrompt(box *stepBox, prompt string, defaultChoice confirm
 	if box == nil {
 		return
 	}
-	rendered := style(box.ui, colorYellow+colorBold, "• confirm ") +
-		style(box.ui, colorWhite, prompt) +
-		style(box.ui, colorWhite, " ") +
-		renderConfirmationOptions(box.ui, defaultChoice) +
-		style(box.ui, colorWhite, ": ")
-	box.writeRow(rendered)
+	box.writeRow(buildConfirmRow(box.ui, prompt, renderConfirmationOptions(box.ui, defaultChoice), ""))
 }
 
 // logConfirmationChoice records the confirmation decision on the same line as the original prompt.
@@ -832,13 +797,7 @@ func logConfirmationChoice(box *stepBox, prompt string, defaultChoice confirmati
 	if box == nil {
 		return
 	}
-	rendered := style(box.ui, colorYellow+colorBold, "• confirm ") +
-		style(box.ui, colorWhite, prompt) +
-		style(box.ui, colorWhite, " ") +
-		renderConfirmationOptions(box.ui, defaultChoice) +
-		style(box.ui, colorWhite, ": ") +
-		style(box.ui, colorYellow+colorBold, choice)
-	box.ReplaceLastRenderedRow(rendered)
+	box.ReplaceLastRenderedRow(buildConfirmRow(box.ui, prompt, renderConfirmationOptions(box.ui, defaultChoice), choice))
 }
 
 // promptConfirmation asks for explicit confirmation inside the step box.
