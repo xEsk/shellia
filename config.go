@@ -45,6 +45,7 @@ type config struct {
 	ShowSystemOutput       bool
 	ShellMode              commandEngineMode
 	CommandMode            commandEngineMode
+	PlanOnly               bool
 	Debug                  bool
 	RawResponse            bool
 	NoColor                bool

@@ -162,6 +162,18 @@ func (fake *loopLLMClient) requestStreams() []bool {
 	return streams
 }
 
+// requestBodies returns the JSON request bodies captured by the fake transport.
+func (fake *loopLLMClient) requestBodies() []string {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+
+	bodies := make([]string, 0, len(fake.requests))
+	for _, request := range fake.requests {
+		bodies = append(bodies, request.body)
+	}
+	return bodies
+}
+
 // loopTestConfig returns a minimal config that points every model call at the fake transport.
 func loopTestConfig(baseURL string) config {
 	cfg := defaultConfig()
@@ -275,7 +287,7 @@ func TestRunTurnExecutesSafePlanAndStreamsSummary(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 
 	var result turnResult
-	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+	captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
 		var err error
 		result, err = runTurn(context.Background(), deps, false, cfg, &ctxInfo, "print marker", nil, sessionState{})
 		if err != nil {
@@ -305,6 +317,209 @@ func TestRunTurnExecutesSafePlanAndStreamsSummary(t *testing.T) {
 	}
 }
 
+// TestRunTurnDeclinesPlanWithoutExecuting checks a rejected plan does not run or summarize commands.
+func TestRunTurnDeclinesPlanWithoutExecuting(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{
+		content: `{"summary":"Print a marker.","commands":[{"command":"echo shellia-loop","purpose":"Print marker","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+	})
+	cfg := loopTestConfig(fake.URL())
+	ctxInfo := loopTestContext(t)
+	executed := false
+
+	var result turnResult
+	output := captureMainLoopIO(t, "no\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan) ([]commandExecution, error) {
+			executed = true
+			return nil, nil
+		}
+
+		var err error
+		result, err = runTurn(context.Background(), deps, false, cfg, &ctxInfo, "print marker", nil, sessionState{})
+		if err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	if executed {
+		t.Fatalf("ExecuteCommands was called after declining the plan")
+	}
+	if result.Actionable || len(result.Plans) != 1 || len(result.Executions) != 0 {
+		t.Fatalf("runTurn() result = %#v, want declined plan without executions", result)
+	}
+	if fake.requestCount() != 1 {
+		t.Fatalf("LLM requests = %d, want 1", fake.requestCount())
+	}
+	if !strings.Contains(output, "Plan not executed.") {
+		t.Fatalf("declined plan output does not contain cancellation message: %q", output)
+	}
+}
+
+// TestRunTurnPlanOnlyPrintsCommandsWithoutExecuting checks -p style turns stop after planning.
+func TestRunTurnPlanOnlyPrintsCommandsWithoutExecuting(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{
+		content: `{"summary":"Create a marker file.","commands":[{"command":"touch marker.txt","purpose":"Create marker","risk":"medium","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}`,
+	})
+	cfg := loopTestConfig(fake.URL())
+	cfg.PlanOnly = true
+	ctxInfo := loopTestContext(t)
+	executed := false
+
+	var result turnResult
+	output := captureMainLoopIO(t, "no\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan) ([]commandExecution, error) {
+			executed = true
+			return nil, nil
+		}
+
+		var err error
+		result, err = runTurn(context.Background(), deps, false, cfg, &ctxInfo, "create marker", nil, sessionState{})
+		if err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	if executed {
+		t.Fatalf("ExecuteCommands was called in plan-only mode")
+	}
+	if !result.Actionable || len(result.Plans) != 1 || len(result.Executions) != 0 {
+		t.Fatalf("runTurn() result = %#v, want one planned command and no executions", result)
+	}
+	if !strings.Contains(output, "touch marker.txt") {
+		t.Fatalf("plan-only output does not contain command: %q", output)
+	}
+	if !strings.Contains(output, "run › touch marker.txt") {
+		t.Fatalf("plan-only output does not render command box: %q", output)
+	}
+	for _, hidden := range []string{"risk", "safety"} {
+		if strings.Contains(output, hidden) {
+			t.Fatalf("plan-only output contains verbose metadata %q: %q", hidden, output)
+		}
+	}
+}
+
+// TestRunTurnPlanOnlyExecutesAcceptedPlan checks /plan can run the exact accepted plan.
+func TestRunTurnPlanOnlyExecutesAcceptedPlan(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{
+			content: `{"summary":"Create a marker file.","commands":[{"command":"touch marker.txt","purpose":"Create marker","risk":"medium","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}`,
+		},
+		loopLLMResponse{content: "Created marker file.", stream: true},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.PlanOnly = true
+	ctxInfo := loopTestContext(t)
+	var gotPlans []commandPlan
+
+	var result turnResult
+	output := captureMainLoopIO(t, "sí\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) ([]commandExecution, error) {
+			gotPlans = append([]commandPlan{}, plans...)
+			return []commandExecution{{
+				Command:  plans[0].Command,
+				Purpose:  plans[0].Purpose,
+				ExitCode: 0,
+			}}, nil
+		}
+
+		var err error
+		result, err = runTurn(context.Background(), deps, false, cfg, &ctxInfo, "create marker", nil, sessionState{})
+		if err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	if len(gotPlans) != 1 || gotPlans[0].Command != "touch marker.txt" {
+		t.Fatalf("ExecuteCommands plans = %#v, want planned touch command", gotPlans)
+	}
+	if !result.Actionable || len(result.Executions) != 1 {
+		t.Fatalf("runTurn() result = %#v, want executed plan", result)
+	}
+	if fake.requestCount() != 2 {
+		t.Fatalf("LLM requests = %d, want 2", fake.requestCount())
+	}
+	if !strings.Contains(output, "Created marker file.") {
+		t.Fatalf("accepted plan output does not contain streamed summary: %q", output)
+	}
+}
+
+// TestRunTurnPlanOnlyExplainsObservationDependency checks unresolved follow-up plans explain the dependency.
+func TestRunTurnPlanOnlyExplainsObservationDependency(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{
+		content: `{"summary":"First inspect the repo.","requires_observation":true,"observation_reason":"The next command depends on which package manager appears in the output.","commands":[{"command":"ls","purpose":"Inspect files","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+	})
+	cfg := loopTestConfig(fake.URL())
+	cfg.PlanOnly = true
+	ctxInfo := loopTestContext(t)
+
+	output := captureMainLoopIO(t, "no\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		if _, err := runTurn(context.Background(), deps, false, cfg, &ctxInfo, "install deps", nil, sessionState{}); err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "The next command depends on which package manager appears in the output.") {
+		t.Fatalf("plan-only output does not explain observation dependency: %q", output)
+	}
+	if !strings.Contains(output, "next step") {
+		t.Fatalf("plan-only output does not label observation guidance as next step: %q", output)
+	}
+}
+
+// TestRunTurnPlanOnlySkipsDiscoveryRepair checks /plan does not retry with discovery prompts.
+func TestRunTurnPlanOnlySkipsDiscoveryRepair(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{
+			content: `{"summary":"Need the target container.","requires_input":true,"input_reason":"No Docker container or image was specified.","commands":[]}`,
+		},
+		loopLLMResponse{
+			content: `{"summary":"Unexpected repair.","commands":[{"command":"docker ps","purpose":"Inspect Docker","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+		},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.PlanOnly = true
+	ctxInfo := loopTestContext(t)
+
+	output := captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+		if _, err := runTurn(context.Background(), deps, false, cfg, &ctxInfo, "run php in docker", nil, sessionState{}); err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	if fake.requestCount() != 1 {
+		t.Fatalf("LLM requests = %d, want 1", fake.requestCount())
+	}
+	if !strings.Contains(output, "missing detail") {
+		t.Fatalf("plan-only output does not show missing detail guidance: %q", output)
+	}
+	if strings.Contains(output, "Unexpected repair") || strings.Contains(output, "docker ps") {
+		t.Fatalf("plan-only output used discovery repair response: %q", output)
+	}
+}
+
+// TestRunTurnPlanOnlyUsesDedicatedSystemPrompt checks /plan sends the plan-only prompt contract.
+func TestRunTurnPlanOnlyUsesDedicatedSystemPrompt(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{
+		content: `{"summary":"Create a marker file.","commands":[{"command":"touch marker.txt","purpose":"Preparation: create marker","risk":"medium","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}`,
+	})
+	cfg := loopTestConfig(fake.URL())
+	cfg.PlanOnly = true
+	ctxInfo := loopTestContext(t)
+
+	captureMainLoopIO(t, "no\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		if _, err := runTurn(context.Background(), deps, false, cfg, &ctxInfo, "create marker", nil, sessionState{}); err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	bodies := fake.requestBodies()
+	if len(bodies) != 1 {
+		t.Fatalf("LLM request bodies = %d, want 1", len(bodies))
+	}
+	if !strings.Contains(bodies[0], "non-executing plan mode") {
+		t.Fatalf("plan-only request did not use dedicated system prompt: %q", bodies[0])
+	}
+}
+
 // TestRunInteractiveProcessesPromptThenExit checks that the interactive loop runs one AI turn and exits cleanly.
 func TestRunInteractiveProcessesPromptThenExit(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{
@@ -322,6 +537,34 @@ func TestRunInteractiveProcessesPromptThenExit(t *testing.T) {
 	}
 	if !strings.Contains(output, "Interactive answer.") {
 		t.Fatalf("interactive output does not contain AI answer: %q", output)
+	}
+	if !strings.Contains(output, "Session closed.") {
+		t.Fatalf("interactive output does not contain close message: %q", output)
+	}
+}
+
+// TestRunInteractivePlanCommandPlansWithoutExecuting checks /plan is scoped to one prompt.
+func TestRunInteractivePlanCommandPlansWithoutExecuting(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{
+		content: `{"summary":"Create a marker file.","commands":[{"command":"touch marker.txt","purpose":"Create marker","risk":"medium","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}`,
+	})
+	cfg := loopTestConfig(fake.URL())
+	ctxInfo := loopTestContext(t)
+	executed := false
+
+	output := captureMainLoopIO(t, "/plan create marker\nno\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan) ([]commandExecution, error) {
+			executed = true
+			return nil, nil
+		}
+		runInteractive(context.Background(), deps, false, cfg, &ctxInfo)
+	})
+
+	if executed {
+		t.Fatalf("ExecuteCommands was called for /plan")
+	}
+	if !strings.Contains(output, "touch marker.txt") {
+		t.Fatalf("/plan output does not contain command: %q", output)
 	}
 	if !strings.Contains(output, "Session closed.") {
 		t.Fatalf("interactive output does not contain close message: %q", output)

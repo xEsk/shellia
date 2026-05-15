@@ -7,6 +7,7 @@ func TestParseInteractiveCommandSlashCommands(t *testing.T) {
 	tests := map[string]interactiveCommand{
 		"/shell":    interactiveCommandShell,
 		" /SHELL  ": interactiveCommandShell,
+		"/plan":     interactiveCommandPlan,
 		"/ai":       interactiveCommandAI,
 		"/mode":     interactiveCommandMode,
 		"/context":  interactiveCommandContext,
@@ -20,6 +21,25 @@ func TestParseInteractiveCommandSlashCommands(t *testing.T) {
 		if got := parseInteractiveCommand(input); got != want {
 			t.Fatalf("parseInteractiveCommand(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+// TestParsePlanInstructionExtractsPrompt checks /plan keeps the user request as the planned task.
+func TestParsePlanInstructionExtractsPrompt(t *testing.T) {
+	ok, instruction := parsePlanInstruction(" /plan create a backup ")
+	if !ok {
+		t.Fatalf("parsePlanInstruction() ok = false, want true")
+	}
+	if instruction != "create a backup" {
+		t.Fatalf("parsePlanInstruction() instruction = %q, want %q", instruction, "create a backup")
+	}
+}
+
+// TestParsePlanInstructionIgnoresOtherSlashCommands checks only /plan enables plan-only mode.
+func TestParsePlanInstructionIgnoresOtherSlashCommands(t *testing.T) {
+	ok, instruction := parsePlanInstruction("/shell")
+	if ok || instruction != "" {
+		t.Fatalf("parsePlanInstruction(/shell) = %t, %q; want false, empty", ok, instruction)
 	}
 }
 

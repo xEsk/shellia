@@ -268,6 +268,9 @@ func callLLM(ctx context.Context, client *http.Client, cfg config, ctxInfo conte
 	defer cancel()
 
 	resolvedInstruction := resolveInstructionForPlanning(instruction, state)
+	if cfg.PlanOnly {
+		return callPlanningPrompt(reqCtx, client, cfg, buildPlanOnlySystemPrompt(), buildUserPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations))
+	}
 
 	return callPlanningPrompt(reqCtx, client, cfg, buildSystemPrompt(), buildUserPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations))
 }
@@ -425,6 +428,31 @@ func buildSystemPrompt() string {
 		"If the request cannot be fulfilled safely with confidence, return an empty commands array."
 }
 
+// buildPlanOnlySystemPrompt defines the non-executing plan contract.
+func buildPlanOnlySystemPrompt() string {
+	return "You are a shell planning assistant in non-executing plan mode. " +
+		"You produce an operational plan for a human to review and run manually; Shellia will not execute commands. " +
+		"You must be conservative, accurate, and avoid hallucinating tools or paths. " +
+		"Only use commands that are standard or clearly available from the provided context. " +
+		"Never propose interactive editors like nano, vim, less, top, or man. " +
+		"Do not use placeholders in the command field. " +
+		"Return pure shell commands only in command fields. " +
+		"Do not include explanatory echo, printf, comments, labels, banners, or formatting commands inside command fields unless the user's task is specifically to create file content. " +
+		"Split the plan into useful stages through command purposes: preparation, inspection, decision, and manual execution. " +
+		"Include preparation commands that can be written exactly now, even if later execution depends on inspection output. " +
+		"Avoid redundant inspection steps; prefer one command that returns the fields needed for a decision. " +
+		"If later work depends on command output, return the exact preparation and inspection commands that are useful now, set requires_observation=true, and write observation_reason as explicit branches. " +
+		"The observation_reason must say what to do if the output shows a usable value, and what to do if it does not. " +
+		"If a later command cannot be exact until the user chooses a value from output, describe the command shape in observation_reason using the value by name, not as a placeholder command. " +
+		"If exact planning is impossible because a mandatory user-provided detail is missing, return no commands and set requires_input=true with a short input_reason. " +
+		"Return only strict JSON with this exact schema: " +
+		`{"summary":"short operational plan summary","requires_observation":false,"observation_reason":"","requires_input":false,"input_reason":"","commands":[{"command":"string","purpose":"string","risk":"safe|medium|high","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}. ` +
+		"The commands array may contain multiple commands in manual execution order. " +
+		"Any command that changes the filesystem, uses sudo, changes system users, permissions, services, packages, or network state must have requires_confirmation=true. " +
+		"If a command launches a prompt, REPL, TUI, password prompt, interactive installer, fuzzy finder, or anything that needs a real terminal session, set interactive=true and explain why in interactive_reason. " +
+		"If the request cannot be planned safely with confidence, return an empty commands array and explain it in summary."
+}
+
 // buildUserPrompt attaches the detected local context to the model prompt.
 func buildUserPrompt(cfg config, instruction string, resolvedInstruction string, ctxInfo contextInfo, history []historyEntry, state sessionState, observations []commandExecution) string {
 	gitStatus := ctxInfo.Git.StatusShort
@@ -494,8 +522,17 @@ func buildUserPrompt(cfg config, instruction string, resolvedInstruction string,
 		observationBlock = b.String()
 	}
 
+	planOnlyRules := ""
+	if cfg.PlanOnly {
+		planOnlyRules = "\nPlan-only mode:\n" +
+			"- This is not an execution round and there is no automatic discovery repair.\n" +
+			"- Include exact preparation commands that are useful before inspection.\n" +
+			"- Include the smallest useful inspection command when information must be discovered.\n" +
+			"- Explain manual decision branches in observation_reason when a later command depends on output.\n"
+	}
+
 	return fmt.Sprintf(
-		"User instruction:\n%s%s%s%s%s\nCurrent context:\n- cwd: %s\n- user: %s\n- os: %s\n- shell: %s\n- git.is_repo: %t\n- git.branch: %s\n- git.status_short:\n%s%s\n\nRules:\n- Commands must run in the current working directory unless a command explicitly operates elsewhere.\n- Do not invent files, branches, remotes, package managers, or paths.\n- Prefer simple commands.\n- Return pure commands only, without echo/printf or shell decorations.\n- Split independent actions into separate commands instead of chaining them.\n- If a follow-up refers to an earlier task, use the resolved planning context, recent reusable observations, and session memory to continue it.\n- If observed outputs from this task or recent reusable observations already answer the question, return no commands and answer directly in summary.\n- Do not repeat an inspection command that already produced the needed information unless the user explicitly asks to rerun it.\n- If observed outputs from this task are provided, use them to decide the next commands instead of guessing.\n- If observed output shows a confirmation prompt or terminal question, do not repeat the same non-interactive command; choose a known non-interactive variant with high confidence or set interactive=true.\n- If Shellia already asks the user to confirm a risky command, avoid a second in-command confirmation prompt when a known non-interactive flag is available with high confidence.\n- If a mandatory user-provided detail is still missing, return no commands and explain the missing detail in summary and input_reason.\n- If a command needs a real terminal session, set interactive=true and explain why in interactive_reason.\n- If a request is still somewhat underspecified but can be advanced safely, propose a short inspection or verification command instead of immediately returning no commands.\n- If a referenced file might contain executable code, inspect or verify it before refusing based only on its extension.\n- If the request cannot be fulfilled safely with confidence, return an empty commands array and explain it in summary.\n",
+		"User instruction:\n%s%s%s%s%s\nCurrent context:\n- cwd: %s\n- user: %s\n- os: %s\n- shell: %s\n- git.is_repo: %t\n- git.branch: %s\n- git.status_short:\n%s%s\n\nRules:\n- Commands must run in the current working directory unless a command explicitly operates elsewhere.\n- Do not invent files, branches, remotes, package managers, or paths.\n- Prefer simple commands.\n- Return pure commands only, without echo/printf or shell decorations.\n- Split independent actions into separate commands instead of chaining them.\n- If a follow-up refers to an earlier task, use the resolved planning context, recent reusable observations, and session memory to continue it.\n- Recent observations are reusable context for answering questions, but they are not an absolute reason to refuse a fresh execution request.\n- If observed outputs from this task or recent reusable observations already answer the question, return no commands and answer directly in summary unless the current user instruction explicitly asks to repeat, rerun, retry, or execute the action again.\n- When in doubt between answering from memory and executing again, prioritize the current user instruction.\n- Do not repeat an inspection command that already produced the needed information unless the user explicitly asks to rerun it.\n- If observed outputs from this task are provided, use them to decide the next commands instead of guessing.\n- If observed output shows a confirmation prompt or terminal question, do not repeat the same non-interactive command; choose a known non-interactive variant with high confidence or set interactive=true.\n- If Shellia already asks the user to confirm a risky command, avoid a second in-command confirmation prompt when a known non-interactive flag is available with high confidence.\n- If a mandatory user-provided detail is still missing, return no commands and explain the missing detail in summary and input_reason.\n- If a command needs a real terminal session, set interactive=true and explain why in interactive_reason.\n- If a request is still somewhat underspecified but can be advanced safely, propose a short inspection or verification command instead of immediately returning no commands.\n- If a referenced file might contain executable code, inspect or verify it before refusing based only on its extension.\n- If the request cannot be fulfilled safely with confidence, return an empty commands array and explain it in summary.\n%s",
 		instruction,
 		resolutionBlock,
 		memoryBlock,
@@ -509,6 +546,7 @@ func buildUserPrompt(cfg config, instruction string, resolvedInstruction string,
 		ctxInfo.Git.Branch,
 		gitStatus,
 		historyBlock,
+		planOnlyRules,
 	)
 }
 

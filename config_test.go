@@ -79,6 +79,28 @@ func TestNormalizeConfirmationDefaultAcceptsShortAliases(t *testing.T) {
 	}
 }
 
+// TestParseArgsEnablesPlanOnlyFlags checks --plan and -p request planning without execution.
+func TestParseArgsEnablesPlanOnlyFlags(t *testing.T) {
+	for _, flagName := range []string{"--plan", "-p"} {
+		t.Run(flagName, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("SHELLIA_API_KEY", "test-key")
+
+			cfg, err := parseArgs([]string{flagName, "create a file"})
+			if err != nil {
+				t.Fatalf("parseArgs() error = %v", err)
+			}
+
+			if !cfg.PlanOnly {
+				t.Fatalf("PlanOnly = false, want true")
+			}
+			if cfg.Instruction != "create a file" {
+				t.Fatalf("Instruction = %q, want %q", cfg.Instruction, "create a file")
+			}
+		})
+	}
+}
+
 // TestLoadBaseConfigRejectsInvalidConfig checks broken TOML is surfaced instead of ignored.
 func TestLoadBaseConfigRejectsInvalidConfig(t *testing.T) {
 	home := t.TempDir()

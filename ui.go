@@ -199,22 +199,166 @@ func printPlanTo(target io.Writer, ui bool, cfg config, summary string, plans []
 	}
 	renderPanel(target, ui, title, titleColor, []string{style(ui, colorWhite+colorBold, summary)})
 
-	if len(plans) == 0 || !cfg.Verbose {
+	if len(plans) == 0 || (!cfg.Verbose && !cfg.PlanOnly) {
 		return
 	}
 
-	lines := make([]string, 0, len(plans)+1)
-	for index, plan := range plans {
-		lines = append(lines,
-			fmt.Sprintf("%s %s", stepBadge(ui, index+1), plan.Purpose),
-			fmt.Sprintf("%s %s", metaLabel(ui, "command"), style(ui, colorWhite, plan.Command)),
-			fmt.Sprintf("%s %s", metaLabel(ui, "risk"), riskBadge(ui, plan.Risk)),
-			fmt.Sprintf("%s %s", metaLabel(ui, "safety"), classificationBadge(ui, plan.Classification)),
-			fmt.Sprintf("%s %s", metaLabel(ui, "confirm"), confirmBadge(ui, plan.RequiresConfirmation)),
-			"",
-		)
-	}
+	lines := planStepLines(target, ui, cfg, plans)
 	renderPanel(target, ui, "steps", colorDim, trimTrailingBlankLines(lines))
+}
+
+// planStepLines renders planned steps with compact command boxes in plan-only mode.
+func planStepLines(target io.Writer, ui bool, cfg config, plans []commandPlan) []string {
+	lines := make([]string, 0, len(plans)*4)
+	commandWidth := boxWidthFor(target) - visibleWidth("  ")
+	if commandWidth < boxMinWidth {
+		commandWidth = boxMinWidth
+	}
+
+	for index, plan := range plans {
+		lines = append(lines, fmt.Sprintf("%s %s", stepBadge(ui, index+1), plan.Purpose))
+		lines = append(lines, renderCommandBox(ui, plan.Command, commandWidth)...)
+		if cfg.Verbose {
+			lines = append(lines,
+				fmt.Sprintf("%s %s", metaLabel(ui, "risk"), riskBadge(ui, plan.Risk)),
+				fmt.Sprintf("%s %s", metaLabel(ui, "safety"), classificationBadge(ui, plan.Classification)),
+				fmt.Sprintf("%s %s", metaLabel(ui, "confirm"), confirmBadge(ui, plan.RequiresConfirmation)),
+			)
+		}
+		lines = append(lines, "")
+	}
+	return lines
+}
+
+// printPlanOnlyGuidanceTo explains how to continue when the plan cannot be fully resolved yet.
+func printPlanOnlyGuidanceTo(target io.Writer, ui bool, response llmResponse) {
+	if response.RequiresObservation {
+		reason := fallbackValue(response.ObservationReason, "Some later commands depend on the real output from the commands above.")
+		renderPanel(target, ui, "next step", colorCyan, []string{
+			style(ui, colorWhite+colorBold, "No commands were executed."),
+			style(ui, colorWhite, "Run the command or commands above, review the output, and continue with the branch described here."),
+			style(ui, colorDim, reason),
+		})
+		return
+	}
+
+	if response.RequiresInput {
+		reason := fallbackValue(response.InputReason, "A required detail is missing before exact commands can be planned.")
+		renderPanel(target, ui, "missing detail", colorYellow, []string{
+			style(ui, colorWhite+colorBold, "No commands were executed."),
+			style(ui, colorDim, reason),
+		})
+	}
+}
+
+// promptPlanExecution asks whether the already rendered plan should be executed.
+func promptPlanExecution(target io.Writer, ui bool, stdin *os.File) (bool, error) {
+	box := newStepBox(target, ui, "confirm")
+	box.Spacer()
+	renderPlanExecutionPrompt(box)
+	defer box.Close()
+
+	key, ok, err := readSingleConfirmationKey(stdin)
+	if err == nil && ok {
+		if run, found := parsePlanExecutionChoice(string(key)); found {
+			logPlanExecutionChoice(box, run)
+			return run, nil
+		}
+	}
+
+	answer, err := readPlanExecutionAnswer(stdin)
+	if err != nil {
+		return false, err
+	}
+
+	run, ok := parsePlanExecutionChoice(answer)
+	if !ok {
+		logPlanExecutionChoice(box, false)
+		return false, nil
+	}
+	logPlanExecutionChoice(box, run)
+	return run, nil
+}
+
+// renderPlanExecutionPrompt prints the plan-level confirmation question.
+func renderPlanExecutionPrompt(box *stepBox) {
+	if box == nil {
+		return
+	}
+	rendered := style(box.ui, colorYellow+colorBold, "• confirm ") +
+		style(box.ui, colorWhite, "Execute this plan? ") +
+		renderPlanExecutionOptions(box.ui) +
+		style(box.ui, colorWhite, ": ")
+	box.writeRow(rendered)
+}
+
+// logPlanExecutionChoice records the plan-level confirmation decision.
+func logPlanExecutionChoice(box *stepBox, run bool) {
+	if box == nil {
+		return
+	}
+	choice := "no"
+	if run {
+		choice = "yes"
+	}
+	rendered := style(box.ui, colorYellow+colorBold, "• confirm ") +
+		style(box.ui, colorWhite, "Execute this plan? ") +
+		renderPlanExecutionOptions(box.ui) +
+		style(box.ui, colorWhite, ": ") +
+		style(box.ui, colorYellow+colorBold, choice)
+	box.ReplaceLastRenderedRow(rendered)
+}
+
+// renderPlanExecutionOptions renders the accepted plan confirmation keys.
+func renderPlanExecutionOptions(ui bool) string {
+	return "[" + style(ui, colorWhite, "y") + "/" + style(ui, colorWhite, "n") + "]"
+}
+
+// readPlanExecutionAnswer reads one confirmation line without buffering later prompts.
+func readPlanExecutionAnswer(stdin *os.File) (string, error) {
+	var builder strings.Builder
+	buffer := make([]byte, 1)
+
+	for {
+		n, err := stdin.Read(buffer)
+		if n > 0 {
+			value := buffer[0]
+			if value == '\n' || value == '\r' {
+				return builder.String(), nil
+			}
+			builder.WriteByte(value)
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return builder.String(), nil
+			}
+			return "", err
+		}
+	}
+}
+
+// parsePlanExecutionChoice maps a plan-level confirmation answer to a decision.
+func parsePlanExecutionChoice(value string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "y", "yes":
+		return true, true
+	case "n", "no":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+// planOnlyResult returns the session result text recorded for a non-executing plan turn.
+func planOnlyResult(summary string, response llmResponse) string {
+	switch {
+	case response.RequiresObservation && strings.TrimSpace(response.ObservationReason) != "":
+		return strings.TrimSpace(summary + " " + response.ObservationReason)
+	case response.RequiresInput && strings.TrimSpace(response.InputReason) != "":
+		return strings.TrimSpace(summary + " " + response.InputReason)
+	default:
+		return strings.TrimSpace(summary)
+	}
 }
 
 // printHeader shows a compact header with the global session state.

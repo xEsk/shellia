@@ -77,6 +77,85 @@ func TestBuildSystemPromptAllowsExplicitReruns(t *testing.T) {
 	}
 }
 
+// TestBuildPlanOnlySystemPromptDefinesOperationalPlan checks /plan has a dedicated non-executing contract.
+func TestBuildPlanOnlySystemPromptDefinesOperationalPlan(t *testing.T) {
+	prompt := buildPlanOnlySystemPrompt()
+
+	requiredSnippets := []string{
+		"non-executing plan mode",
+		"preparation, inspection, decision, and manual execution",
+		"Avoid redundant inspection steps",
+		"write observation_reason as explicit branches",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("buildPlanOnlySystemPrompt() missing %q in %q", snippet, prompt)
+		}
+	}
+}
+
+// TestBuildUserPromptAddsPlanOnlyGuidance checks /plan requests human-readable branch guidance.
+func TestBuildUserPromptAddsPlanOnlyGuidance(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.PlanOnly = true
+	ctxInfo := contextInfo{
+		CWD:   "/tmp/project",
+		User:  "xesc",
+		OS:    "darwin/arm64",
+		Shell: "/bin/zsh",
+	}
+
+	prompt := buildUserPrompt(cfg, "inspect docker", "inspect docker", ctxInfo, nil, sessionState{}, nil)
+
+	requiredSnippets := []string{
+		"Plan-only mode:",
+		"not an execution round",
+		"no automatic discovery repair",
+		"exact preparation commands",
+		"manual decision branches",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("buildUserPrompt() missing %q in %q", snippet, prompt)
+		}
+	}
+}
+
+// TestBuildUserPromptMakesReusableObservationsNonBlocking checks that prior
+// outputs remain context without blocking explicit fresh execution requests.
+func TestBuildUserPromptMakesReusableObservationsNonBlocking(t *testing.T) {
+	cfg := defaultConfig()
+	ctxInfo := contextInfo{
+		CWD:   "/tmp/project",
+		User:  "xesc",
+		OS:    "darwin/arm64",
+		Shell: "/bin/zsh",
+	}
+	state := sessionState{
+		LastObservations: []observationMemory{
+			{
+				Purpose:    "Check status",
+				Command:    "git status --short",
+				Transcript: "stdout:\n M llm.go",
+			},
+		},
+	}
+
+	prompt := buildUserPrompt(cfg, "run it again", "run it again", ctxInfo, nil, state, nil)
+
+	requiredSnippets := []string{
+		"Recent reusable observations:",
+		"not an absolute reason to refuse a fresh execution request",
+		"unless the current user instruction explicitly asks to repeat, rerun, retry, or execute the action again",
+		"prioritize the current user instruction",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("buildUserPrompt() missing %q in %q", snippet, prompt)
+		}
+	}
+}
+
 // TestBuildDiscoveryRepairPromptIncludesContext checks that the discovery repair
 // prompt keeps the normal planning context and adds the repair instructions.
 func TestBuildDiscoveryRepairPromptIncludesContext(t *testing.T) {

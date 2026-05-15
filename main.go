@@ -214,6 +214,8 @@ func buildFlagSet(cfg *config) (*flag.FlagSet, *int, *int) {
 	fs.BoolVar(&cfg.ContinueOnError, "continue-on-error", cfg.ContinueOnError, "continue if a command fails")
 	fs.BoolVar(&cfg.Interactive, "interactive", false, "start or maintain an interactive session")
 	fs.BoolVar(&cfg.Interactive, "i", false, "short alias for --interactive")
+	fs.BoolVar(&cfg.PlanOnly, "plan", cfg.PlanOnly, "show the command plan without executing it")
+	fs.BoolVar(&cfg.PlanOnly, "p", false, "short alias for --plan")
 	fs.BoolVar(&cfg.Debug, "debug", cfg.Debug, "show context and debug data")
 	fs.BoolVar(&cfg.Verbose, "verbose", cfg.Verbose, "show full plan and technical detail")
 	fs.BoolVar(&cfg.RawResponse, "raw-response", cfg.RawResponse, "print the raw model response")
@@ -340,6 +342,41 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 		}
 
 		trimmed := strings.TrimSpace(input)
+		planOnly, plannedInstruction := parsePlanInstruction(input)
+		if planOnly {
+			if strings.TrimSpace(plannedInstruction) == "" {
+				printWarningTo(deps.Stderr, ui, "Missing plan instruction.")
+				continue
+			}
+
+			turnCfg := cfg
+			turnCfg.PlanOnly = true
+			turnCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
+			turn, err := runTurn(turnCtx, deps, ui, turnCfg, ctxInfo, plannedInstruction, history, state)
+			stop()
+
+			if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {
+				state.LastRetryInstruction = plannedInstruction
+				rememberUnfinishedInstruction(&state, plannedInstruction)
+				printWarningTo(deps.Stderr, ui, "Request cancelled.")
+				fmt.Fprintln(deps.Stdout)
+				printSeparator(deps.Stdout, ui)
+				continue
+			}
+			if err != nil {
+				printWarningTo(deps.Stderr, ui, err.Error())
+				state.LastRetryInstruction = plannedInstruction
+				rememberUnfinishedInstruction(&state, plannedInstruction)
+				continue
+			}
+			history = append(history, historyEntry{Instruction: input, Result: turn.Result})
+			updateSessionState(&state, plannedInstruction, turn)
+			if len(history) > maxHistoryEntries {
+				history = history[len(history)-maxHistoryEntries:]
+			}
+			continue
+		}
+
 		command := parseInteractiveCommand(trimmed)
 		if command != interactiveCommandNone {
 			switch command {
@@ -366,6 +403,9 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 				continue
 			case interactiveCommandMode:
 				printModeStatusTo(deps.Stdout, ui, "Current mode: "+string(mode))
+				continue
+			case interactiveCommandPlan:
+				printWarningTo(deps.Stderr, ui, "Missing plan instruction.")
 				continue
 			}
 		}
@@ -455,7 +495,7 @@ func renderModeForManualCommand(cfg config) manualRenderMode {
 	return manualRenderInline
 }
 
-// runTurn executes a full plan → confirm → execute → answer cycle.
+// runTurn executes a full plan → confirm → execute → answer cycle, or stops after planning in plan-only mode.
 func runTurn(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo, instruction string, history []historyEntry, state sessionState) (turnResult, error) {
 	deps = deps.withDefaults()
 	if cfg.Debug || cfg.Verbose {
@@ -493,7 +533,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo
 			return turnResult{}, err
 		}
 
-		if len(plans) == 0 && shouldRetryWithDiscoveryRepair(parsed, round, allExecutions) {
+		if len(plans) == 0 && !cfg.PlanOnly && shouldRetryWithDiscoveryRepair(parsed, round, allExecutions) {
 			thinking = startThinkingIndicator(ui, deps.Stdout)
 			repairedRawResponse, repairErr := callDiscoveryRepairLLM(ctx, deps.HTTPClient, cfg, *ctxInfo, instruction, history, state, allExecutions, parsed)
 			if thinking != nil {
@@ -518,6 +558,9 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo
 
 		if len(plans) == 0 {
 			printFinalResultTo(deps.Stdout, ui, summary)
+			if cfg.PlanOnly {
+				printPlanOnlyGuidanceTo(deps.Stdout, ui, parsed)
+			}
 			return turnResult{Result: summary, Summary: summary, Actionable: false, Plans: plans}, nil
 		}
 
@@ -526,6 +569,24 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo
 		}
 
 		printPlanTo(deps.Stdout, ui, cfg, summary, plans, parsed.RequiresObservation)
+		if cfg.PlanOnly {
+			printPlanOnlyGuidanceTo(deps.Stdout, ui, parsed)
+		}
+		executePlan, err := promptPlanExecution(deps.Stdout, ui, deps.Stdin)
+		if err != nil {
+			return turnResult{}, fmt.Errorf("cannot read plan confirmation: %w", err)
+		}
+		if !executePlan {
+			if cfg.PlanOnly {
+				return turnResult{Result: planOnlyResult(summary, parsed), Summary: summary, Actionable: len(plans) > 0, Plans: plans}, nil
+			}
+			printInfoTo(deps.Stdout, ui, "Plan not executed.")
+			return turnResult{Result: summary, Summary: summary, Actionable: false, Plans: plans}, nil
+		}
+
+		if cfg.PlanOnly {
+			cfg.PlanOnly = false
+		}
 		executions, err := deps.ExecuteCommands(ctx, deps, ui, cfg, ctxInfo, plans)
 		if err != nil {
 			if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {

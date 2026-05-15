@@ -83,6 +83,27 @@ func TestReadFallbackPromptLineReturnsPartialLineOnEOF(t *testing.T) {
 	}
 }
 
+// TestParsePlanExecutionChoiceAcceptsSupportedAnswers checks plan-level confirmation answers.
+func TestParsePlanExecutionChoiceAcceptsSupportedAnswers(t *testing.T) {
+	tests := map[string]struct {
+		run bool
+		ok  bool
+	}{
+		"yes":     {run: true, ok: true},
+		"si":      {run: true, ok: true},
+		"sí":      {run: true, ok: true},
+		"no":      {run: false, ok: true},
+		"unknown": {run: false, ok: false},
+	}
+
+	for input, want := range tests {
+		gotRun, gotOK := parsePlanExecutionChoice(input)
+		if gotRun != want.run || gotOK != want.ok {
+			t.Fatalf("parsePlanExecutionChoice(%q) = (%t, %t), want (%t, %t)", input, gotRun, gotOK, want.run, want.ok)
+		}
+	}
+}
+
 // TestWrapPromptRunesWithOffsetsPreservesWhitespace checks that wrapping keeps
 // buffer spaces to preserve the exact caret mapping.
 func TestWrapPromptRunesWithOffsetsPreservesWhitespace(t *testing.T) {
