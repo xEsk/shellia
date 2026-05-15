@@ -406,6 +406,7 @@ func buildSystemPrompt() string {
 		"Use session memory to resolve follow-up references such as 'before', 'that', 'do it now', or 'the docker thing'. " +
 		"If the user is clearly continuing an earlier task, continue that task instead of treating the request as unrelated. " +
 		"If a later action depends on information that must be discovered from command output first, return only the information-gathering commands for this round and set requires_observation=true. " +
+		"Never include a command whose arguments or options would change based on the output of another command in the same response; describe it in observation_reason instead. " +
 		"When requires_observation=true, also set observation_reason to a short explanation of what still needs to be learned from the real output. " +
 		"After the shell provides that observed output in a later prompt, use it to produce the next commands. " +
 		"If a command cannot be built yet because a mandatory user-provided detail is still missing, return no commands and set requires_input=true. " +
@@ -439,9 +440,10 @@ func buildPlanOnlySystemPrompt() string {
 		"Return pure shell commands only in command fields. " +
 		"Do not include explanatory echo, printf, comments, labels, banners, or formatting commands inside command fields unless the user's task is specifically to create file content. " +
 		"Split the plan into useful stages through command purposes: preparation, inspection, decision, and manual execution. " +
-		"Include preparation commands that can be written exactly now, even if later execution depends on inspection output. " +
+		"Include only commands that can be written with certainty using currently known information. " +
 		"Avoid redundant inspection steps; prefer one command that returns the fields needed for a decision. " +
-		"If later work depends on command output, return the exact preparation and inspection commands that are useful now, set requires_observation=true, and write observation_reason as explicit branches. " +
+		"If later work depends on command output, return only the inspection and preparation commands that are exact now, set requires_observation=true, and write observation_reason as explicit branches. " +
+		"Never include a command in the commands array whose arguments or options would only be known after seeing inspection output; put those commands in observation_reason instead. " +
 		"The observation_reason must say what to do if the output shows a usable value, and what to do if it does not. " +
 		"If a later command cannot be exact until the user chooses a value from output, describe the command shape in observation_reason using the value by name, not as a placeholder command. " +
 		"If exact planning is impossible because a mandatory user-provided detail is missing, return no commands and set requires_input=true with a short input_reason. " +
