@@ -46,6 +46,8 @@ type config struct {
 	ShellMode              commandEngineMode
 	CommandMode            commandEngineMode
 	PlanOnly               bool
+	ConfirmPlan            bool
+	ConfirmPlanOnly        bool
 	Debug                  bool
 	RawResponse            bool
 	NoColor                bool
@@ -66,6 +68,8 @@ type fileConfig struct {
 		RequestTimeoutSeconds int    `toml:"request_timeout_seconds"`
 		YesSafe               *bool  `toml:"yes_safe"`
 		ContinueOnError       *bool  `toml:"continue_on_error"`
+		ConfirmPlan           *bool  `toml:"confirm_plan"`
+		ConfirmPlanOnly       *bool  `toml:"confirm_plan_only"`
 		ConfirmationDefault   string `toml:"confirmation_default"`
 		ShellMode             string `toml:"shell_mode"`
 		CommandMode           string `toml:"command_mode"`
@@ -97,6 +101,8 @@ func defaultConfig() config {
 		ObservationOutputChars: 1200,
 		SummaryOutputChars:     4000,
 		ShowSystemOutput:       true,
+		ConfirmPlan:            true,
+		ConfirmPlanOnly:        true,
 		ShellMode:              commandEngineInteractive,
 		CommandMode:            commandEnginePlain,
 		ShowCommandPopup:       true,
@@ -126,6 +132,12 @@ func applyFileConfig(cfg *config, fileCfg fileConfig) {
 	}
 	if fileCfg.Execution.ContinueOnError != nil {
 		cfg.ContinueOnError = *fileCfg.Execution.ContinueOnError
+	}
+	if fileCfg.Execution.ConfirmPlan != nil {
+		cfg.ConfirmPlan = *fileCfg.Execution.ConfirmPlan
+	}
+	if fileCfg.Execution.ConfirmPlanOnly != nil {
+		cfg.ConfirmPlanOnly = *fileCfg.Execution.ConfirmPlanOnly
 	}
 	if strings.TrimSpace(fileCfg.Execution.ConfirmationDefault) != "" {
 		cfg.ConfirmationDefault = normalizeConfirmationDefault(fileCfg.Execution.ConfirmationDefault, cfg.ConfirmationDefault)
@@ -256,6 +268,8 @@ timeout_seconds         = 120
 request_timeout_seconds = 60
 yes_safe                = false
 continue_on_error       = false
+confirm_plan            = true
+confirm_plan_only       = true
 confirmation_default    = "none"
 shell_mode              = "interactive"
 command_mode            = "plain"

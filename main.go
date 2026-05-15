@@ -212,6 +212,8 @@ func buildFlagSet(cfg *config) (*flag.FlagSet, *int, *int) {
 	fs.IntVar(&reqTimeoutSecs, "request-timeout", reqTimeoutSecs, "HTTP request timeout in seconds")
 	fs.BoolVar(&cfg.YesSafe, "yes-safe", cfg.YesSafe, "auto-execute safe commands without confirmation")
 	fs.BoolVar(&cfg.ContinueOnError, "continue-on-error", cfg.ContinueOnError, "continue if a command fails")
+	fs.BoolVar(&cfg.ConfirmPlan, "confirm-plan", cfg.ConfirmPlan, "ask for confirmation before executing the plan")
+	fs.BoolVar(&cfg.ConfirmPlanOnly, "confirm-plan-only", cfg.ConfirmPlanOnly, "ask for confirmation after showing the plan in plan-only mode")
 	fs.BoolVar(&cfg.Interactive, "interactive", false, "start or maintain an interactive session")
 	fs.BoolVar(&cfg.Interactive, "i", false, "short alias for --interactive")
 	fs.BoolVar(&cfg.PlanOnly, "plan", cfg.PlanOnly, "show the command plan without executing it")
@@ -559,7 +561,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo
 		if len(plans) == 0 {
 			printFinalResultTo(deps.Stdout, ui, summary)
 			if cfg.PlanOnly {
-				printPlanOnlyGuidanceTo(deps.Stdout, ui, parsed)
+				printPlanOnlyGuidanceTo(deps.Stdout, ui, parsed, cfg.ConfirmPlanOnly)
 			}
 			return turnResult{Result: summary, Summary: summary, Actionable: false, Plans: plans}, nil
 		}
@@ -570,18 +572,26 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo
 
 		printPlanTo(deps.Stdout, ui, cfg, summary, plans, parsed.RequiresObservation)
 		if cfg.PlanOnly {
-			printPlanOnlyGuidanceTo(deps.Stdout, ui, parsed)
+			printPlanOnlyGuidanceTo(deps.Stdout, ui, parsed, cfg.ConfirmPlanOnly)
 		}
-		executePlan, err := promptPlanExecution(deps.Stdout, ui, deps.Stdin)
-		if err != nil {
-			return turnResult{}, fmt.Errorf("cannot read plan confirmation: %w", err)
-		}
-		if !executePlan {
+
+		skipConfirm := (cfg.PlanOnly && !cfg.ConfirmPlanOnly) || (!cfg.PlanOnly && !cfg.ConfirmPlan)
+		if skipConfirm {
 			if cfg.PlanOnly {
 				return turnResult{Result: planOnlyResult(summary, parsed), Summary: summary, Actionable: len(plans) > 0, Plans: plans}, nil
 			}
-			printInfoTo(deps.Stdout, ui, "Plan not executed.")
-			return turnResult{Result: summary, Summary: summary, Actionable: false, Plans: plans}, nil
+		} else {
+			executePlan, err := promptPlanExecution(deps.Stdout, ui, deps.Stdin)
+			if err != nil {
+				return turnResult{}, fmt.Errorf("cannot read plan confirmation: %w", err)
+			}
+			if !executePlan {
+				if cfg.PlanOnly {
+					return turnResult{Result: planOnlyResult(summary, parsed), Summary: summary, Actionable: len(plans) > 0, Plans: plans}, nil
+				}
+				printInfoTo(deps.Stdout, ui, "Plan not executed.")
+				return turnResult{Result: summary, Summary: summary, Actionable: false, Plans: plans}, nil
+			}
 		}
 
 		if cfg.PlanOnly {

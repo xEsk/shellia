@@ -231,7 +231,7 @@ func planStepLines(target io.Writer, ui bool, cfg config, plans []commandPlan) [
 }
 
 // printPlanOnlyGuidanceTo explains how to continue when the plan cannot be fully resolved yet.
-func printPlanOnlyGuidanceTo(target io.Writer, ui bool, response llmResponse) {
+func printPlanOnlyGuidanceTo(target io.Writer, ui bool, response llmResponse, confirmPlanOnly bool) {
 	if response.RequiresObservation {
 		reason := fallbackValue(response.ObservationReason, "Some later commands depend on the real output from the commands above.")
 		renderPanel(target, ui, "next step", colorCyan, []string{
@@ -248,7 +248,17 @@ func printPlanOnlyGuidanceTo(target io.Writer, ui bool, response llmResponse) {
 			style(ui, colorWhite+colorBold, "No commands were executed."),
 			style(ui, colorDim, reason),
 		})
+		return
 	}
+
+	msg := "Run the steps above to complete the task."
+	if confirmPlanOnly {
+		msg = "Run the steps above to complete the task, or confirm below to let Shellia execute them."
+	}
+	renderPanel(target, ui, "next step", colorCyan, []string{
+		style(ui, colorWhite+colorBold, "No commands were executed."),
+		style(ui, colorWhite, msg),
+	})
 }
 
 // buildConfirmRow builds the styled "• confirm <question> <options>: <answer>" row.
