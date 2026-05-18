@@ -145,9 +145,9 @@ func TestBuildUserPromptMakesReusableObservationsNonBlocking(t *testing.T) {
 
 	requiredSnippets := []string{
 		"Recent reusable observations:",
-		"not an absolute reason to refuse a fresh execution request",
-		"unless the current user instruction explicitly asks to repeat, rerun, retry, or execute the action again",
-		"prioritize the current user instruction",
+		"task continuity only",
+		"NOT a reason to skip a fresh execution request",
+		"Never skip commands based solely on reusable observations from prior turns",
 	}
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(prompt, snippet) {

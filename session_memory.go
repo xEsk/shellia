@@ -126,6 +126,7 @@ func looksLikeReferenceFollowUp(input string) bool {
 		"do it", "do that", "that thing", "before", "earlier", "previous",
 		"lo del", "el del", "the docker thing", "continue", "ara fes", "si", "yes",
 		"ok", "okay", "vale", "d acord", "dacord", "llista", "lista",
+		"again", "retry", "repeat", "rerun", "torna", "de nou",
 	}
 	for _, snippet := range referenceSnippets {
 		if strings.Contains(normalized, snippet) {
