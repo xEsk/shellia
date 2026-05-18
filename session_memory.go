@@ -7,6 +7,11 @@ import (
 
 var backtickCommandPattern = regexp.MustCompile("`([^`]+)`")
 
+const (
+	maxObservationEntries = 4
+	observationChars      = 400
+)
+
 // updateSessionState stores durable session memory after a successful turn.
 func updateSessionState(state *sessionState, instruction string, turn turnResult) {
 	if state == nil {
@@ -310,11 +315,6 @@ func looksLikeShellCommand(text string) bool {
 
 // collectObservationMemory stores a compact reusable digest of the last observed outputs.
 func collectObservationMemory(executions []commandExecution) []observationMemory {
-	const (
-		maxObservationEntries = 4
-		observationChars      = 400
-	)
-
 	observations := make([]observationMemory, 0, len(executions))
 	for _, execution := range executions {
 		transcript := strings.TrimSpace(execution.PromptTranscript(observationChars))
