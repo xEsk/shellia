@@ -235,17 +235,20 @@ func initConfigFileTo(target io.Writer, ui bool) error {
 		return fmt.Errorf("cannot create config directory: %w", err)
 	}
 
-	if _, err := os.Stat(path); err == nil {
-		renderPanel(target, ui, "config", colorYellow, []string{
-			"Config already exists.",
-			path,
-		})
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("cannot inspect config path: %w", err)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			renderPanel(target, ui, "config", colorYellow, []string{
+				"Config already exists.",
+				path,
+			})
+			return nil
+		}
+		return fmt.Errorf("cannot create config file: %w", err)
 	}
+	defer f.Close() //nolint:errcheck
 
-	if err := os.WriteFile(path, []byte(defaultConfigTemplate()), 0o600); err != nil {
+	if _, err := f.WriteString(defaultConfigTemplate()); err != nil {
 		return fmt.Errorf("cannot write config file: %w", err)
 	}
 

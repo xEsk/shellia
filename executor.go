@@ -85,7 +85,11 @@ const (
 	manualRenderShellInteractive
 )
 
-const interactivePromptTailBytes = 256
+const (
+	interactivePromptTailBytes = 256
+	ptyInputBufferSize         = 1024
+	ptyPollInterval            = 10 * time.Millisecond
+)
 
 var (
 	credentialPromptPattern       = regexp.MustCompile(`(?i)\b(pass(?:word|phrase))\s*:\s*$`)
@@ -730,7 +734,7 @@ func executeInteractiveCommand(ctx context.Context, deps runtimeDeps, ui bool, c
 		waitDone <- cmd.Wait()
 	}()
 
-	inputBuffer := make([]byte, 1024)
+	inputBuffer := make([]byte, ptyInputBufferSize)
 	var waitErr error
 	for {
 		select {
@@ -751,7 +755,7 @@ func executeInteractiveCommand(ctx context.Context, deps runtimeDeps, ui bool, c
 		}
 
 		if readErr == nil || errors.Is(readErr, unix.EAGAIN) || errors.Is(readErr, unix.EWOULDBLOCK) || errors.Is(readErr, unix.EINTR) {
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(ptyPollInterval)
 			continue
 		}
 

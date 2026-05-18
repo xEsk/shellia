@@ -13,8 +13,11 @@ import (
 )
 
 const (
-	maxRetries     = 3
-	retryBaseDelay = 500 * time.Millisecond
+	maxRetries                 = 3
+	retryBaseDelay             = 500 * time.Millisecond
+	streamChunkErrorPreviewChars = 160
+	httpErrorBodyPreviewChars    = 1200
+	historyEntryPreviewChars     = 240
 )
 
 type chatCompletionRequest struct {
@@ -226,7 +229,7 @@ func doLLMStream(ctx context.Context, client *http.Client, cfg config, req chatC
 
 		var chunk streamChunk
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			return full.String(), fmt.Errorf("invalid LLM stream chunk: %w: %s", err, trimForSummary(payload, 160))
+			return full.String(), fmt.Errorf("invalid LLM stream chunk: %w: %s", err, trimForSummary(payload, streamChunkErrorPreviewChars))
 		}
 		if len(chunk.Choices) == 0 {
 			continue
@@ -255,7 +258,7 @@ func readHTTPErrorBody(body io.Reader) string {
 		return fmt.Sprintf("cannot read error response body: %v", err)
 	}
 
-	text := trimForSummary(string(data), 1200)
+	text := trimForSummary(string(data), httpErrorBodyPreviewChars)
 	if text == "" {
 		return "(empty error response body)"
 	}
@@ -468,7 +471,7 @@ func buildUserPrompt(cfg config, instruction string, resolvedInstruction string,
 		b.WriteString("\nRecent session context:\n")
 		for i, entry := range history {
 			fmt.Fprintf(&b, "%d. User: %s\n", i+1, entry.Instruction)
-			fmt.Fprintf(&b, "   Result: %s\n", trimForSummary(entry.Result, 240))
+			fmt.Fprintf(&b, "   Result: %s\n", trimForSummary(entry.Result, historyEntryPreviewChars))
 		}
 		historyBlock = b.String()
 	}

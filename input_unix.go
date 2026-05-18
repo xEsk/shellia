@@ -2,11 +2,14 @@ package main
 
 import "golang.org/x/sys/unix"
 
-// isInputReady reports whether stdin has bytes pending within 25 ms.
+// escapeSequencePollMs is the poll window to distinguish a bare Esc from an escape sequence.
+const escapeSequencePollMs = 25
+
+// isInputReady reports whether stdin has bytes pending within escapeSequencePollMs.
 // Used to distinguish a bare Esc keypress from the start of an escape sequence.
 func isInputReady(fd int) (bool, error) {
 	poll := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
-	n, err := unix.Poll(poll, 25)
+	n, err := unix.Poll(poll, escapeSequencePollMs)
 	if err != nil {
 		return false, err
 	}

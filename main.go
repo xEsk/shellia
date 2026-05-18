@@ -20,6 +20,11 @@ const (
 	defaultTimeout    = 120 * time.Second
 	maxHistoryEntries = 8
 	maxPlanRounds     = 4
+
+	maxCommandTimeout  = 24 * time.Hour
+	maxRequestTimeout  = 10 * time.Minute
+	maxCaptureBytes    = 512 * 1024 * 1024 // 512 MB
+	maxOutputChars     = 100_000
 )
 
 // version is set at build time via -ldflags "-X main.version=vX.Y.Z".
@@ -243,6 +248,19 @@ func isHelpRequest(args []string) bool {
 func finalizeConfig(fs *flag.FlagSet, cfg config, timeoutSecs, reqTimeoutSecs int) (config, error) {
 	cfg.CommandTimeout = time.Duration(timeoutSecs) * time.Second
 	cfg.RequestTimeout = time.Duration(reqTimeoutSecs) * time.Second
+
+	if cfg.CommandTimeout > maxCommandTimeout {
+		return config{}, fmt.Errorf("timeout_seconds too large (max %v)", maxCommandTimeout)
+	}
+	if cfg.RequestTimeout > maxRequestTimeout {
+		return config{}, fmt.Errorf("request_timeout_seconds too large (max %v)", maxRequestTimeout)
+	}
+	if cfg.CaptureStdoutBytes > maxCaptureBytes || cfg.CaptureStderrBytes > maxCaptureBytes {
+		return config{}, fmt.Errorf("capture byte limits cannot exceed %d bytes", maxCaptureBytes)
+	}
+	if cfg.ObservationOutputChars > maxOutputChars || cfg.SummaryOutputChars > maxOutputChars {
+		return config{}, fmt.Errorf("output char limits cannot exceed %d", maxOutputChars)
+	}
 
 	remaining := fs.Args()
 	if len(remaining) == 0 {
