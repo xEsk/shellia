@@ -251,19 +251,20 @@ func TestCollectCreatedFiles(t *testing.T) {
 
 func TestCollectObservationMemory(t *testing.T) {
 	t.Run("empty executions returns empty", func(t *testing.T) {
-		if got := collectObservationMemory(nil); len(got) != 0 {
+		if got := collectObservationMemory(nil, 400, 4, truncationMixed); len(got) != 0 {
 			t.Fatalf("got %v", got)
 		}
 	})
 
 	t.Run("limits to maxObservationEntries", func(t *testing.T) {
-		execs := make([]commandExecution, maxObservationEntries+2)
+		const limit = 4
+		execs := make([]commandExecution, limit+2)
 		for i := range execs {
 			execs[i] = commandExecution{Command: "ls", Stdout: capturedStream{Text: "file.txt", TotalBytes: 8, KeptBytes: 8}}
 		}
-		got := collectObservationMemory(execs)
-		if len(got) > maxObservationEntries {
-			t.Fatalf("expected at most %d, got %d", maxObservationEntries, len(got))
+		got := collectObservationMemory(execs, 400, limit, truncationMixed)
+		if len(got) > limit {
+			t.Fatalf("expected at most %d, got %d", limit, len(got))
 		}
 	})
 
@@ -272,7 +273,7 @@ func TestCollectObservationMemory(t *testing.T) {
 			{Command: "ls", Stdout: capturedStream{}},
 			{Command: "pwd", Stdout: capturedStream{Text: "/home/user", TotalBytes: 10, KeptBytes: 10}},
 		}
-		got := collectObservationMemory(execs)
+		got := collectObservationMemory(execs, 400, 4, truncationMixed)
 		if len(got) != 1 || got[0].Command != "pwd" {
 			t.Fatalf("unexpected result: %v", got)
 		}
@@ -340,12 +341,12 @@ func TestResolveInstructionForPlanning(t *testing.T) {
 
 func TestUpdateSessionState(t *testing.T) {
 	t.Run("nil state is a no-op", func(t *testing.T) {
-		updateSessionState(nil, "anything", turnResult{})
+		updateSessionState(nil, "anything", turnResult{}, config{})
 	})
 
 	t.Run("sets pending intent", func(t *testing.T) {
 		state := &sessionState{}
-		updateSessionState(state, "deploy to prod", turnResult{Actionable: true})
+		updateSessionState(state, "deploy to prod", turnResult{Actionable: true}, config{})
 		if state.PendingIntent != "deploy to prod" {
 			t.Errorf("got %q", state.PendingIntent)
 		}
@@ -353,7 +354,7 @@ func TestUpdateSessionState(t *testing.T) {
 
 	t.Run("clears suggested command on actionable turn", func(t *testing.T) {
 		state := &sessionState{LastSuggestedCommand: "git status"}
-		updateSessionState(state, "run build", turnResult{Actionable: true})
+		updateSessionState(state, "run build", turnResult{Actionable: true}, config{})
 		if state.LastSuggestedCommand != "" {
 			t.Errorf("expected cleared command, got %q", state.LastSuggestedCommand)
 		}
@@ -361,7 +362,7 @@ func TestUpdateSessionState(t *testing.T) {
 
 	t.Run("stores referenced file from instruction", func(t *testing.T) {
 		state := &sessionState{}
-		updateSessionState(state, "edit src/main.go now", turnResult{})
+		updateSessionState(state, "edit src/main.go now", turnResult{}, config{})
 		if state.LastReferencedFile == "" {
 			t.Error("expected LastReferencedFile to be set")
 		}

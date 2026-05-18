@@ -229,7 +229,7 @@ func doLLMStream(ctx context.Context, client *http.Client, cfg config, req chatC
 
 		var chunk streamChunk
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			return full.String(), fmt.Errorf("invalid LLM stream chunk: %w: %s", err, trimForSummary(payload, streamChunkErrorPreviewChars))
+			return full.String(), fmt.Errorf("invalid LLM stream chunk: %w: %s", err, trimForSummary(payload, streamChunkErrorPreviewChars, truncationStart))
 		}
 		if len(chunk.Choices) == 0 {
 			continue
@@ -258,7 +258,7 @@ func readHTTPErrorBody(body io.Reader) string {
 		return fmt.Sprintf("cannot read error response body: %v", err)
 	}
 
-	text := trimForSummary(string(data), httpErrorBodyPreviewChars)
+	text := trimForSummary(string(data), httpErrorBodyPreviewChars, truncationStart)
 	if text == "" {
 		return "(empty error response body)"
 	}
@@ -310,7 +310,7 @@ func streamSummarizeExecutions(ctx context.Context, client *http.Client, cfg con
 		fmt.Fprintf(&transcript, "Purpose: %s\n", execution.Purpose)
 		fmt.Fprintf(&transcript, "Command: %s\n", execution.Command)
 		fmt.Fprintf(&transcript, "Exit code: %d\n", execution.ExitCode)
-		fmt.Fprintf(&transcript, "%s\n\n", execution.PromptTranscript(cfg.SummaryOutputChars))
+		fmt.Fprintf(&transcript, "%s\n\n", execution.PromptTranscript(cfg.SummaryOutputChars, cfg.TruncationStrategy))
 	}
 
 	reqCtx, cancel := context.WithTimeout(ctx, cfg.RequestTimeout)
@@ -327,6 +327,10 @@ func streamSummarizeExecutions(ctx context.Context, client *http.Client, cfg con
 					"Do not mention JSON, plans, steps, risks, or confirmations. " +
 					"If the user asked a question, answer it directly. " +
 					"If the user asked to perform an action and it succeeded, say it is done in a natural way. " +
+					"GROUNDING RULES: Read each step's output carefully before drawing any conclusion. " +
+					"When output contains a table or list, read every row — do not skip any. " +
+					"Do NOT claim something is absent unless you have read the full output and it is genuinely missing. " +
+					"Different commands answer different sub-questions: do not merge their answers incorrectly (e.g. 'not running' does not mean 'not installed'). " +
 					"Never claim an action was completed unless the executed commands clearly performed it or the output explicitly confirms it. " +
 					"If there are concrete results, include them. " +
 					"Keep it concise.",
@@ -471,7 +475,7 @@ func buildUserPrompt(cfg config, instruction string, resolvedInstruction string,
 		b.WriteString("\nRecent session context:\n")
 		for i, entry := range history {
 			fmt.Fprintf(&b, "%d. User: %s\n", i+1, entry.Instruction)
-			fmt.Fprintf(&b, "   Result: %s\n", trimForSummary(entry.Result, historyEntryPreviewChars))
+			fmt.Fprintf(&b, "   Result: %s\n", trimForSummary(entry.Result, historyEntryPreviewChars, truncationStart))
 		}
 		historyBlock = b.String()
 	}
@@ -522,7 +526,7 @@ func buildUserPrompt(cfg config, instruction string, resolvedInstruction string,
 		for index, execution := range observations {
 			fmt.Fprintf(&b, "%d. Purpose: %s\n", index+1, execution.Purpose)
 			fmt.Fprintf(&b, "   Command: %s\n", execution.Command)
-			fmt.Fprintf(&b, "%s\n", indentLines(execution.PromptTranscript(cfg.ObservationOutputChars), "   "))
+			fmt.Fprintf(&b, "%s\n", indentLines(execution.PromptTranscript(cfg.ObservationOutputChars, cfg.TruncationStrategy), "   "))
 		}
 		observationBlock = b.String()
 	}
@@ -589,10 +593,23 @@ func shouldRetryWithDiscoveryRepair(response llmResponse, round int, executions 
 }
 
 // trimForSummary trims long output by rune count to avoid splitting multi-byte UTF-8 characters.
-func trimForSummary(text string, max int) string {
+// strategy controls which part of the text is kept when truncation is needed.
+func trimForSummary(text string, max int, strategy truncationStrategy) string {
 	runes := []rune(strings.TrimSpace(text))
 	if len(runes) <= max {
 		return string(runes)
 	}
-	return string(runes[:max]) + "\n...[truncated]"
+	switch strategy {
+	case truncationEnd:
+		return "[truncated...]\n" + string(runes[len(runes)-max:])
+	case truncationMixed:
+		head := max / 3
+		tail := max - head
+		omitted := len(runes) - head - tail
+		return string(runes[:head]) +
+			fmt.Sprintf("\n...[%d chars omitted]...\n", omitted) +
+			string(runes[len(runes)-tail:])
+	default: // truncationStart
+		return string(runes[:max]) + "\n...[truncated]"
+	}
 }

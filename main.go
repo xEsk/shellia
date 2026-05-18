@@ -339,7 +339,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			rememberUnfinishedInstruction(&state, cfg.Instruction)
 		} else {
 			history = append(history, historyEntry{Instruction: cfg.Instruction, Result: turn.Result})
-			updateSessionState(&state, cfg.Instruction, turn)
+			updateSessionState(&state, cfg.Instruction, turn, cfg)
 			if turn.Actionable {
 				state.LastRetryInstruction = ""
 			}
@@ -390,7 +390,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 				continue
 			}
 			history = append(history, historyEntry{Instruction: input, Result: turn.Result})
-			updateSessionState(&state, plannedInstruction, turn)
+			updateSessionState(&state, plannedInstruction, turn, cfg)
 			if len(history) > maxHistoryEntries {
 				history = history[len(history)-maxHistoryEntries:]
 			}
@@ -459,7 +459,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 				continue
 			}
 
-			updateSessionStateFromExecution(&state, command, execution)
+			updateSessionStateFromExecution(&state, command, execution, cfg)
 			continue
 		}
 
@@ -489,7 +489,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			continue
 		}
 		history = append(history, historyEntry{Instruction: instruction, Result: turn.Result})
-		updateSessionState(&state, instruction, turn)
+		updateSessionState(&state, instruction, turn, cfg)
 		if turn.Actionable {
 			state.LastRetryInstruction = ""
 		}

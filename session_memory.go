@@ -7,13 +7,9 @@ import (
 
 var backtickCommandPattern = regexp.MustCompile("`([^`]+)`")
 
-const (
-	maxObservationEntries = 4
-	observationChars      = 400
-)
 
 // updateSessionState stores durable session memory after a successful turn.
-func updateSessionState(state *sessionState, instruction string, turn turnResult) {
+func updateSessionState(state *sessionState, instruction string, turn turnResult, cfg config) {
 	if state == nil {
 		return
 	}
@@ -44,11 +40,11 @@ func updateSessionState(state *sessionState, instruction string, turn turnResult
 		state.LastReferencedFile = referenced[len(referenced)-1]
 	}
 
-	state.LastObservations = collectObservationMemory(turn.Executions)
+	state.LastObservations = collectObservationMemory(turn.Executions, cfg.MemoryObservationChars, cfg.MaxObservationEntries, cfg.TruncationStrategy)
 }
 
 // updateSessionStateFromExecution updates reusable session memory after a manual shell command.
-func updateSessionStateFromExecution(state *sessionState, command string, execution commandExecution) {
+func updateSessionStateFromExecution(state *sessionState, command string, execution commandExecution, cfg config) {
 	if state == nil {
 		return
 	}
@@ -65,7 +61,7 @@ func updateSessionStateFromExecution(state *sessionState, command string, execut
 		state.LastReferencedFile = referenced[len(referenced)-1]
 	}
 
-	if observations := collectObservationMemory([]commandExecution{execution}); len(observations) > 0 {
+	if observations := collectObservationMemory([]commandExecution{execution}, cfg.MemoryObservationChars, cfg.MaxObservationEntries, cfg.TruncationStrategy); len(observations) > 0 {
 		state.LastObservations = observations
 	}
 
@@ -314,10 +310,10 @@ func looksLikeShellCommand(text string) bool {
 }
 
 // collectObservationMemory stores a compact reusable digest of the last observed outputs.
-func collectObservationMemory(executions []commandExecution) []observationMemory {
+func collectObservationMemory(executions []commandExecution, chars int, maxEntries int, strategy truncationStrategy) []observationMemory {
 	observations := make([]observationMemory, 0, len(executions))
 	for _, execution := range executions {
-		transcript := strings.TrimSpace(execution.PromptTranscript(observationChars))
+		transcript := strings.TrimSpace(execution.PromptTranscript(chars, strategy))
 		if transcript == "" || transcript == "Output: (empty)" {
 			continue
 		}
@@ -328,8 +324,8 @@ func collectObservationMemory(executions []commandExecution) []observationMemory
 		})
 	}
 
-	if len(observations) > maxObservationEntries {
-		observations = observations[len(observations)-maxObservationEntries:]
+	if maxEntries > 0 && len(observations) > maxEntries {
+		observations = observations[len(observations)-maxEntries:]
 	}
 
 	return observations

@@ -14,6 +14,7 @@ import (
 
 type commandEngineMode string
 type confirmationDefault string
+type truncationStrategy string
 
 const (
 	commandEnginePlain       commandEngineMode = "plain"
@@ -24,6 +25,10 @@ const (
 	confirmationDefaultNo          confirmationDefault = "no"
 	confirmationDefaultEdit        confirmationDefault = "edit"
 	confirmationDefaultInteractive confirmationDefault = "interactive"
+
+	truncationStart truncationStrategy = "start"
+	truncationEnd   truncationStrategy = "end"
+	truncationMixed truncationStrategy = "mixed"
 )
 
 type config struct {
@@ -40,8 +45,11 @@ type config struct {
 	ConfirmationDefault    confirmationDefault
 	CaptureStdoutBytes     int
 	CaptureStderrBytes     int
-	ObservationOutputChars int
-	SummaryOutputChars     int
+	ObservationOutputChars  int
+	SummaryOutputChars      int
+	MemoryObservationChars  int
+	MaxObservationEntries   int
+	TruncationStrategy      truncationStrategy
 	ShowSystemOutput       bool
 	ShellMode              commandEngineMode
 	CommandMode            commandEngineMode
@@ -77,8 +85,11 @@ type fileConfig struct {
 	Output struct {
 		CaptureStdoutBytes     int `toml:"capture_stdout_bytes"`
 		CaptureStderrBytes     int `toml:"capture_stderr_bytes"`
-		ObservationOutputChars int `toml:"observation_output_chars"`
-		SummaryOutputChars     int `toml:"summary_output_chars"`
+		ObservationOutputChars int    `toml:"observation_output_chars"`
+		SummaryOutputChars     int    `toml:"summary_output_chars"`
+		MemoryObservationChars int    `toml:"memory_observation_chars"`
+		MaxObservationEntries  int    `toml:"max_observation_entries"`
+		TruncationStrategy     string `toml:"truncation_strategy"`
 	} `toml:"output"`
 	UI struct {
 		Verbose          *bool `toml:"verbose"`
@@ -100,6 +111,9 @@ func defaultConfig() config {
 		CaptureStderrBytes:     256 * 1024,
 		ObservationOutputChars: 1200,
 		SummaryOutputChars:     4000,
+		MemoryObservationChars: 400,
+		MaxObservationEntries:  4,
+		TruncationStrategy:    truncationMixed,
 		ShowSystemOutput:       true,
 		AskConfirmPlan:            true,
 		AskConfirmPlanOnly:        true,
@@ -159,6 +173,15 @@ func applyFileConfig(cfg *config, fileCfg fileConfig) {
 	}
 	if fileCfg.Output.SummaryOutputChars > 0 {
 		cfg.SummaryOutputChars = fileCfg.Output.SummaryOutputChars
+	}
+	if fileCfg.Output.MemoryObservationChars > 0 {
+		cfg.MemoryObservationChars = fileCfg.Output.MemoryObservationChars
+	}
+	if fileCfg.Output.MaxObservationEntries > 0 {
+		cfg.MaxObservationEntries = fileCfg.Output.MaxObservationEntries
+	}
+	if strings.TrimSpace(fileCfg.Output.TruncationStrategy) != "" {
+		cfg.TruncationStrategy = normalizeTruncationStrategy(fileCfg.Output.TruncationStrategy, cfg.TruncationStrategy)
 	}
 	if fileCfg.UI.Verbose != nil {
 		cfg.Verbose = *fileCfg.UI.Verbose
@@ -261,32 +284,98 @@ func initConfigFileTo(target io.Writer, ui bool) error {
 
 // defaultConfigTemplate returns the base template for the persistent config.
 func defaultConfigTemplate() string {
-	return `[llm]
+	return `# Shellia configuration — ~/.shellia/config.toml
+# All values shown are the built-in defaults.
+# Environment variables override this file: SHELLIA_API_KEY, SHELLIA_BASE_URL,
+# SHELLIA_MODEL, OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL (in priority order).
+
+[llm]
+# OpenAI-compatible API endpoint. Works with OpenAI, Ollama, Groq, LM Studio, etc.
 base_url = "https://api.openai.com/v1"
-model    = "gpt-5.4-mini"
-api_key  = ""
+
+# Model name passed to the API. Use any model your endpoint supports.
+model = "gpt-5.4-mini"
+
+# API key. Leave empty to rely on the SHELLIA_API_KEY or OPENAI_API_KEY env var.
+api_key = ""
 
 [execution]
-timeout_seconds         = 120
+# Maximum seconds a single shell command may run before it is killed.
+timeout_seconds = 120
+
+# Maximum seconds to wait for a single LLM API response before giving up.
 request_timeout_seconds = 60
-yes_safe                = false
-continue_on_error       = false
-ask_confirm_plan        = true
-ask_confirm_plan_only   = true
-confirmation_default    = "none"
-shell_mode              = "interactive"
-command_mode            = "plain"
+
+# Automatically confirm commands classified as "safe" without prompting.
+yes_safe = false
+
+# Keep executing remaining plan steps even when one command returns a non-zero exit code.
+continue_on_error = false
+
+# Show the full plan and ask "Execute this plan? [y/n]" before running any commands.
+ask_confirm_plan = true
+
+# Ask for confirmation after showing the plan when running in plan-only mode (--plan flag).
+ask_confirm_plan_only = true
+
+# What pressing Enter means in a confirmation prompt.
+# none        — must type y or n explicitly (safest)
+# yes         — Enter accepts the step
+# no          — Enter skips the step
+# edit        — Enter opens the command in $EDITOR before running
+# interactive — Enter opens an interactive sub-shell for manual inspection
+confirmation_default = "none"
+
+# How /shell sessions are executed.
+# interactive — full PTY session (preserves colours, readline, ncurses apps)
+# plain       — direct capture without a PTY
+shell_mode = "interactive"
+
+# How one-shot !<cmd> commands are executed.
+# plain       — inline capture, output shown in the step box
+# interactive — allocates a PTY (useful for commands that need a terminal)
+command_mode = "plain"
 
 [output]
-capture_stdout_bytes     = 131072
-capture_stderr_bytes     = 262144
+# Hard cap on stdout bytes captured from each command (128 KB).
+# Bytes beyond this limit are shown in the terminal but not sent to the LLM.
+capture_stdout_bytes = 131072
+
+# Hard cap on stderr bytes captured from each command (256 KB).
+capture_stderr_bytes = 262144
+
+# Maximum characters of command output passed to the planning LLM as observations
+# between planning rounds. Smaller values save tokens; larger values give the model
+# more context for re-planning.
 observation_output_chars = 1200
-summary_output_chars     = 4000
+
+# Maximum characters of command output passed to the summarizer LLM for the final answer.
+summary_output_chars = 4000
+
+# Maximum characters kept per command output in session memory (used across follow-up turns).
+memory_observation_chars = 400
+
+# Maximum number of past command outputs stored in session memory.
+# Oldest entries are dropped first when the limit is reached. Set to 0 to disable the cap.
+max_observation_entries = 4
+
+# Which part of the output to keep when it exceeds the character limits above.
+# start — keep the beginning (good for table headers and structured output)
+# end   — keep the end (good for build errors and log tails)
+# mixed — keep 1/3 from the start and 2/3 from the end, joined with a gap marker
+truncation_strategy = "mixed"
 
 [ui]
-verbose            = false
-no_color           = false
+# Print extra information such as resolved instructions and session state on each turn.
+verbose = false
+
+# Disable ANSI colour codes in all terminal output.
+no_color = false
+
+# Show command stdout/stderr inline inside the step execution boxes.
 show_system_output = true
+
+# Show the step execution box around each running command.
 show_command_popup = true
 `
 }
@@ -299,6 +388,20 @@ func getenvFallback(fallback string, keys ...string) string {
 		}
 	}
 	return fallback
+}
+
+// normalizeTruncationStrategy validates the output truncation strategy.
+func normalizeTruncationStrategy(value string, fallback truncationStrategy) truncationStrategy {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case string(truncationStart):
+		return truncationStart
+	case string(truncationEnd):
+		return truncationEnd
+	case string(truncationMixed):
+		return truncationMixed
+	default:
+		return fallback
+	}
 }
 
 // normalizeCommandEngineMode validates the configurable modes of the manual engine.

@@ -248,7 +248,7 @@ func stripANSISequences(text string) string {
 }
 
 // RenderForPrompt prepares the stream to be sent to the model with a truncation notice.
-func (stream capturedStream) RenderForPrompt(label string, limit int) string {
+func (stream capturedStream) RenderForPrompt(label string, limit int, strategy truncationStrategy) string {
 	if !stream.HasOutput() {
 		return ""
 	}
@@ -257,7 +257,7 @@ func (stream capturedStream) RenderForPrompt(label string, limit int) string {
 	if stream.Truncated {
 		fmt.Fprintf(&body, "[%s truncated locally: kept %d of %d bytes]\n", label, stream.KeptBytes, stream.TotalBytes)
 	}
-	body.WriteString(trimForSummary(stream.Text, limit))
+	body.WriteString(trimForSummary(stream.Text, limit, strategy))
 
 	return fmt.Sprintf("%s:\n%s", label, body.String())
 }
@@ -290,7 +290,7 @@ func (execution commandExecution) PreferredOutput() string {
 }
 
 // PromptTranscript builds a short transcript prioritising stderr over stdout.
-func (execution commandExecution) PromptTranscript(limit int) string {
+func (execution commandExecution) PromptTranscript(limit int, strategy truncationStrategy) string {
 	if limit <= 0 {
 		limit = 1
 	}
@@ -313,10 +313,10 @@ func (execution commandExecution) PromptTranscript(limit int) string {
 
 	sections := make([]string, 0, 2)
 	if execution.Stderr.HasOutput() {
-		sections = append(sections, execution.Stderr.RenderForPrompt("stderr", stderrBudget))
+		sections = append(sections, execution.Stderr.RenderForPrompt("stderr", stderrBudget, strategy))
 	}
 	if execution.Stdout.HasOutput() {
-		sections = append(sections, execution.Stdout.RenderForPrompt("stdout", stdoutBudget))
+		sections = append(sections, execution.Stdout.RenderForPrompt("stdout", stdoutBudget, strategy))
 	}
 
 	return strings.Join(sections, "\n")
