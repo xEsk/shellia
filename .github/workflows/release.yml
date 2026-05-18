@@ -20,6 +20,12 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Test
+        run: env GOCACHE=/tmp/go-build go test -count=1 ./...
+
+      - name: Vet
+        run: go vet ./...
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
