@@ -111,8 +111,7 @@ func doLLMRequest(ctx context.Context, client *http.Client, cfg config, req chat
 		if err != nil {
 			return "", fmt.Errorf("cannot create LLM request: %w", err)
 		}
-		httpReq.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-		httpReq.Header.Set("Content-Type", "application/json")
+		applyLLMRequestHeaders(httpReq, cfg)
 
 		resp, err := client.Do(httpReq)
 		if err != nil {
@@ -187,8 +186,7 @@ func doLLMStream(ctx context.Context, client *http.Client, cfg config, req chatC
 		if err != nil {
 			return "", fmt.Errorf("cannot create LLM request: %w", err)
 		}
-		httpReq.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-		httpReq.Header.Set("Content-Type", "application/json")
+		applyLLMRequestHeaders(httpReq, cfg)
 
 		resp, err = client.Do(httpReq)
 		if err != nil {
@@ -251,6 +249,14 @@ func doLLMStream(ctx context.Context, client *http.Client, cfg config, req chatC
 	return full.String(), nil
 }
 
+// applyLLMRequestHeaders attaches the shared headers for OpenAI-compatible requests.
+func applyLLMRequestHeaders(req *http.Request, cfg config) {
+	if strings.TrimSpace(cfg.APIKey) != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	}
+	req.Header.Set("Content-Type", "application/json")
+}
+
 // readHTTPErrorBody returns a compact diagnostic for failed HTTP responses.
 func readHTTPErrorBody(body io.Reader) string {
 	data, err := io.ReadAll(body)
@@ -270,12 +276,21 @@ func callLLM(ctx context.Context, client *http.Client, cfg config, ctxInfo conte
 	reqCtx, cancel := context.WithTimeout(ctx, cfg.RequestTimeout)
 	defer cancel()
 
+	systemPrompt, userPrompt := buildLLMPrompts(cfg, ctxInfo, instruction, history, state, observations)
+	return callPlanningPrompt(reqCtx, client, cfg, systemPrompt, userPrompt)
+}
+
+// buildLLMPrompts builds the initial planning prompt pair.
+func buildLLMPrompts(cfg config, ctxInfo contextInfo, instruction string, history []historyEntry, state sessionState, observations []commandExecution) (string, string) {
 	resolvedInstruction := resolveInstructionForPlanning(instruction, state)
+	if !cfg.IncludeSessionMemory {
+		resolvedInstruction = instruction
+	}
 	if cfg.PlanOnly {
-		return callPlanningPrompt(reqCtx, client, cfg, buildPlanOnlySystemPrompt(), buildUserPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations))
+		return buildPlanOnlySystemPrompt(), buildUserPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations)
 	}
 
-	return callPlanningPrompt(reqCtx, client, cfg, buildSystemPrompt(), buildUserPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations))
+	return buildSystemPrompt(), buildUserPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations)
 }
 
 // callDiscoveryRepairLLM retries an empty planning response with a discovery-only repair prompt.
@@ -283,9 +298,17 @@ func callDiscoveryRepairLLM(ctx context.Context, client *http.Client, cfg config
 	reqCtx, cancel := context.WithTimeout(ctx, cfg.RequestTimeout)
 	defer cancel()
 
-	resolvedInstruction := resolveInstructionForPlanning(instruction, state)
+	systemPrompt, userPrompt := buildDiscoveryRepairLLMPrompts(cfg, ctxInfo, instruction, history, state, observations, previous)
+	return callPlanningPrompt(reqCtx, client, cfg, systemPrompt, userPrompt)
+}
 
-	return callPlanningPrompt(reqCtx, client, cfg, buildSystemPrompt(), buildDiscoveryRepairPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations, previous))
+// buildDiscoveryRepairLLMPrompts builds the discovery repair prompt pair.
+func buildDiscoveryRepairLLMPrompts(cfg config, ctxInfo contextInfo, instruction string, history []historyEntry, state sessionState, observations []commandExecution, previous llmResponse) (string, string) {
+	resolvedInstruction := resolveInstructionForPlanning(instruction, state)
+	if !cfg.IncludeSessionMemory {
+		resolvedInstruction = instruction
+	}
+	return buildSystemPrompt(), buildDiscoveryRepairPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations, previous)
 }
 
 // callPlanningPrompt sends a planning prompt pair to the model and returns the raw JSON response.
@@ -293,12 +316,20 @@ func callPlanningPrompt(ctx context.Context, client *http.Client, cfg config, sy
 	return doLLMRequest(ctx, client, cfg, chatCompletionRequest{
 		Model:          cfg.Model,
 		Temperature:    0,
-		ResponseFormat: &responseFormat{Type: "json_object"},
+		ResponseFormat: planningResponseFormat(cfg),
 		Messages: []chatMessage{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},
 		},
 	})
+}
+
+// planningResponseFormat keeps strict JSON mode where providers advertise it.
+func planningResponseFormat(cfg config) *responseFormat {
+	if strings.TrimSpace(cfg.APIKey) == "" && allowsEmptyAPIKey(cfg) {
+		return nil
+	}
+	return &responseFormat{Type: "json_object"}
 }
 
 // streamSummarizeExecutions streams a short final answer based on real command output.
@@ -345,15 +376,13 @@ func streamSummarizeExecutions(ctx context.Context, client *http.Client, cfg con
 
 // parseResponse validates the JSON response returned by the model.
 func parseResponse(raw string) (llmResponse, error) {
-	raw = strings.TrimSpace(raw)
-	start := strings.Index(raw, "{")
-	end := strings.LastIndex(raw, "}")
-	if start < 0 || end < 0 || end < start {
+	jsonObject, ok := firstJSONObject(raw)
+	if !ok {
 		return llmResponse{}, fmt.Errorf("invalid LLM response: no JSON object found")
 	}
 
 	var parsed llmResponse
-	if err := json.Unmarshal([]byte(raw[start:end+1]), &parsed); err != nil {
+	if err := json.Unmarshal([]byte(jsonObject), &parsed); err != nil {
 		return llmResponse{}, fmt.Errorf("invalid LLM response: %w", err)
 	}
 	if strings.TrimSpace(parsed.Summary) == "" {
@@ -367,14 +396,56 @@ func parseResponse(raw string) (llmResponse, error) {
 			return llmResponse{}, fmt.Errorf("invalid LLM response: missing purpose")
 		}
 	}
-	if parsed.RequiresObservation && len(parsed.Commands) == 0 {
-		return llmResponse{}, fmt.Errorf("invalid LLM response: requires_observation without commands")
-	}
 	if parsed.RequiresInput && len(parsed.Commands) > 0 {
 		return llmResponse{}, fmt.Errorf("invalid LLM response: requires_input with commands")
 	}
 
 	return parsed, nil
+}
+
+// firstJSONObject extracts the first complete JSON object from model text.
+func firstJSONObject(raw string) (string, bool) {
+	start := strings.Index(raw, "{")
+	if start < 0 {
+		return "", false
+	}
+
+	depth := 0
+	inString := false
+	escaped := false
+	for index := start; index < len(raw); index++ {
+		char := raw[index]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			switch char {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+
+		switch char {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return raw[start : index+1], true
+			}
+			if depth < 0 {
+				return "", false
+			}
+		}
+	}
+
+	return "", false
 }
 
 // normalizePlan merges the model-reported risk with the local classification.
@@ -464,13 +535,8 @@ func buildPlanOnlySystemPrompt() string {
 
 // buildUserPrompt attaches the detected local context to the model prompt.
 func buildUserPrompt(cfg config, instruction string, resolvedInstruction string, ctxInfo contextInfo, history []historyEntry, state sessionState, observations []commandExecution) string {
-	gitStatus := ctxInfo.Git.StatusShort
-	if strings.TrimSpace(gitStatus) == "" {
-		gitStatus = "(clean or empty)"
-	}
-
 	historyBlock := ""
-	if len(history) > 0 {
+	if cfg.IncludeSessionMemory && len(history) > 0 {
 		var b strings.Builder
 		b.WriteString("\nRecent session context:\n")
 		for i, entry := range history {
@@ -481,19 +547,19 @@ func buildUserPrompt(cfg config, instruction string, resolvedInstruction string,
 	}
 
 	memoryLines := make([]string, 0, 5)
-	if strings.TrimSpace(state.PendingIntent) != "" {
+	if cfg.IncludeSessionMemory && strings.TrimSpace(state.PendingIntent) != "" {
 		memoryLines = append(memoryLines, "- pending_intent: "+state.PendingIntent)
 	}
-	if strings.TrimSpace(state.LastSuggestedCommand) != "" {
+	if cfg.IncludeSessionMemory && strings.TrimSpace(state.LastSuggestedCommand) != "" {
 		memoryLines = append(memoryLines, "- last_suggested_command: "+state.LastSuggestedCommand)
 	}
-	if strings.TrimSpace(state.LastRuntimeHint) != "" {
+	if cfg.IncludeSessionMemory && strings.TrimSpace(state.LastRuntimeHint) != "" {
 		memoryLines = append(memoryLines, "- last_runtime_hint: "+state.LastRuntimeHint)
 	}
-	if len(state.LastCreatedFiles) > 0 {
+	if cfg.IncludeSessionMemory && len(state.LastCreatedFiles) > 0 {
 		memoryLines = append(memoryLines, "- last_created_files: "+strings.Join(state.LastCreatedFiles, ", "))
 	}
-	if strings.TrimSpace(state.LastReferencedFile) != "" {
+	if cfg.IncludeSessionMemory && strings.TrimSpace(state.LastReferencedFile) != "" {
 		memoryLines = append(memoryLines, "- last_referenced_file: "+state.LastReferencedFile)
 	}
 
@@ -503,12 +569,12 @@ func buildUserPrompt(cfg config, instruction string, resolvedInstruction string,
 	}
 
 	resolutionBlock := ""
-	if strings.TrimSpace(resolvedInstruction) != "" && strings.TrimSpace(resolvedInstruction) != strings.TrimSpace(instruction) {
+	if cfg.IncludeSessionMemory && strings.TrimSpace(resolvedInstruction) != "" && strings.TrimSpace(resolvedInstruction) != strings.TrimSpace(instruction) {
 		resolutionBlock = "\nResolved planning context:\n" + resolvedInstruction + "\n"
 	}
 
 	reusableObservationBlock := ""
-	if len(observations) == 0 && len(state.LastObservations) > 0 && looksLikeReferenceFollowUp(instruction) {
+	if cfg.IncludeRecentObservations && len(observations) == 0 && len(state.LastObservations) > 0 && looksLikeReferenceFollowUp(instruction) {
 		var b strings.Builder
 		b.WriteString("\nRecent reusable observations:\n")
 		for index, observation := range state.LastObservations {
@@ -520,7 +586,7 @@ func buildUserPrompt(cfg config, instruction string, resolvedInstruction string,
 	}
 
 	observationBlock := ""
-	if len(observations) > 0 {
+	if cfg.IncludeRecentObservations && len(observations) > 0 {
 		var b strings.Builder
 		b.WriteString("\nObserved outputs from the current task:\n")
 		for index, execution := range observations {
@@ -540,23 +606,57 @@ func buildUserPrompt(cfg config, instruction string, resolvedInstruction string,
 			"- Explain manual decision branches in observation_reason when a later command depends on output.\n"
 	}
 
+	responseFormatFallbackRules := ""
+	if planningResponseFormat(cfg) == nil {
+		responseFormatFallbackRules = "- Output exactly one JSON object. After the final closing brace, stop immediately. Do not repeat the JSON object. Do not append markdown, prose, or a second JSON object.\n"
+	}
+
+	contextBlock := buildPromptContextBlock(cfg, ctxInfo)
+
 	return fmt.Sprintf(
-		"User instruction:\n%s%s%s%s%s\nCurrent context:\n- cwd: %s\n- user: %s\n- os: %s\n- shell: %s\n- git.is_repo: %t\n- git.branch: %s\n- git.status_short:\n%s%s\n\nRules:\n- Commands must run in the current working directory unless a command explicitly operates elsewhere.\n- Do not invent files, branches, remotes, package managers, or paths.\n- Prefer simple commands.\n- Return pure commands only, without echo/printf or shell decorations.\n- Split independent actions into separate commands instead of chaining them.\n- If a follow-up refers to an earlier task, use the resolved planning context, recent reusable observations, and session memory to continue it.\n- Recent reusable observations are provided for task continuity only — to resolve cross-turn references like \"that file\" or \"the docker thing\". They are NOT a reason to skip a fresh execution request.\n- If observed outputs from the CURRENT task round already answer the question, return no commands and answer directly in summary. Never skip commands based solely on reusable observations from prior turns.\n- Do not repeat an inspection command that already produced the needed information unless the user explicitly asks to rerun it.\n- If observed outputs from this task are provided, use them to decide the next commands instead of guessing.\n- If observed output shows a confirmation prompt or terminal question, do not repeat the same non-interactive command; choose a known non-interactive variant with high confidence or set interactive=true.\n- If Shellia already asks the user to confirm a risky command, avoid a second in-command confirmation prompt when a known non-interactive flag is available with high confidence.\n- If a mandatory user-provided detail is still missing, return no commands and explain the missing detail in summary and input_reason.\n- If a command needs a real terminal session, set interactive=true and explain why in interactive_reason.\n- If a request is still somewhat underspecified but can be advanced safely, propose a short inspection or verification command instead of immediately returning no commands.\n- If a referenced file might contain executable code, inspect or verify it before refusing based only on its extension.\n- If the request cannot be fulfilled safely with confidence, return an empty commands array and explain it in summary.\n%s",
+		"User instruction:\n%s%s%s%s%s\nCurrent context:\n%s%s\n\nRules:\n- Commands run in the current Shellia session directory unless a command explicitly operates elsewhere.\n- Do not invent files, branches, remotes, package managers, or paths.\n- Prefer simple commands.\n- Return pure commands only, without echo/printf or shell decorations.\n- Split independent actions into separate commands instead of chaining them.\n- If a follow-up refers to an earlier task, use the resolved planning context, recent reusable observations, and session memory to continue it.\n- Recent reusable observations are provided for task continuity only — to resolve cross-turn references like \"that file\" or \"the docker thing\". They are NOT a reason to skip a fresh execution request.\n- If observed outputs from the CURRENT task round already answer the question, return no commands and answer directly in summary. Never skip commands based solely on reusable observations from prior turns.\n- Do not repeat an inspection command that already produced the needed information unless the user explicitly asks to rerun it.\n- If observed outputs from this task are provided, use them to decide the next commands instead of guessing.\n- If observed output shows a confirmation prompt or terminal question, do not repeat the same non-interactive command; choose a known non-interactive variant with high confidence or set interactive=true.\n- If Shellia already asks the user to confirm a risky command, avoid a second in-command confirmation prompt when a known non-interactive flag is available with high confidence.\n- If a mandatory user-provided detail is still missing, return no commands and explain the missing detail in summary and input_reason.\n- If a command needs a real terminal session, set interactive=true and explain why in interactive_reason.\n- If a request is still somewhat underspecified but can be advanced safely, propose a short inspection or verification command instead of immediately returning no commands.\n- If a referenced file might contain executable code, inspect or verify it before refusing based only on its extension.\n- If the request cannot be fulfilled safely with confidence, return an empty commands array and explain it in summary.\n%s%s",
 		instruction,
 		resolutionBlock,
 		memoryBlock,
 		reusableObservationBlock,
 		observationBlock,
-		ctxInfo.CWD,
-		ctxInfo.User,
-		ctxInfo.OS,
-		ctxInfo.Shell,
-		ctxInfo.Git.IsRepo,
-		ctxInfo.Git.Branch,
-		gitStatus,
+		contextBlock,
 		historyBlock,
+		responseFormatFallbackRules,
 		planOnlyRules,
 	)
+}
+
+// buildPromptContextBlock renders the local context fields enabled in config.
+func buildPromptContextBlock(cfg config, ctxInfo contextInfo) string {
+	lines := make([]string, 0, 7)
+	if cfg.IncludeCWD {
+		lines = append(lines, "- cwd: "+ctxInfo.CWD)
+	}
+	if cfg.IncludeUser {
+		lines = append(lines, "- user: "+ctxInfo.User)
+	}
+	if cfg.IncludeOS {
+		lines = append(lines, "- os: "+ctxInfo.OS)
+	}
+	if cfg.IncludeShell {
+		lines = append(lines, "- shell: "+ctxInfo.Shell)
+	}
+	if cfg.IncludeGit {
+		gitStatus := ctxInfo.Git.StatusShort
+		if strings.TrimSpace(gitStatus) == "" {
+			gitStatus = "(clean or empty)"
+		}
+		lines = append(lines,
+			fmt.Sprintf("- git.is_repo: %t", ctxInfo.Git.IsRepo),
+			"- git.branch: "+ctxInfo.Git.Branch,
+			"- git.status_short:\n"+gitStatus,
+		)
+	}
+	if len(lines) == 0 {
+		return "(not shared by configuration)"
+	}
+	return strings.Join(lines, "\n")
 }
 
 // buildDiscoveryRepairPrompt adds focused discovery guidance on top of the normal planning context.
@@ -589,7 +689,7 @@ func shouldRetryWithDiscoveryRepair(response llmResponse, round int, executions 
 	if round != 0 || len(executions) > 0 || len(response.Commands) > 0 {
 		return false
 	}
-	return response.RequiresInput
+	return response.RequiresInput || response.RequiresObservation
 }
 
 // trimForSummary trims long output by rune count to avoid splitting multi-byte UTF-8 characters.

@@ -5,6 +5,51 @@ import (
 	"testing"
 )
 
+// TestParseResponseAcceptsExtraTrailingBrace checks local models that append one stray brace.
+func TestParseResponseAcceptsExtraTrailingBrace(t *testing.T) {
+	raw := `{"summary":"Showing files.","commands":[{"command":"ls","purpose":"List files","risk":"safe","requires_confirmation":false}]}}`
+
+	response, err := parseResponse(raw)
+	if err != nil {
+		t.Fatalf("parseResponse() error = %v", err)
+	}
+	if response.Summary != "Showing files." {
+		t.Fatalf("Summary = %q, want %q", response.Summary, "Showing files.")
+	}
+	if len(response.Commands) != 1 || response.Commands[0].Command != "ls" {
+		t.Fatalf("Commands = %#v, want ls command", response.Commands)
+	}
+}
+
+// TestParseResponseKeepsBracesInsideStrings checks JSON extraction respects quoted content.
+func TestParseResponseKeepsBracesInsideStrings(t *testing.T) {
+	raw := `prefix {"summary":"Use {literal} braces.","commands":[]} suffix`
+
+	response, err := parseResponse(raw)
+	if err != nil {
+		t.Fatalf("parseResponse() error = %v", err)
+	}
+	if response.Summary != "Use {literal} braces." {
+		t.Fatalf("Summary = %q, want braces preserved", response.Summary)
+	}
+}
+
+// TestParseResponseAllowsEmptyObservationForRepair checks repair can handle missing discovery commands.
+func TestParseResponseAllowsEmptyObservationForRepair(t *testing.T) {
+	raw := `{"summary":"Need to verify locally.","commands":[],"requires_observation":true,"observation_reason":"Check package availability."}`
+
+	response, err := parseResponse(raw)
+	if err != nil {
+		t.Fatalf("parseResponse() error = %v", err)
+	}
+	if !response.RequiresObservation {
+		t.Fatalf("RequiresObservation = false, want true")
+	}
+	if len(response.Commands) != 0 {
+		t.Fatalf("Commands = %#v, want empty", response.Commands)
+	}
+}
+
 // TestShouldRetryWithDiscoveryRepairForRequiresInputEmptyPlan checks that an
 // empty first plan marked as requires_input gets one discovery repair retry.
 func TestShouldRetryWithDiscoveryRepairForRequiresInputEmptyPlan(t *testing.T) {
@@ -12,6 +57,20 @@ func TestShouldRetryWithDiscoveryRepairForRequiresInputEmptyPlan(t *testing.T) {
 		Summary:       "Need more detail.",
 		RequiresInput: true,
 		InputReason:   "Installation method is unknown.",
+	}
+
+	if !shouldRetryWithDiscoveryRepair(response, 0, nil) {
+		t.Fatalf("shouldRetryWithDiscoveryRepair() = false, want true")
+	}
+}
+
+// TestShouldRetryWithDiscoveryRepairForRequiresObservationEmptyPlan checks
+// local-model empty observation plans get one discovery repair retry.
+func TestShouldRetryWithDiscoveryRepairForRequiresObservationEmptyPlan(t *testing.T) {
+	response := llmResponse{
+		Summary:             "Need to verify locally.",
+		RequiresObservation: true,
+		ObservationReason:   "Check package availability.",
 	}
 
 	if !shouldRetryWithDiscoveryRepair(response, 0, nil) {
@@ -77,6 +136,15 @@ func TestBuildSystemPromptAllowsExplicitReruns(t *testing.T) {
 	}
 }
 
+// TestBuildSystemPromptAvoidsFallbackJSONGuidance checks JSON-mode providers avoid extra noise.
+func TestBuildSystemPromptAvoidsFallbackJSONGuidance(t *testing.T) {
+	prompt := buildSystemPrompt()
+
+	if strings.Contains(prompt, "Do not repeat the JSON object") {
+		t.Fatalf("buildSystemPrompt() includes fallback JSON guidance: %q", prompt)
+	}
+}
+
 // TestBuildPlanOnlySystemPromptDefinesOperationalPlan checks /plan has a dedicated non-executing contract.
 func TestBuildPlanOnlySystemPromptDefinesOperationalPlan(t *testing.T) {
 	prompt := buildPlanOnlySystemPrompt()
@@ -90,6 +158,136 @@ func TestBuildPlanOnlySystemPromptDefinesOperationalPlan(t *testing.T) {
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(prompt, snippet) {
 			t.Fatalf("buildPlanOnlySystemPrompt() missing %q in %q", snippet, prompt)
+		}
+	}
+}
+
+// TestBuildUserPromptAddsFallbackJSONGuidanceOnlyWithoutResponseFormat checks local fallback prompting.
+func TestBuildUserPromptAddsFallbackJSONGuidanceOnlyWithoutResponseFormat(t *testing.T) {
+	ctxInfo := contextInfo{
+		CWD:   "/tmp/project",
+		User:  "xesc",
+		OS:    "darwin/arm64",
+		Shell: "/bin/zsh",
+	}
+
+	localCfg := defaultConfig()
+	localCfg.BaseURL = "http://localhost:8080/v1"
+	localCfg.APIKey = ""
+	localPrompt := buildUserPrompt(localCfg, "list files", "list files", ctxInfo, nil, sessionState{}, nil)
+	if !strings.Contains(localPrompt, "Do not repeat the JSON object") {
+		t.Fatalf("buildUserPrompt(local) missing fallback JSON guidance: %q", localPrompt)
+	}
+
+	keyedCfg := defaultConfig()
+	keyedCfg.APIKey = "test-key"
+	keyedPrompt := buildUserPrompt(keyedCfg, "list files", "list files", ctxInfo, nil, sessionState{}, nil)
+	if strings.Contains(keyedPrompt, "Do not repeat the JSON object") {
+		t.Fatalf("buildUserPrompt(keyed) includes fallback JSON guidance: %q", keyedPrompt)
+	}
+}
+
+// TestBuildUserPromptIncludesGitContextByDefault checks Git context remains enabled by default.
+func TestBuildUserPromptIncludesGitContextByDefault(t *testing.T) {
+	cfg := defaultConfig()
+	ctxInfo := contextInfo{
+		CWD:   "/tmp/project",
+		User:  "xesc",
+		OS:    "darwin/arm64",
+		Shell: "/bin/zsh",
+		Git: gitContext{
+			IsRepo:      true,
+			Branch:      "main",
+			StatusShort: " M llm.go",
+		},
+	}
+
+	prompt := buildUserPrompt(cfg, "check status", "check status", ctxInfo, nil, sessionState{}, nil)
+
+	for _, snippet := range []string{"- git.is_repo: true", "- git.branch: main", "- git.status_short:\n M llm.go"} {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("buildUserPrompt() missing %q in %q", snippet, prompt)
+		}
+	}
+}
+
+// TestBuildUserPromptOmitsGitContextWhenDisabled checks Git fields are not exposed when disabled.
+func TestBuildUserPromptOmitsGitContextWhenDisabled(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.IncludeGit = false
+	ctxInfo := contextInfo{
+		CWD:   "/tmp/project",
+		User:  "xesc",
+		OS:    "darwin/arm64",
+		Shell: "/bin/zsh",
+		Git: gitContext{
+			IsRepo:      true,
+			Branch:      "main",
+			StatusShort: " M llm.go",
+		},
+	}
+
+	prompt := buildUserPrompt(cfg, "check status", "check status", ctxInfo, nil, sessionState{}, nil)
+
+	for _, snippet := range []string{"git.is_repo", "git.branch", "git.status_short"} {
+		if strings.Contains(prompt, snippet) {
+			t.Fatalf("buildUserPrompt() includes disabled Git field %q in %q", snippet, prompt)
+		}
+	}
+}
+
+// TestBuildUserPromptOmitsSessionMemoryWhenDisabled checks stored session context can be hidden.
+func TestBuildUserPromptOmitsSessionMemoryWhenDisabled(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.IncludeSessionMemory = false
+	ctxInfo := contextInfo{
+		CWD:   "/tmp/project",
+		User:  "xesc",
+		OS:    "darwin/arm64",
+		Shell: "/bin/zsh",
+	}
+	history := []historyEntry{{Instruction: "previous task", Result: "previous result"}}
+	state := sessionState{
+		PendingIntent:        "continue deployment",
+		LastSuggestedCommand: "git push origin main",
+		LastRuntimeHint:      "docker",
+		LastCreatedFiles:     []string{"release.txt"},
+		LastReferencedFile:   "main.go",
+	}
+
+	prompt := buildUserPrompt(cfg, "do it", "Resolved: do previous task", ctxInfo, history, state, nil)
+
+	for _, snippet := range []string{"Recent session context:", "Session memory:", "Resolved planning context:", "previous task", "last_suggested_command"} {
+		if strings.Contains(prompt, snippet) {
+			t.Fatalf("buildUserPrompt() includes disabled session memory %q in %q", snippet, prompt)
+		}
+	}
+}
+
+// TestBuildUserPromptOmitsRecentObservationsWhenDisabled checks command output context can be hidden.
+func TestBuildUserPromptOmitsRecentObservationsWhenDisabled(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.IncludeRecentObservations = false
+	ctxInfo := contextInfo{
+		CWD:   "/tmp/project",
+		User:  "xesc",
+		OS:    "darwin/arm64",
+		Shell: "/bin/zsh",
+	}
+	state := sessionState{
+		LastObservations: []observationMemory{
+			{Purpose: "Check status", Command: "git status --short", Transcript: "stdout:\n M llm.go"},
+		},
+	}
+	observations := []commandExecution{
+		{Purpose: "List files", Command: "ls", Stdout: capturedStream{Text: "main.go"}},
+	}
+
+	prompt := buildUserPrompt(cfg, "run it again", "run it again", ctxInfo, nil, state, observations)
+
+	for _, snippet := range []string{"Recent reusable observations:", "Observed outputs from the current task:", "git status --short", "main.go"} {
+		if strings.Contains(prompt, snippet) {
+			t.Fatalf("buildUserPrompt() includes disabled observations %q in %q", snippet, prompt)
 		}
 	}
 }
