@@ -47,7 +47,7 @@ The goal of Shellia is simple:
   - current shell
   - Git repository context when available
 - OpenAI-compatible `/chat/completions` integration
-- Persistent config in `~/.shellia/config.toml`
+- Persistent config in `~/.config/shellia/config.toml`
 - Safe/risky/dangerous local command classification
 - Per-command confirmation
 - Optional auto-run of locally safe commands with `--yes-safe`
@@ -81,6 +81,7 @@ That includes setups such as:
 - OpenRouter
 - LM Studio
 - MLX Server
+- llama.cpp through `llama-server`
 - local proxies or gateways that implement `/chat/completions`
 
 In practice, if you can configure:
@@ -225,7 +226,10 @@ Flags:
   -i: short alias for --interactive
   -interactive: start or maintain an interactive session
   -model: model to use
+  -model-name: configured model profile to use
   -no-color: disable UI colours
+  -plan: show the command plan without executing it
+  -raw-prompt: print the raw model prompts
   -raw-response: print the raw model response
   -request-timeout: HTTP request timeout in seconds
   -timeout: per-command timeout in seconds
@@ -233,7 +237,7 @@ Flags:
   -yes-safe: auto-execute safe commands without confirmation
 
 Config:
-  ~/.shellia/config.toml
+  ~/.config/shellia/config.toml
 
 Examples:
   shellia
@@ -247,7 +251,7 @@ Examples:
 Shellia reads persistent settings from:
 
 ```text
-~/.shellia/config.toml
+~/.config/shellia/config.toml
 ```
 
 Create it with:
@@ -262,13 +266,33 @@ Show its path with:
 ./shellia config path
 ```
 
+`~/.config/shellia/config.toml` is the recommended location and the path created by `shellia config init`. If `XDG_CONFIG_HOME` is set, Shellia uses `$XDG_CONFIG_HOME/shellia/config.toml` instead. For compatibility, Shellia also reads the old `~/.shellia/config.toml` path when the recommended file does not exist.
+
 ### Example config
 
 ```toml
-[llm]
+default_model = "openai"
+
+[[models]]
+name = "openai"
 base_url = "https://api.openai.com/v1"
-model    = "gpt-5.4-mini"
-api_key  = ""
+model = "gpt-5.4-mini"
+api_key_env = "SHELLIA_API_KEY"
+supports_response_format = true
+
+[[models]]
+name = "llama-cpp"
+base_url = "http://localhost:8080/v1"
+model = "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:UD-Q4_K_XL"
+api_key = ""
+supports_response_format = true
+
+[[models]]
+name = "mlx"
+base_url = "http://localhost:8080/v1"
+model = "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit"
+api_key = ""
+supports_response_format = false
 
 [execution]
 timeout_seconds         = 120
@@ -292,17 +316,31 @@ show_system_output = true
 show_command_popup = true
 ```
 
+### Model profiles
+
+Define one or more `[[models]]` entries. Shellia selects the active profile in this order:
+
+1. `--model-name`
+2. `SHELLIA_MODEL_NAME`
+3. `default_model`
+4. the first configured model
+
+`--base-url`, `--model`, and `--api-key` are one-shot overrides over the selected profile.
+
+Use `supports_response_format = false` for endpoints that do not support OpenAI's `response_format` parameter. If omitted, Shellia assumes `true`. The official `mlx_lm.server` should normally use `supports_response_format = false`; OpenAI and llama.cpp can use the default.
+
 ### Configuration precedence
 
 Shellia applies settings in this order:
 
 1. built-in defaults
-2. `~/.shellia/config.toml`
+2. selected `[[models]]` profile from `~/.config/shellia/config.toml`
 3. environment variables
 4. CLI flags
 
 Supported environment variables:
 
+- `SHELLIA_MODEL_NAME`
 - `SHELLIA_BASE_URL`
 - `SHELLIA_MODEL`
 - `SHELLIA_API_KEY`
@@ -458,6 +496,19 @@ mlx_lm.server --model mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit
 ./shellia \
   --base-url "http://localhost:8080/v1" \
   --model "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit" \
+  "show me the files in this directory"
+```
+
+For the official MLX LM Server config profile, set `supports_response_format = false`.
+
+Use llama.cpp:
+
+```bash
+llama-server -hf unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:UD-Q4_K_XL --port 8080
+
+./shellia \
+  --base-url "http://localhost:8080/v1" \
+  --model "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:UD-Q4_K_XL" \
   "show me the files in this directory"
 ```
 

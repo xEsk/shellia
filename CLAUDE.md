@@ -46,7 +46,7 @@ main.go → parseArgs() → runInteractive() or one-shot
 | `llm.go` | OpenAI-compatible API calls, prompt building, response parsing, streaming |
 | `executor.go` | Command execution with PTY, bounded output capture, working directory tracking |
 | `safety.go` + `safety_rules.go` | Local risk classification (safe/risky/dangerous) before any LLM trust |
-| `config.go` | TOML config loading; precedence: defaults → `~/.shellia/config.toml` → env vars → CLI flags |
+| `config.go` | TOML config loading; precedence: defaults → `~/.config/shellia/config.toml` → env vars → CLI flags |
 | `session_memory.go` | Session state across turns (pending intent, created files, runtime hints, observations) |
 | `ui.go` + `ui_stepbox.go` | Terminal rendering, ANSI colors, step boxes, plan visualization |
 | `input_unix.go` | Unix polling to distinguish Esc keypress from escape sequences |

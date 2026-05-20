@@ -104,7 +104,7 @@ type fileModelConfig struct {
 	SupportsResponseFormat *bool  `toml:"supports_response_format"`
 }
 
-// fileConfig mirrors the structure of ~/.shellia/config.toml.
+// fileConfig mirrors the structure of the persistent Shellia config file.
 // Boolean fields are pointers so that absent keys leave the application default untouched.
 type fileConfig struct {
 	DefaultModelName string            `toml:"default_model"`
@@ -321,7 +321,7 @@ func normalizeModelConfigs(fileModels []fileModelConfig) []modelConfig {
 	return models
 }
 
-// loadFileConfig loads ~/.shellia/config.toml if it exists.
+// loadFileConfig loads the preferred config file, falling back to the legacy path if needed.
 func loadFileConfig() (fileConfig, error) {
 	path, err := settingsPath()
 	if err != nil {
@@ -331,9 +331,21 @@ func loadFileConfig() (fileConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fileConfig{}, nil
+			legacyPath, legacyErr := legacySettingsPath()
+			if legacyErr != nil {
+				return fileConfig{}, legacyErr
+			}
+			data, err = os.ReadFile(legacyPath)
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					return fileConfig{}, nil
+				}
+				return fileConfig{}, err
+			}
+			path = legacyPath
+		} else {
+			return fileConfig{}, err
 		}
-		return fileConfig{}, err
 	}
 
 	var cfg fileConfig
@@ -344,8 +356,21 @@ func loadFileConfig() (fileConfig, error) {
 	return cfg, nil
 }
 
-// settingsPath returns the expected path of the Shellia persistent config file.
+// settingsPath returns the preferred path of the Shellia persistent config file.
 func settingsPath() (string, error) {
+	configHome := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
+	if configHome != "" {
+		return filepath.Join(configHome, "shellia", "config.toml"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "shellia", "config.toml"), nil
+}
+
+// legacySettingsPath returns the old Shellia config path used as a read-only fallback.
+func legacySettingsPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -353,12 +378,12 @@ func settingsPath() (string, error) {
 	return filepath.Join(home, ".shellia", "config.toml"), nil
 }
 
-// initConfigFile creates ~/.shellia/config.toml with an initial readable template.
+// initConfigFile creates the preferred config file with an initial readable template.
 func initConfigFile(ui bool) error {
 	return initConfigFileTo(os.Stdout, ui)
 }
 
-// initConfigFileTo creates ~/.shellia/config.toml and reports the result on the provided target.
+// initConfigFileTo creates the preferred config file and reports the result on the provided target.
 func initConfigFileTo(target io.Writer, ui bool) error {
 	path, err := settingsPath()
 	if err != nil {
@@ -396,7 +421,9 @@ func initConfigFileTo(target io.Writer, ui bool) error {
 
 // defaultConfigTemplate returns the base template for the persistent config.
 func defaultConfigTemplate() string {
-	return `# Shellia configuration — ~/.shellia/config.toml
+	return `# Shellia configuration — ~/.config/shellia/config.toml
+# If XDG_CONFIG_HOME is set, Shellia uses $XDG_CONFIG_HOME/shellia/config.toml instead.
+# Legacy fallback: Shellia can still read ~/.shellia/config.toml when this file does not exist.
 # All values shown are the built-in defaults.
 # Environment variables override the selected model profile: SHELLIA_API_KEY,
 # SHELLIA_BASE_URL, SHELLIA_MODEL, OPENAI_API_KEY, OPENAI_BASE_URL,

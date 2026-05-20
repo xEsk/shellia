@@ -112,6 +112,7 @@ func TestParseArgsEnablesPlanOnlyFlags(t *testing.T) {
 	for _, flagName := range []string{"--plan", "-p"} {
 		t.Run(flagName, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_CONFIG_HOME", "")
 			t.Setenv("SHELLIA_BASE_URL", "http://localhost:8080/v1")
 			t.Setenv("SHELLIA_MODEL", "test-model")
 
@@ -133,6 +134,7 @@ func TestParseArgsEnablesPlanOnlyFlags(t *testing.T) {
 // TestParseArgsEnablesRawPrompt checks --raw-prompt prints model prompts explicitly.
 func TestParseArgsEnablesRawPrompt(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("SHELLIA_BASE_URL", "http://localhost:8080/v1")
 	t.Setenv("SHELLIA_MODEL", "test-model")
 
@@ -303,6 +305,7 @@ model = "local-model"
 // TestParseArgsErrorsWithoutModelConfiguration checks a model endpoint is required.
 func TestParseArgsErrorsWithoutModelConfiguration(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("SHELLIA_BASE_URL", "")
 	t.Setenv("SHELLIA_MODEL", "")
 
@@ -353,6 +356,7 @@ base_url = "http://localhost:8080/v1"
 // TestParseArgsRequiresAPIKeyForRemoteEndpoints checks hosted endpoints still need credentials.
 func TestParseArgsRequiresAPIKeyForRemoteEndpoints(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("SHELLIA_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
 
@@ -378,6 +382,7 @@ func TestParseArgsAllowsEmptyAPIKeyForLoopbackEndpoints(t *testing.T) {
 	} {
 		t.Run(baseURL, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_CONFIG_HOME", "")
 			t.Setenv("SHELLIA_API_KEY", "")
 			t.Setenv("OPENAI_API_KEY", "")
 
@@ -403,8 +408,9 @@ func TestParseArgsAllowsEmptyAPIKeyForLoopbackEndpoints(t *testing.T) {
 func TestLoadBaseConfigRejectsInvalidConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 
-	path := filepath.Join(home, ".shellia", "config.toml")
+	path := filepath.Join(home, ".config", "shellia", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
@@ -421,10 +427,11 @@ func TestLoadBaseConfigRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
-func writeShelliaConfig(t *testing.T, content string) {
-	t.Helper()
+// TestLoadBaseConfigUsesLegacyConfigFallback checks the old config path is still read when the XDG path is absent.
+func TestLoadBaseConfigUsesLegacyConfigFallback(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("SHELLIA_MODEL_NAME", "")
 	t.Setenv("SHELLIA_BASE_URL", "")
 	t.Setenv("SHELLIA_MODEL", "")
@@ -434,6 +441,129 @@ func writeShelliaConfig(t *testing.T, content string) {
 	t.Setenv("OPENAI_API_KEY", "")
 
 	path := filepath.Join(home, ".shellia", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`
+[[models]]
+name = "legacy"
+base_url = "http://localhost:8080/v1"
+model = "legacy-model"
+api_key = ""
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg, err := parseArgs([]string{"run git status"})
+	if err != nil {
+		t.Fatalf("parseArgs() error = %v", err)
+	}
+	if cfg.ModelName != "legacy" {
+		t.Fatalf("ModelName = %q, want legacy", cfg.ModelName)
+	}
+}
+
+// TestLoadBaseConfigPrefersXDGConfig checks the recommended path wins over the legacy fallback.
+func TestLoadBaseConfigPrefersXDGConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("SHELLIA_MODEL_NAME", "")
+	t.Setenv("SHELLIA_BASE_URL", "")
+	t.Setenv("SHELLIA_MODEL", "")
+	t.Setenv("SHELLIA_API_KEY", "")
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("OPENAI_MODEL", "")
+	t.Setenv("OPENAI_API_KEY", "")
+
+	legacyPath := filepath.Join(home, ".shellia", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(legacy) error = %v", err)
+	}
+	if err := os.WriteFile(legacyPath, []byte(`
+[[models]]
+name = "legacy"
+base_url = "http://localhost:8080/v1"
+model = "legacy-model"
+api_key = ""
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile(legacy) error = %v", err)
+	}
+
+	preferredPath := filepath.Join(home, ".config", "shellia", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(preferredPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(preferred) error = %v", err)
+	}
+	if err := os.WriteFile(preferredPath, []byte(`
+[[models]]
+name = "preferred"
+base_url = "http://localhost:8081/v1"
+model = "preferred-model"
+api_key = ""
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile(preferred) error = %v", err)
+	}
+
+	cfg, err := parseArgs([]string{"run git status"})
+	if err != nil {
+		t.Fatalf("parseArgs() error = %v", err)
+	}
+	if cfg.ModelName != "preferred" {
+		t.Fatalf("ModelName = %q, want preferred", cfg.ModelName)
+	}
+}
+
+// TestInitConfigFileCreatesPreferredConfigPath checks config init writes the recommended path.
+func TestInitConfigFileCreatesPreferredConfigPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	var output strings.Builder
+	if err := initConfigFileTo(&output, false); err != nil {
+		t.Fatalf("initConfigFileTo() error = %v", err)
+	}
+
+	path := filepath.Join(home, ".config", "shellia", "config.toml")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("Stat(%q) error = %v", path, err)
+	}
+	if !strings.Contains(output.String(), path) {
+		t.Fatalf("output = %q, want preferred path", output.String())
+	}
+}
+
+// TestSettingsPathUsesXDGConfigHome checks the preferred config path follows XDG_CONFIG_HOME.
+func TestSettingsPathUsesXDGConfigHome(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, "xdg")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	path, err := settingsPath()
+	if err != nil {
+		t.Fatalf("settingsPath() error = %v", err)
+	}
+	want := filepath.Join(configHome, "shellia", "config.toml")
+	if path != want {
+		t.Fatalf("settingsPath() = %q, want %q", path, want)
+	}
+}
+
+func writeShelliaConfig(t *testing.T, content string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("SHELLIA_MODEL_NAME", "")
+	t.Setenv("SHELLIA_BASE_URL", "")
+	t.Setenv("SHELLIA_MODEL", "")
+	t.Setenv("SHELLIA_API_KEY", "")
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("OPENAI_MODEL", "")
+	t.Setenv("OPENAI_API_KEY", "")
+
+	path := filepath.Join(home, ".config", "shellia", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
