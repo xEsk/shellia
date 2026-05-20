@@ -20,6 +20,34 @@ func TestDefaultConfigShowsSystemOutput(t *testing.T) {
 	}
 }
 
+// TestDefaultConfigIncludesLocalContext checks context sharing defaults preserve current behaviour.
+func TestDefaultConfigIncludesLocalContext(t *testing.T) {
+	cfg := defaultConfig()
+	if !cfg.IncludeGit || !cfg.IncludeUser || !cfg.IncludeOS || !cfg.IncludeShell || !cfg.IncludeCWD || !cfg.IncludeSessionMemory || !cfg.IncludeRecentObservations {
+		t.Fatalf("defaultConfig() context flags = %#v, want all enabled", cfg)
+	}
+}
+
+// TestApplyFileConfigCanDisableContextFields checks the context visibility config flags.
+func TestApplyFileConfigCanDisableContextFields(t *testing.T) {
+	cfg := defaultConfig()
+	disabled := false
+	fileCfg := fileConfig{}
+	fileCfg.Context.IncludeGit = &disabled
+	fileCfg.Context.IncludeUser = &disabled
+	fileCfg.Context.IncludeOS = &disabled
+	fileCfg.Context.IncludeShell = &disabled
+	fileCfg.Context.IncludeCWD = &disabled
+	fileCfg.Context.IncludeSessionMemory = &disabled
+	fileCfg.Context.IncludeRecentObservations = &disabled
+
+	applyFileConfig(&cfg, fileCfg)
+
+	if cfg.IncludeGit || cfg.IncludeUser || cfg.IncludeOS || cfg.IncludeShell || cfg.IncludeCWD || cfg.IncludeSessionMemory || cfg.IncludeRecentObservations {
+		t.Fatalf("context flags = %#v, want all disabled", cfg)
+	}
+}
+
 // TestApplyFileConfigCanDisableSystemOutput checks the UI output visibility config flag.
 func TestApplyFileConfigCanDisableSystemOutput(t *testing.T) {
 	cfg := defaultConfig()

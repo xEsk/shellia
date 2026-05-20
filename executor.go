@@ -371,16 +371,11 @@ func (writer *limitedCaptureWriter) Stream() capturedStream {
 	}
 }
 
-// getContext collects the local context sent to the model.
-func getContext() (contextInfo, error) {
+// getContext collects the local context available to the model and UI.
+func getContext(cfg config) (contextInfo, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		return contextInfo{}, fmt.Errorf("cannot detect current directory: %w", err)
-	}
-
-	currentUser, err := user.Current()
-	if err != nil {
-		return contextInfo{}, fmt.Errorf("cannot detect current user: %w", err)
 	}
 
 	shellPath := os.Getenv("SHELL")
@@ -388,13 +383,22 @@ func getContext() (contextInfo, error) {
 		shellPath = "/bin/sh"
 	}
 
-	return contextInfo{
+	ctx := contextInfo{
 		CWD:   wd,
-		User:  currentUser.Username,
 		OS:    fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
 		Shell: shellPath,
-		Git:   getGitContext(wd),
-	}, nil
+	}
+	if cfg.IncludeUser {
+		currentUser, err := user.Current()
+		if err != nil {
+			return contextInfo{}, fmt.Errorf("cannot detect current user: %w", err)
+		}
+		ctx.User = currentUser.Username
+	}
+	if cfg.IncludeGit {
+		ctx.Git = getGitContext(wd)
+	}
+	return ctx, nil
 }
 
 // getGitContext detects whether the current directory belongs to a Git repository.
@@ -488,7 +492,7 @@ func executeCommands(ctx context.Context, deps runtimeDeps, ui bool, cfg config,
 			return executions, err
 		}
 
-		applySessionState(ctxInfo, effectiveCommand, exitCode)
+		applySessionState(ctxInfo, cfg, effectiveCommand, exitCode)
 		showCompletedMarker(box, hadOutput)
 		if box != nil {
 			box.Close()
@@ -549,7 +553,7 @@ func executeManualCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg co
 		return execution, err
 	}
 
-	applySessionState(ctxInfo, command, exitCode)
+	applySessionState(ctxInfo, cfg, command, exitCode)
 	showCompletedMarker(box, hadOutput)
 	if box != nil {
 		box.Close()
@@ -791,7 +795,7 @@ done:
 }
 
 // applySessionState updates the persistent context when a command changes the session state.
-func applySessionState(ctxInfo *contextInfo, command string, exitCode int) {
+func applySessionState(ctxInfo *contextInfo, cfg config, command string, exitCode int) {
 	if ctxInfo == nil || exitCode != 0 {
 		return
 	}
@@ -802,7 +806,11 @@ func applySessionState(ctxInfo *contextInfo, command string, exitCode int) {
 	}
 
 	ctxInfo.CWD = nextCWD
-	ctxInfo.Git = getGitContext(nextCWD)
+	if cfg.IncludeGit {
+		ctxInfo.Git = getGitContext(nextCWD)
+	} else {
+		ctxInfo.Git = gitContext{}
+	}
 }
 
 // resolveDirectoryChange detects a simple cd and computes the next session cwd.

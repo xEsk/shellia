@@ -32,17 +32,29 @@ const (
 )
 
 type config struct {
-	CommandKind            string
-	Instruction            string
-	Interactive            bool
-	BaseURL                string
-	APIKey                 string
-	Model                  string
-	CommandTimeout         time.Duration
-	RequestTimeout         time.Duration
-	YesSafe                bool
-	ContinueOnError        bool
-	ConfirmationDefault    confirmationDefault
+	// Runtime options come from CLI arguments and are not persisted in config.toml.
+	CommandKind string
+	Instruction string
+	Interactive bool
+	PlanOnly    bool
+
+	// LLM options identify the OpenAI-compatible endpoint used for planning and summaries.
+	BaseURL string
+	APIKey  string
+	Model   string
+
+	// Execution options control command timeouts, confirmation flow and shell execution mode.
+	CommandTimeout      time.Duration
+	RequestTimeout      time.Duration
+	YesSafe             bool
+	ContinueOnError     bool
+	ConfirmationDefault confirmationDefault
+	AskConfirmPlan      bool
+	AskConfirmPlanOnly  bool
+	ShellMode           commandEngineMode
+	CommandMode         commandEngineMode
+
+	// Output options limit captured command output before it is shown, summarized or reused.
 	CaptureStdoutBytes     int
 	CaptureStderrBytes     int
 	ObservationOutputChars int
@@ -50,28 +62,37 @@ type config struct {
 	MemoryObservationChars int
 	MaxObservationEntries  int
 	TruncationStrategy     truncationStrategy
-	ShowSystemOutput       bool
-	ShellMode              commandEngineMode
-	CommandMode            commandEngineMode
-	PlanOnly               bool
-	AskConfirmPlan         bool
-	AskConfirmPlanOnly     bool
-	Debug                  bool
-	RawPrompt              bool
-	RawResponse            bool
-	NoColor                bool
-	Verbose                bool
-	ShowCommandPopup       bool
+
+	// UI options control terminal rendering and optional debugging output.
+	ShowSystemOutput bool
+	Debug            bool
+	RawPrompt        bool
+	RawResponse      bool
+	NoColor          bool
+	Verbose          bool
+	ShowCommandPopup bool
+
+	// Context options control which local facts are sent to the model and shown by /context.
+	IncludeGit                bool
+	IncludeUser               bool
+	IncludeOS                 bool
+	IncludeShell              bool
+	IncludeCWD                bool
+	IncludeSessionMemory      bool
+	IncludeRecentObservations bool
 }
 
 // fileConfig mirrors the structure of ~/.shellia/config.toml.
 // Boolean fields are pointers so that absent keys leave the application default untouched.
 type fileConfig struct {
+	// [llm]
 	LLM struct {
 		BaseURL string `toml:"base_url"`
 		Model   string `toml:"model"`
 		APIKey  string `toml:"api_key"`
 	} `toml:"llm"`
+
+	// [execution]
 	Execution struct {
 		TimeoutSeconds        int    `toml:"timeout_seconds"`
 		RequestTimeoutSeconds int    `toml:"request_timeout_seconds"`
@@ -83,6 +104,8 @@ type fileConfig struct {
 		ShellMode             string `toml:"shell_mode"`
 		CommandMode           string `toml:"command_mode"`
 	} `toml:"execution"`
+
+	// [output]
 	Output struct {
 		CaptureStdoutBytes     int    `toml:"capture_stdout_bytes"`
 		CaptureStderrBytes     int    `toml:"capture_stderr_bytes"`
@@ -92,22 +115,44 @@ type fileConfig struct {
 		MaxObservationEntries  int    `toml:"max_observation_entries"`
 		TruncationStrategy     string `toml:"truncation_strategy"`
 	} `toml:"output"`
+
+	// [ui]
 	UI struct {
 		Verbose          *bool `toml:"verbose"`
 		NoColor          *bool `toml:"no_color"`
 		ShowSystemOutput *bool `toml:"show_system_output"`
 		ShowCommandPopup *bool `toml:"show_command_popup"`
 	} `toml:"ui"`
+
+	// [context]
+	Context struct {
+		IncludeGit                *bool `toml:"include_git"`
+		IncludeUser               *bool `toml:"include_user"`
+		IncludeOS                 *bool `toml:"include_os"`
+		IncludeShell              *bool `toml:"include_shell"`
+		IncludeCWD                *bool `toml:"include_cwd"`
+		IncludeSessionMemory      *bool `toml:"include_session_memory"`
+		IncludeRecentObservations *bool `toml:"include_recent_observations"`
+	} `toml:"context"`
 }
 
 // defaultConfig returns the built-in baseline values for Shellia.
 func defaultConfig() config {
 	return config{
-		BaseURL:                defaultBaseURL,
-		Model:                  defaultModel,
-		CommandTimeout:         defaultTimeout,
-		RequestTimeout:         60 * time.Second,
-		ConfirmationDefault:    confirmationDefaultNone,
+		// [llm]
+		BaseURL: defaultBaseURL,
+		Model:   defaultModel,
+
+		// [execution]
+		CommandTimeout:      defaultTimeout,
+		RequestTimeout:      60 * time.Second,
+		ConfirmationDefault: confirmationDefaultNone,
+		AskConfirmPlan:      true,
+		AskConfirmPlanOnly:  true,
+		ShellMode:           commandEngineInteractive,
+		CommandMode:         commandEnginePlain,
+
+		// [output]
 		CaptureStdoutBytes:     128 * 1024,
 		CaptureStderrBytes:     256 * 1024,
 		ObservationOutputChars: 1200,
@@ -115,12 +160,19 @@ func defaultConfig() config {
 		MemoryObservationChars: 400,
 		MaxObservationEntries:  4,
 		TruncationStrategy:     truncationMixed,
-		ShowSystemOutput:       true,
-		AskConfirmPlan:         true,
-		AskConfirmPlanOnly:     true,
-		ShellMode:              commandEngineInteractive,
-		CommandMode:            commandEnginePlain,
-		ShowCommandPopup:       true,
+
+		// [ui]
+		ShowSystemOutput: true,
+		ShowCommandPopup: true,
+
+		// [context]
+		IncludeGit:                true,
+		IncludeUser:               true,
+		IncludeOS:                 true,
+		IncludeShell:              true,
+		IncludeCWD:                true,
+		IncludeSessionMemory:      true,
+		IncludeRecentObservations: true,
 	}
 }
 
@@ -195,6 +247,27 @@ func applyFileConfig(cfg *config, fileCfg fileConfig) {
 	}
 	if fileCfg.UI.ShowCommandPopup != nil {
 		cfg.ShowCommandPopup = *fileCfg.UI.ShowCommandPopup
+	}
+	if fileCfg.Context.IncludeGit != nil {
+		cfg.IncludeGit = *fileCfg.Context.IncludeGit
+	}
+	if fileCfg.Context.IncludeUser != nil {
+		cfg.IncludeUser = *fileCfg.Context.IncludeUser
+	}
+	if fileCfg.Context.IncludeOS != nil {
+		cfg.IncludeOS = *fileCfg.Context.IncludeOS
+	}
+	if fileCfg.Context.IncludeShell != nil {
+		cfg.IncludeShell = *fileCfg.Context.IncludeShell
+	}
+	if fileCfg.Context.IncludeCWD != nil {
+		cfg.IncludeCWD = *fileCfg.Context.IncludeCWD
+	}
+	if fileCfg.Context.IncludeSessionMemory != nil {
+		cfg.IncludeSessionMemory = *fileCfg.Context.IncludeSessionMemory
+	}
+	if fileCfg.Context.IncludeRecentObservations != nil {
+		cfg.IncludeRecentObservations = *fileCfg.Context.IncludeRecentObservations
 	}
 }
 
@@ -380,6 +453,17 @@ show_system_output = true
 
 # Show the step execution box around each running command.
 show_command_popup = true
+
+[context]
+# Control which local context is shared with the planning model and shown by /context.
+# Keep cwd, os and shell enabled unless privacy is more important than command accuracy.
+include_git = true
+include_user = true
+include_os = true
+include_shell = true
+include_cwd = true
+include_session_memory = true
+include_recent_observations = true
 `
 }
 

@@ -111,7 +111,7 @@ func main() {
 		return
 	}
 
-	ctxInfo, err := getContext()
+	ctxInfo, err := getContext(cfg)
 	if err != nil {
 		exitWithError(ui, err.Error(), 1)
 	}
