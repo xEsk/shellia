@@ -365,7 +365,7 @@ func defaultConfigTemplate() string {
 
 [llm]
 # OpenAI-compatible API endpoint. Works with OpenAI, Ollama, Groq, LM Studio,
-# MLX Server, etc. For MLX Server use: http://localhost:8080/v1
+# MLX Server, llama.cpp, etc. For MLX Server or llama.cpp use: http://localhost:8080/v1
 base_url = "https://api.openai.com/v1"
 
 # Model name passed to the API. Use any model your endpoint supports.

@@ -129,6 +129,20 @@ func TestParseArgsEnablesPlanOnlyFlags(t *testing.T) {
 	}
 }
 
+// TestParseArgsEnablesRawPrompt checks --raw-prompt prints model prompts explicitly.
+func TestParseArgsEnablesRawPrompt(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("SHELLIA_API_KEY", "test-key")
+
+	cfg, err := parseArgs([]string{"--raw-prompt", "run git status"})
+	if err != nil {
+		t.Fatalf("parseArgs() error = %v", err)
+	}
+	if !cfg.RawPrompt {
+		t.Fatalf("RawPrompt = false, want true")
+	}
+}
+
 // TestParseArgsRequiresAPIKeyForRemoteEndpoints checks hosted endpoints still need credentials.
 func TestParseArgsRequiresAPIKeyForRemoteEndpoints(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
