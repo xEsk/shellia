@@ -45,17 +45,17 @@ type config struct {
 	ConfirmationDefault    confirmationDefault
 	CaptureStdoutBytes     int
 	CaptureStderrBytes     int
-	ObservationOutputChars  int
-	SummaryOutputChars      int
-	MemoryObservationChars  int
-	MaxObservationEntries   int
-	TruncationStrategy      truncationStrategy
+	ObservationOutputChars int
+	SummaryOutputChars     int
+	MemoryObservationChars int
+	MaxObservationEntries  int
+	TruncationStrategy     truncationStrategy
 	ShowSystemOutput       bool
 	ShellMode              commandEngineMode
 	CommandMode            commandEngineMode
 	PlanOnly               bool
-	AskConfirmPlan            bool
-	AskConfirmPlanOnly        bool
+	AskConfirmPlan         bool
+	AskConfirmPlanOnly     bool
 	Debug                  bool
 	RawResponse            bool
 	NoColor                bool
@@ -76,15 +76,15 @@ type fileConfig struct {
 		RequestTimeoutSeconds int    `toml:"request_timeout_seconds"`
 		YesSafe               *bool  `toml:"yes_safe"`
 		ContinueOnError       *bool  `toml:"continue_on_error"`
-		AskConfirmPlan           *bool  `toml:"ask_confirm_plan"`
-		AskConfirmPlanOnly       *bool  `toml:"ask_confirm_plan_only"`
+		AskConfirmPlan        *bool  `toml:"ask_confirm_plan"`
+		AskConfirmPlanOnly    *bool  `toml:"ask_confirm_plan_only"`
 		ConfirmationDefault   string `toml:"confirmation_default"`
 		ShellMode             string `toml:"shell_mode"`
 		CommandMode           string `toml:"command_mode"`
 	} `toml:"execution"`
 	Output struct {
-		CaptureStdoutBytes     int `toml:"capture_stdout_bytes"`
-		CaptureStderrBytes     int `toml:"capture_stderr_bytes"`
+		CaptureStdoutBytes     int    `toml:"capture_stdout_bytes"`
+		CaptureStderrBytes     int    `toml:"capture_stderr_bytes"`
 		ObservationOutputChars int    `toml:"observation_output_chars"`
 		SummaryOutputChars     int    `toml:"summary_output_chars"`
 		MemoryObservationChars int    `toml:"memory_observation_chars"`
@@ -113,10 +113,10 @@ func defaultConfig() config {
 		SummaryOutputChars:     4000,
 		MemoryObservationChars: 400,
 		MaxObservationEntries:  4,
-		TruncationStrategy:    truncationMixed,
+		TruncationStrategy:     truncationMixed,
 		ShowSystemOutput:       true,
-		AskConfirmPlan:            true,
-		AskConfirmPlanOnly:        true,
+		AskConfirmPlan:         true,
+		AskConfirmPlanOnly:     true,
 		ShellMode:              commandEngineInteractive,
 		CommandMode:            commandEnginePlain,
 		ShowCommandPopup:       true,
