@@ -39,9 +39,13 @@ type config struct {
 	PlanOnly    bool
 
 	// LLM options identify the OpenAI-compatible endpoint used for planning and summaries.
-	BaseURL string
-	APIKey  string
-	Model   string
+	BaseURL                string
+	APIKey                 string
+	Model                  string
+	ModelName              string
+	DefaultModelName       string
+	Models                 []modelConfig
+	SupportsResponseFormat bool
 
 	// Execution options control command timeouts, confirmation flow and shell execution mode.
 	CommandTimeout      time.Duration
@@ -82,15 +86,29 @@ type config struct {
 	IncludeRecentObservations bool
 }
 
+type modelConfig struct {
+	Name                   string
+	BaseURL                string
+	Model                  string
+	APIKey                 string
+	APIKeyEnv              string
+	SupportsResponseFormat bool
+}
+
+type fileModelConfig struct {
+	Name                   string `toml:"name"`
+	BaseURL                string `toml:"base_url"`
+	Model                  string `toml:"model"`
+	APIKey                 string `toml:"api_key"`
+	APIKeyEnv              string `toml:"api_key_env"`
+	SupportsResponseFormat *bool  `toml:"supports_response_format"`
+}
+
 // fileConfig mirrors the structure of ~/.shellia/config.toml.
 // Boolean fields are pointers so that absent keys leave the application default untouched.
 type fileConfig struct {
-	// [llm]
-	LLM struct {
-		BaseURL string `toml:"base_url"`
-		Model   string `toml:"model"`
-		APIKey  string `toml:"api_key"`
-	} `toml:"llm"`
+	DefaultModelName string            `toml:"default_model"`
+	Models           []fileModelConfig `toml:"models"`
 
 	// [execution]
 	Execution struct {
@@ -139,9 +157,8 @@ type fileConfig struct {
 // defaultConfig returns the built-in baseline values for Shellia.
 func defaultConfig() config {
 	return config{
-		// [llm]
-		BaseURL: defaultBaseURL,
-		Model:   defaultModel,
+		// Model configuration.
+		SupportsResponseFormat: true,
 
 		// [execution]
 		CommandTimeout:      defaultTimeout,
@@ -179,15 +196,9 @@ func defaultConfig() config {
 // applyFileConfig merges the persistent file into the base config.
 // Boolean fields are only applied when explicitly present in the file.
 func applyFileConfig(cfg *config, fileCfg fileConfig) {
-	if strings.TrimSpace(fileCfg.LLM.BaseURL) != "" {
-		cfg.BaseURL = strings.TrimSpace(fileCfg.LLM.BaseURL)
-	}
-	if strings.TrimSpace(fileCfg.LLM.Model) != "" {
-		cfg.Model = strings.TrimSpace(fileCfg.LLM.Model)
-	}
-	if strings.TrimSpace(fileCfg.LLM.APIKey) != "" {
-		cfg.APIKey = strings.TrimSpace(fileCfg.LLM.APIKey)
-	}
+	cfg.DefaultModelName = strings.TrimSpace(fileCfg.DefaultModelName)
+	cfg.Models = normalizeModelConfigs(fileCfg.Models)
+
 	if fileCfg.Execution.TimeoutSeconds > 0 {
 		cfg.CommandTimeout = time.Duration(fileCfg.Execution.TimeoutSeconds) * time.Second
 	}
@@ -271,16 +282,43 @@ func applyFileConfig(cfg *config, fileCfg fileConfig) {
 	}
 }
 
-// applyEnvConfig applies environment variables on top of the persistent file.
-// Priority: SHELLIA_* > OPENAI_* (compatibility fallback).
+// applyEnvConfig applies environment variables that do not depend on the selected model profile.
 func applyEnvConfig(cfg *config) {
+	if modelName := strings.TrimSpace(os.Getenv("SHELLIA_MODEL_NAME")); modelName != "" {
+		cfg.ModelName = modelName
+	}
+	cfg.ShellMode = normalizeCommandEngineMode(getenvFallback(string(cfg.ShellMode), "SHELLIA_SHELL_MODE"), cfg.ShellMode)
+	cfg.CommandMode = normalizeCommandEngineMode(getenvFallback(string(cfg.CommandMode), "SHELLIA_COMMAND_MODE"), cfg.CommandMode)
+}
+
+// applyModelEnvOverrides applies one-shot model endpoint overrides from the environment.
+// Priority: SHELLIA_* > OPENAI_* (compatibility fallback).
+func applyModelEnvOverrides(cfg *config) {
 	cfg.BaseURL = getenvFallback(cfg.BaseURL, "SHELLIA_BASE_URL", "OPENAI_BASE_URL")
 	cfg.Model = getenvFallback(cfg.Model, "SHELLIA_MODEL", "OPENAI_MODEL")
 	if apiKey := getenvFallback("", "SHELLIA_API_KEY", "OPENAI_API_KEY"); apiKey != "" {
 		cfg.APIKey = apiKey
 	}
-	cfg.ShellMode = normalizeCommandEngineMode(getenvFallback(string(cfg.ShellMode), "SHELLIA_SHELL_MODE"), cfg.ShellMode)
-	cfg.CommandMode = normalizeCommandEngineMode(getenvFallback(string(cfg.CommandMode), "SHELLIA_COMMAND_MODE"), cfg.CommandMode)
+}
+
+// normalizeModelConfigs converts file model entries into runtime profiles.
+func normalizeModelConfigs(fileModels []fileModelConfig) []modelConfig {
+	models := make([]modelConfig, 0, len(fileModels))
+	for _, fileModel := range fileModels {
+		supportsResponseFormat := true
+		if fileModel.SupportsResponseFormat != nil {
+			supportsResponseFormat = *fileModel.SupportsResponseFormat
+		}
+		models = append(models, modelConfig{
+			Name:                   strings.TrimSpace(fileModel.Name),
+			BaseURL:                strings.TrimSpace(fileModel.BaseURL),
+			Model:                  strings.TrimSpace(fileModel.Model),
+			APIKey:                 strings.TrimSpace(fileModel.APIKey),
+			APIKeyEnv:              strings.TrimSpace(fileModel.APIKeyEnv),
+			SupportsResponseFormat: supportsResponseFormat,
+		})
+	}
+	return models
 }
 
 // loadFileConfig loads ~/.shellia/config.toml if it exists.
@@ -360,20 +398,36 @@ func initConfigFileTo(target io.Writer, ui bool) error {
 func defaultConfigTemplate() string {
 	return `# Shellia configuration — ~/.shellia/config.toml
 # All values shown are the built-in defaults.
-# Environment variables override this file: SHELLIA_API_KEY, SHELLIA_BASE_URL,
-# SHELLIA_MODEL, OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL (in priority order).
+# Environment variables override the selected model profile: SHELLIA_API_KEY,
+# SHELLIA_BASE_URL, SHELLIA_MODEL, OPENAI_API_KEY, OPENAI_BASE_URL,
+# OPENAI_MODEL (in priority order). SHELLIA_MODEL_NAME selects a profile.
 
-[llm]
-# OpenAI-compatible API endpoint. Works with OpenAI, Ollama, Groq, LM Studio,
-# MLX Server, llama.cpp, etc. For MLX Server or llama.cpp use: http://localhost:8080/v1
+# Model profile used by default. If omitted, Shellia uses the first configured model.
+default_model = "openai"
+
+[[models]]
+name = "openai"
 base_url = "https://api.openai.com/v1"
-
-# Model name passed to the API. Use any model your endpoint supports.
 model = "gpt-5.4-mini"
+api_key_env = "SHELLIA_API_KEY"
+# Most OpenAI-compatible endpoints support response_format. Defaults to true when omitted.
+supports_response_format = true
 
-# API key. Leave empty to rely on the SHELLIA_API_KEY or OPENAI_API_KEY env var.
-# Local loopback endpoints such as MLX Server can also run with an empty key.
+[[models]]
+name = "llama-cpp"
+base_url = "http://localhost:8080/v1"
+model = "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:UD-Q4_K_XL"
 api_key = ""
+# llama.cpp supports response_format on /v1/chat/completions.
+supports_response_format = true
+
+[[models]]
+name = "mlx"
+base_url = "http://localhost:8080/v1"
+model = "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit"
+api_key = ""
+# MLX LM Server should use prompt-only JSON guidance.
+supports_response_format = false
 
 [execution]
 # Maximum seconds a single shell command may run before it is killed.

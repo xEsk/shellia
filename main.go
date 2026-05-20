@@ -215,6 +215,7 @@ func buildFlagSet(cfg *config) (*flag.FlagSet, *int, *int) {
 	fs.StringVar(&cfg.BaseURL, "base-url", cfg.BaseURL, "base URL of the OpenAI-compatible API")
 	fs.StringVar(&cfg.APIKey, "api-key", cfg.APIKey, "API key")
 	fs.StringVar(&cfg.Model, "model", cfg.Model, "model to use")
+	fs.StringVar(&cfg.ModelName, "model-name", cfg.ModelName, "configured model profile to use")
 	fs.IntVar(&timeoutSecs, "timeout", timeoutSecs, "per-command timeout in seconds")
 	fs.IntVar(&reqTimeoutSecs, "request-timeout", reqTimeoutSecs, "HTTP request timeout in seconds")
 	fs.BoolVar(&cfg.YesSafe, "yes-safe", cfg.YesSafe, "auto-execute safe commands without confirmation")
@@ -249,6 +250,13 @@ func isHelpRequest(args []string) bool {
 
 // finalizeConfig applies the remaining positional args and validates the result.
 func finalizeConfig(fs *flag.FlagSet, cfg config, timeoutSecs, reqTimeoutSecs int) (config, error) {
+	flagBaseURL := cfg.BaseURL
+	flagAPIKey := cfg.APIKey
+	flagModel := cfg.Model
+	flagBaseURLSet := flagWasSet(fs, "base-url")
+	flagAPIKeySet := flagWasSet(fs, "api-key")
+	flagModelSet := flagWasSet(fs, "model")
+
 	cfg.CommandTimeout = time.Duration(timeoutSecs) * time.Second
 	cfg.RequestTimeout = time.Duration(reqTimeoutSecs) * time.Second
 
@@ -263,6 +271,22 @@ func finalizeConfig(fs *flag.FlagSet, cfg config, timeoutSecs, reqTimeoutSecs in
 	}
 	if cfg.ObservationOutputChars > maxOutputChars || cfg.SummaryOutputChars > maxOutputChars {
 		return config{}, fmt.Errorf("output char limits cannot exceed %d", maxOutputChars)
+	}
+	if err := applySelectedModel(&cfg); err != nil {
+		return config{}, err
+	}
+	applyModelEnvOverrides(&cfg)
+	if flagBaseURLSet {
+		cfg.BaseURL = strings.TrimSpace(flagBaseURL)
+	}
+	if flagAPIKeySet {
+		cfg.APIKey = strings.TrimSpace(flagAPIKey)
+	}
+	if flagModelSet {
+		cfg.Model = strings.TrimSpace(flagModel)
+	}
+	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.Model) == "" {
+		return config{}, fmt.Errorf("missing model configuration. Configure [[models]] or pass --base-url and --model")
 	}
 
 	remaining := fs.Args()
@@ -285,6 +309,86 @@ func finalizeConfig(fs *flag.FlagSet, cfg config, timeoutSecs, reqTimeoutSecs in
 	}
 
 	return cfg, nil
+}
+
+// flagWasSet reports whether a CLI flag was explicitly provided.
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	wasSet := false
+	fs.Visit(func(flag *flag.Flag) {
+		if flag.Name == name {
+			wasSet = true
+		}
+	})
+	return wasSet
+}
+
+// applySelectedModel resolves the active configured model profile.
+func applySelectedModel(cfg *config) error {
+	if len(cfg.Models) == 0 {
+		if strings.TrimSpace(cfg.ModelName) != "" {
+			return fmt.Errorf("configured model profile %q not found", strings.TrimSpace(cfg.ModelName))
+		}
+		cfg.SupportsResponseFormat = true
+		return nil
+	}
+
+	if err := validateModelConfigs(cfg.Models); err != nil {
+		return err
+	}
+
+	name := strings.TrimSpace(cfg.ModelName)
+	if name == "" {
+		name = strings.TrimSpace(cfg.DefaultModelName)
+	}
+	if name == "" {
+		name = cfg.Models[0].Name
+	}
+
+	selected, ok := findModelConfig(cfg.Models, name)
+	if !ok {
+		return fmt.Errorf("configured model profile %q not found", name)
+	}
+
+	cfg.ModelName = selected.Name
+	cfg.BaseURL = selected.BaseURL
+	cfg.Model = selected.Model
+	cfg.APIKey = selected.APIKey
+	if strings.TrimSpace(cfg.APIKey) == "" && strings.TrimSpace(selected.APIKeyEnv) != "" {
+		cfg.APIKey = strings.TrimSpace(os.Getenv(selected.APIKeyEnv))
+	}
+	cfg.SupportsResponseFormat = selected.SupportsResponseFormat
+	return nil
+}
+
+// validateModelConfigs checks configured model profiles before selection.
+func validateModelConfigs(models []modelConfig) error {
+	seen := make(map[string]bool, len(models))
+	for _, model := range models {
+		if strings.TrimSpace(model.Name) == "" {
+			return fmt.Errorf("configured model profile is missing name")
+		}
+		if seen[model.Name] {
+			return fmt.Errorf("configured model profile %q is duplicated", model.Name)
+		}
+		seen[model.Name] = true
+		if strings.TrimSpace(model.BaseURL) == "" {
+			return fmt.Errorf("configured model profile %q is missing base_url", model.Name)
+		}
+		if strings.TrimSpace(model.Model) == "" {
+			return fmt.Errorf("configured model profile %q is missing model", model.Name)
+		}
+	}
+	return nil
+}
+
+// findModelConfig finds a configured model profile by name.
+func findModelConfig(models []modelConfig, name string) (modelConfig, bool) {
+	for _, model := range models {
+		if model.Name == name {
+			return model, true
+		}
+	}
+	return modelConfig{}, false
 }
 
 // requiresAPIKey reports whether the configured endpoint needs an explicit API key.

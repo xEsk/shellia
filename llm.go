@@ -326,7 +326,7 @@ func callPlanningPrompt(ctx context.Context, client *http.Client, cfg config, sy
 
 // planningResponseFormat keeps strict JSON mode where providers advertise it.
 func planningResponseFormat(cfg config) *responseFormat {
-	if strings.TrimSpace(cfg.APIKey) == "" && allowsEmptyAPIKey(cfg) {
+	if !cfg.SupportsResponseFormat {
 		return nil
 	}
 	return &responseFormat{Type: "json_object"}
@@ -606,15 +606,10 @@ func buildUserPrompt(cfg config, instruction string, resolvedInstruction string,
 			"- Explain manual decision branches in observation_reason when a later command depends on output.\n"
 	}
 
-	responseFormatFallbackRules := ""
-	if planningResponseFormat(cfg) == nil {
-		responseFormatFallbackRules = "- Output exactly one JSON object. After the final closing brace, stop immediately. Do not repeat the JSON object. Do not append markdown, prose, or a second JSON object.\n"
-	}
-
 	contextBlock := buildPromptContextBlock(cfg, ctxInfo)
 
 	return fmt.Sprintf(
-		"User instruction:\n%s%s%s%s%s\nCurrent context:\n%s%s\n\nRules:\n- Commands run in the current Shellia session directory unless a command explicitly operates elsewhere.\n- Do not invent files, branches, remotes, package managers, or paths.\n- Prefer simple commands.\n- Return pure commands only, without echo/printf or shell decorations.\n- Split independent actions into separate commands instead of chaining them.\n- If a follow-up refers to an earlier task, use the resolved planning context, recent reusable observations, and session memory to continue it.\n- Recent reusable observations are provided for task continuity only — to resolve cross-turn references like \"that file\" or \"the docker thing\". They are NOT a reason to skip a fresh execution request.\n- If observed outputs from the CURRENT task round already answer the question, return no commands and answer directly in summary. Never skip commands based solely on reusable observations from prior turns.\n- Do not repeat an inspection command that already produced the needed information unless the user explicitly asks to rerun it.\n- If observed outputs from this task are provided, use them to decide the next commands instead of guessing.\n- If observed output shows a confirmation prompt or terminal question, do not repeat the same non-interactive command; choose a known non-interactive variant with high confidence or set interactive=true.\n- If Shellia already asks the user to confirm a risky command, avoid a second in-command confirmation prompt when a known non-interactive flag is available with high confidence.\n- If a mandatory user-provided detail is still missing, return no commands and explain the missing detail in summary and input_reason.\n- If a command needs a real terminal session, set interactive=true and explain why in interactive_reason.\n- If a request is still somewhat underspecified but can be advanced safely, propose a short inspection or verification command instead of immediately returning no commands.\n- If a referenced file might contain executable code, inspect or verify it before refusing based only on its extension.\n- If the request cannot be fulfilled safely with confidence, return an empty commands array and explain it in summary.\n%s%s",
+		"User instruction:\n%s%s%s%s%s\nCurrent context:\n%s%s\n\nRules:\n- Output exactly one JSON object. After the final closing brace, stop immediately. Do not repeat the JSON object. Do not append markdown, prose, or a second JSON object.\n- Commands run in the current Shellia session directory unless a command explicitly operates elsewhere.\n- Do not invent files, branches, remotes, package managers, or paths.\n- Prefer simple commands.\n- Return pure commands only, without echo/printf or shell decorations.\n- Split independent actions into separate commands instead of chaining them.\n- If a follow-up refers to an earlier task, use the resolved planning context, recent reusable observations, and session memory to continue it.\n- Recent reusable observations are provided for task continuity only — to resolve cross-turn references like \"that file\" or \"the docker thing\". They are NOT a reason to skip a fresh execution request.\n- If observed outputs from the CURRENT task round already answer the question, return no commands and answer directly in summary. Never skip commands based solely on reusable observations from prior turns.\n- Do not repeat an inspection command that already produced the needed information unless the user explicitly asks to rerun it.\n- If observed outputs from this task are provided, use them to decide the next commands instead of guessing.\n- If observed output shows a confirmation prompt or terminal question, do not repeat the same non-interactive command; choose a known non-interactive variant with high confidence or set interactive=true.\n- If Shellia already asks the user to confirm a risky command, avoid a second in-command confirmation prompt when a known non-interactive flag is available with high confidence.\n- If a mandatory user-provided detail is still missing, return no commands and explain the missing detail in summary and input_reason.\n- If a command needs a real terminal session, set interactive=true and explain why in interactive_reason.\n- If a request is still somewhat underspecified but can be advanced safely, propose a short inspection or verification command instead of immediately returning no commands.\n- If a referenced file might contain executable code, inspect or verify it before refusing based only on its extension.\n- If the request cannot be fulfilled safely with confidence, return an empty commands array and explain it in summary.\n%s",
 		instruction,
 		resolutionBlock,
 		memoryBlock,
@@ -622,7 +617,6 @@ func buildUserPrompt(cfg config, instruction string, resolvedInstruction string,
 		observationBlock,
 		contextBlock,
 		historyBlock,
-		responseFormatFallbackRules,
 		planOnlyRules,
 	)
 }

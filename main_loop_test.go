@@ -303,11 +303,37 @@ func TestDoLLMRequestSendsAuthorizationWhenAPIKeySet(t *testing.T) {
 	}
 }
 
-// TestCallPlanningPromptOmitsResponseFormatForLocalNoKey checks MLX-style requests stay minimal.
-func TestCallPlanningPromptOmitsResponseFormatForLocalNoKey(t *testing.T) {
+// TestCallPlanningPromptUsesResponseFormatForLocalNoKey checks JSON mode is profile-driven.
+func TestCallPlanningPromptUsesResponseFormatForLocalNoKey(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{content: "ok"})
 	cfg := loopTestConfig("http://localhost")
 	cfg.APIKey = ""
+
+	if _, err := callPlanningPrompt(context.Background(), fake.HTTPClient(), cfg, "system", "user"); err != nil {
+		t.Fatalf("callPlanningPrompt() error = %v", err)
+	}
+
+	bodies := fake.requestBodies()
+	if len(bodies) != 1 {
+		t.Fatalf("request bodies = %#v, want one body", bodies)
+	}
+
+	var body struct {
+		ResponseFormat *responseFormat `json:"response_format"`
+	}
+	if err := json.Unmarshal([]byte(bodies[0]), &body); err != nil {
+		t.Fatalf("Unmarshal(request body) error = %v", err)
+	}
+	if body.ResponseFormat == nil || body.ResponseFormat.Type != "json_object" {
+		t.Fatalf("response_format = %#v, want json_object", body.ResponseFormat)
+	}
+}
+
+// TestCallPlanningPromptOmitsResponseFormatWhenUnsupported checks profile capability disables JSON mode.
+func TestCallPlanningPromptOmitsResponseFormatWhenUnsupported(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{content: "ok"})
+	cfg := loopTestConfig("http://localhost")
+	cfg.SupportsResponseFormat = false
 
 	if _, err := callPlanningPrompt(context.Background(), fake.HTTPClient(), cfg, "system", "user"); err != nil {
 		t.Fatalf("callPlanningPrompt() error = %v", err)
@@ -324,9 +350,6 @@ func TestCallPlanningPromptOmitsResponseFormatForLocalNoKey(t *testing.T) {
 	}
 	if _, ok := body["response_format"]; ok {
 		t.Fatalf("request body includes response_format: %s", bodies[0])
-	}
-	if _, ok := body["stop"]; ok {
-		t.Fatalf("request body includes stop: %s", bodies[0])
 	}
 }
 

@@ -162,8 +162,8 @@ func TestBuildPlanOnlySystemPromptDefinesOperationalPlan(t *testing.T) {
 	}
 }
 
-// TestBuildUserPromptAddsFallbackJSONGuidanceOnlyWithoutResponseFormat checks local fallback prompting.
-func TestBuildUserPromptAddsFallbackJSONGuidanceOnlyWithoutResponseFormat(t *testing.T) {
+// TestBuildUserPromptAlwaysAddsJSONGuidance checks JSON instructions do not depend on response_format.
+func TestBuildUserPromptAlwaysAddsJSONGuidance(t *testing.T) {
 	ctxInfo := contextInfo{
 		CWD:   "/tmp/project",
 		User:  "xesc",
@@ -176,14 +176,14 @@ func TestBuildUserPromptAddsFallbackJSONGuidanceOnlyWithoutResponseFormat(t *tes
 	localCfg.APIKey = ""
 	localPrompt := buildUserPrompt(localCfg, "list files", "list files", ctxInfo, nil, sessionState{}, nil)
 	if !strings.Contains(localPrompt, "Do not repeat the JSON object") {
-		t.Fatalf("buildUserPrompt(local) missing fallback JSON guidance: %q", localPrompt)
+		t.Fatalf("buildUserPrompt(local) missing JSON guidance: %q", localPrompt)
 	}
 
 	keyedCfg := defaultConfig()
 	keyedCfg.APIKey = "test-key"
 	keyedPrompt := buildUserPrompt(keyedCfg, "list files", "list files", ctxInfo, nil, sessionState{}, nil)
-	if strings.Contains(keyedPrompt, "Do not repeat the JSON object") {
-		t.Fatalf("buildUserPrompt(keyed) includes fallback JSON guidance: %q", keyedPrompt)
+	if !strings.Contains(keyedPrompt, "Do not repeat the JSON object") {
+		t.Fatalf("buildUserPrompt(keyed) missing JSON guidance: %q", keyedPrompt)
 	}
 }
 
