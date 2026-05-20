@@ -57,6 +57,7 @@ type config struct {
 	AskConfirmPlan         bool
 	AskConfirmPlanOnly     bool
 	Debug                  bool
+	RawPrompt              bool
 	RawResponse            bool
 	NoColor                bool
 	Verbose                bool

@@ -225,6 +225,7 @@ func buildFlagSet(cfg *config) (*flag.FlagSet, *int, *int) {
 	fs.BoolVar(&cfg.PlanOnly, "p", false, "short alias for --plan")
 	fs.BoolVar(&cfg.Debug, "debug", cfg.Debug, "show context and debug data")
 	fs.BoolVar(&cfg.Verbose, "verbose", cfg.Verbose, "show full plan and technical detail")
+	fs.BoolVar(&cfg.RawPrompt, "raw-prompt", cfg.RawPrompt, "print the raw model prompts")
 	fs.BoolVar(&cfg.RawResponse, "raw-response", cfg.RawResponse, "print the raw model response")
 	fs.BoolVar(&cfg.NoColor, "no-color", cfg.NoColor, "disable UI colours")
 	fs.Usage = usageFunc(fs)
@@ -528,6 +529,11 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo
 	lastPlans := []commandPlan(nil)
 
 	for round := 0; round < maxPlanRounds; round++ {
+		if cfg.RawPrompt {
+			systemPrompt, userPrompt := buildLLMPrompts(cfg, *ctxInfo, instruction, history, state, allExecutions)
+			printRawPromptsTo(deps.Stdout, ui, "Raw LLM prompt", systemPrompt, userPrompt)
+		}
+
 		thinking := startThinkingIndicator(ui, deps.Stdout)
 		rawResponse, err := callLLM(ctx, deps.HTTPClient, cfg, *ctxInfo, instruction, history, state, allExecutions)
 		if thinking != nil {
@@ -554,6 +560,11 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo
 		}
 
 		if len(plans) == 0 && !cfg.PlanOnly && shouldRetryWithDiscoveryRepair(parsed, round, allExecutions) {
+			if cfg.RawPrompt {
+				systemPrompt, userPrompt := buildDiscoveryRepairLLMPrompts(cfg, *ctxInfo, instruction, history, state, allExecutions, parsed)
+				printRawPromptsTo(deps.Stdout, ui, "Raw discovery repair prompt", systemPrompt, userPrompt)
+			}
+
 			thinking = startThinkingIndicator(ui, deps.Stdout)
 			repairedRawResponse, repairErr := callDiscoveryRepairLLM(ctx, deps.HTTPClient, cfg, *ctxInfo, instruction, history, state, allExecutions, parsed)
 			if thinking != nil {
