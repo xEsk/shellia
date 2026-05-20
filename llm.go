@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	maxRetries                 = 3
-	retryBaseDelay             = 500 * time.Millisecond
+	maxRetries                   = 3
+	retryBaseDelay               = 500 * time.Millisecond
 	streamChunkErrorPreviewChars = 160
 	httpErrorBodyPreviewChars    = 1200
 	historyEntryPreviewChars     = 240
