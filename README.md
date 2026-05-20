@@ -80,13 +80,14 @@ That includes setups such as:
 - Ollama, when exposed through an OpenAI-compatible endpoint
 - OpenRouter
 - LM Studio
+- MLX Server
 - local proxies or gateways that implement `/chat/completions`
 
 In practice, if you can configure:
 
 - `base_url`
-- `api_key`
 - `model`
+- `api_key`, unless it is a local loopback endpoint that does not require one
 
 and the endpoint behaves like an OpenAI-compatible chat completions API, Shellia can use it.
 
@@ -446,6 +447,17 @@ Use a custom provider:
   --base-url "http://localhost:11434/v1" \
   --api-key "ollama" \
   --model "llama3.1" \
+  "show me the files in this directory"
+```
+
+Use MLX Server:
+
+```bash
+mlx_lm.server --model mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit
+
+./shellia \
+  --base-url "http://localhost:8080/v1" \
+  --model "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit" \
   "show me the files in this directory"
 ```
 
