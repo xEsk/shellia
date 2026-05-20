@@ -434,6 +434,15 @@ func printModeStatusTo(target io.Writer, ui bool, message string) {
 	})
 }
 
+// printModelSwitchTo shows the active model profile after a /model change.
+func printModelSwitchTo(target io.Writer, ui bool, cfg config) {
+	detail := ""
+	if strings.TrimSpace(cfg.Model) != "" {
+		detail = style(ui, colorDim, " · "+cfg.Model)
+	}
+	fmt.Fprintf(target, "\n%s %s%s\n", shelliaBrand(ui, false), style(ui, colorWhite+colorBold, "Model switched to "+cfg.ModelName+"."), detail)
+}
+
 // printWarning shows a non-fatal warning.
 func printWarning(ui bool, message string) {
 	printWarningTo(os.Stderr, ui, message)
@@ -632,7 +641,7 @@ const (
 )
 
 // readInteractivePrompt shows a clear prompt and returns the entered text.
-func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout io.Writer, mode interactiveMode, showCommandPopup bool) (string, error) {
+func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout io.Writer, mode interactiveMode, cfg config) (string, error) {
 	if stdin == nil {
 		stdin = os.Stdin
 	}
@@ -670,7 +679,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout
 		contentWidth = 1
 	}
 
-	renderEditablePromptTo(stdout, ui, prompt, buffer, cursor, affinity, renderState, showCommandPopup)
+	renderEditablePromptTo(stdout, ui, prompt, buffer, cursor, affinity, renderState, cfg)
 
 	for {
 		_, err := stdin.Read(single)
@@ -685,7 +694,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout
 					buffer = buffer[:0]
 					cursor = 0
 					affinity = cursorAffinityForward
-					renderEditablePromptTo(stdout, ui, prompt, buffer, cursor, affinity, renderState, showCommandPopup)
+					renderEditablePromptTo(stdout, ui, prompt, buffer, cursor, affinity, renderState, cfg)
 				}
 				continue
 			}
@@ -718,7 +727,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout
 			cursor--
 			affinity = cursorAffinityForward
 		case '\t':
-			if completed, ok := completeInteractiveSlashCommand(string(buffer)); ok {
+			if completed, ok := completeInteractiveCommand(string(buffer), cfg); ok {
 				buffer = []rune(completed + " ")
 				cursor = len(buffer)
 				affinity = cursorAffinityForward
@@ -736,7 +745,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout
 			affinity = cursorAffinityForward
 		}
 
-		renderEditablePromptTo(stdout, ui, prompt, buffer, cursor, affinity, renderState, showCommandPopup)
+		renderEditablePromptTo(stdout, ui, prompt, buffer, cursor, affinity, renderState, cfg)
 	}
 }
 
@@ -1259,16 +1268,16 @@ func applyEscapeSequenceOrExit(reader io.Reader, fd int, buffer *[]rune, cursor 
 }
 
 // renderEditablePrompt repaints the full editable prompt block while handling wrapping correctly.
-func renderEditablePrompt(ui bool, prompt string, buffer []rune, cursor int, affinity cursorAffinity, state *editableRenderState, showCommandPopup bool) {
-	renderEditablePromptTo(os.Stdout, ui, prompt, buffer, cursor, affinity, state, showCommandPopup)
+func renderEditablePrompt(ui bool, prompt string, buffer []rune, cursor int, affinity cursorAffinity, state *editableRenderState, cfg config) {
+	renderEditablePromptTo(os.Stdout, ui, prompt, buffer, cursor, affinity, state, cfg)
 }
 
 // renderEditablePromptTo repaints the full editable prompt block on the provided target.
-func renderEditablePromptTo(target io.Writer, ui bool, prompt string, buffer []rune, cursor int, affinity cursorAffinity, state *editableRenderState, showCommandPopup bool) {
+func renderEditablePromptTo(target io.Writer, ui bool, prompt string, buffer []rune, cursor int, affinity cursorAffinity, state *editableRenderState, cfg config) {
 	lines, cursorRow, cursorCol := editablePromptLayout(prompt, buffer, cursor, affinity, promptRenderWidthFor(target))
 	var menuLines []string
-	if showCommandPopup {
-		menuLines = commandMenuLines(ui, string(buffer))
+	if cfg.ShowCommandPopup {
+		menuLines = commandMenuLines(ui, string(buffer), cfg)
 	}
 	promptWidth := visibleWidth(prompt)
 

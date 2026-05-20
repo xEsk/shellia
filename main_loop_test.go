@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -214,6 +215,99 @@ func loopTestContext(t *testing.T) contextInfo {
 		User:  "test-user",
 		OS:    "test-os",
 		Shell: "/bin/sh",
+	}
+}
+
+// TestSwitchInteractiveModelAppliesAndPersistsDefault checks /model changes the runtime profile and config default.
+func TestSwitchInteractiveModelAppliesAndPersistsDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("default_model = \"openai\"\n\n[[models]]\nname = \"openai\"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	fake := newLoopLLMClient(t, loopLLMResponse{
+		content: `{"summary":"Model switched.","commands":[]}`,
+	})
+
+	cfg := defaultConfig()
+	cfg.ConfigPath = path
+	cfg.ModelName = "openai"
+	cfg.BaseURL = "http://localhost:8080/v1"
+	cfg.Model = "openai-model"
+	cfg.Models = []modelConfig{
+		{Name: "openai", BaseURL: "http://localhost:8080/v1", Model: "openai-model", SupportsResponseFormat: true},
+		{Name: "mlx", BaseURL: fake.URL(), Model: "mlx-model", APIKey: "test-key", SupportsResponseFormat: false},
+	}
+
+	if err := switchInteractiveModel(&cfg, "mlx"); err != nil {
+		t.Fatalf("switchInteractiveModel() error = %v", err)
+	}
+	if cfg.ModelName != "mlx" || cfg.BaseURL != fake.URL() || cfg.Model != "mlx-model" || cfg.SupportsResponseFormat {
+		t.Fatalf("cfg after switch = %#v, want mlx profile without response_format", cfg)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(data), `default_model = "mlx"`) {
+		t.Fatalf("config after switch = %q, want persisted default", string(data))
+	}
+
+	ctxInfo := loopTestContext(t)
+	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+		if _, err := runTurn(context.Background(), deps, false, cfg, &ctxInfo, "answer", nil, sessionState{}); err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+	bodies := fake.requestBodies()
+	if len(bodies) != 1 {
+		t.Fatalf("LLM request bodies = %d, want 1", len(bodies))
+	}
+	var body struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal([]byte(bodies[0]), &body); err != nil {
+		t.Fatalf("Unmarshal(request body) error = %v", err)
+	}
+	if body.Model != "mlx-model" {
+		t.Fatalf("request model = %q, want mlx-model", body.Model)
+	}
+}
+
+// TestSwitchInteractiveModelMissingKeepsCurrent checks bad model names do not mutate the session.
+func TestSwitchInteractiveModelMissingKeepsCurrent(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.ModelName = "openai"
+	cfg.BaseURL = "http://localhost:8080/v1"
+	cfg.Model = "openai-model"
+	cfg.Models = []modelConfig{
+		{Name: "openai", BaseURL: "http://localhost:8080/v1", Model: "openai-model", SupportsResponseFormat: true},
+	}
+	before := cfg
+
+	err := switchInteractiveModel(&cfg, "missing")
+	if err == nil {
+		t.Fatalf("switchInteractiveModel() error = nil, want missing profile")
+	}
+	if cfg.ModelName != before.ModelName || cfg.Model != before.Model || cfg.BaseURL != before.BaseURL {
+		t.Fatalf("cfg changed after missing profile: %#v, want %#v", cfg, before)
+	}
+}
+
+// TestPrintModelProfilesToListsActiveModel checks /model without args lists configured profiles.
+func TestPrintModelProfilesToListsActiveModel(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.ModelName = "mlx"
+	cfg.Models = []modelConfig{
+		{Name: "openai", Model: "gpt"},
+		{Name: "mlx", Model: "qwen"},
+	}
+
+	var output strings.Builder
+	printModelProfilesTo(&output, false, cfg)
+	got := output.String()
+	if !strings.Contains(got, "* mlx · qwen") || !strings.Contains(got, "openai · gpt") {
+		t.Fatalf("printModelProfilesTo() = %q, want active model list", got)
 	}
 }
 
@@ -704,6 +798,47 @@ func TestRunInteractiveProcessesPromptThenExit(t *testing.T) {
 	}
 	if !strings.Contains(output, "Session closed.") {
 		t.Fatalf("interactive output does not contain close message: %q", output)
+	}
+}
+
+// TestRunInteractiveModelCommandSwitchesWithoutLLM checks /model is handled locally.
+func TestRunInteractiveModelCommandSwitchesWithoutLLM(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("default_model = \"openai\"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	fake := newLoopLLMClient(t)
+	cfg := loopTestConfig(fake.URL())
+	cfg.ConfigPath = path
+	cfg.ModelName = "openai"
+	cfg.Models = []modelConfig{
+		{Name: "openai", BaseURL: fake.URL(), Model: "openai-model", APIKey: "test-key", SupportsResponseFormat: true},
+		{Name: "mlx", BaseURL: fake.URL(), Model: "mlx-model", APIKey: "test-key", SupportsResponseFormat: false},
+	}
+	ctxInfo := loopTestContext(t)
+
+	output := captureMainLoopIO(t, "/model mlx\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		runInteractive(context.Background(), deps, false, cfg, &ctxInfo)
+	})
+
+	if fake.requestCount() != 0 {
+		t.Fatalf("LLM requests = %d, want 0", fake.requestCount())
+	}
+	if !strings.Contains(output, "Model switched to mlx") {
+		t.Fatalf("output = %q, want model switch message", output)
+	}
+	if !strings.Contains(output, " · mlx-model") {
+		t.Fatalf("output = %q, want selected model detail", output)
+	}
+	if !strings.Contains(output, "\nShellia Model switched to mlx.") {
+		t.Fatalf("output = %q, want blank line before model switch message", output)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(data), `default_model = "mlx"`) {
+		t.Fatalf("config after /model = %q, want persisted default", string(data))
 	}
 }
 

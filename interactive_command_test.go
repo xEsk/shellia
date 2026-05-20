@@ -5,16 +5,18 @@ import "testing"
 // TestParseInteractiveCommandSlashCommands checks the supported interactive slash commands.
 func TestParseInteractiveCommandSlashCommands(t *testing.T) {
 	tests := map[string]interactiveCommand{
-		"/shell":    interactiveCommandShell,
-		" /SHELL  ": interactiveCommandShell,
-		"/plan":     interactiveCommandPlan,
-		"/ai":       interactiveCommandAI,
-		"/mode":     interactiveCommandMode,
-		"/context":  interactiveCommandContext,
-		"/clear":    interactiveCommandClear,
-		"/exit":     interactiveCommandExit,
-		"/quit":     interactiveCommandExit,
-		"exit":      interactiveCommandExit,
+		"/shell":     interactiveCommandShell,
+		" /SHELL  ":  interactiveCommandShell,
+		"/plan":      interactiveCommandPlan,
+		"/ai":        interactiveCommandAI,
+		"/mode":      interactiveCommandMode,
+		"/model":     interactiveCommandModel,
+		"/model mlx": interactiveCommandModel,
+		"/context":   interactiveCommandContext,
+		"/clear":     interactiveCommandClear,
+		"/exit":      interactiveCommandExit,
+		"/quit":      interactiveCommandExit,
+		"exit":       interactiveCommandExit,
 	}
 
 	for input, want := range tests {
@@ -99,5 +101,15 @@ func TestCompleteInteractiveSlashCommandUsesFirstMatch(t *testing.T) {
 
 	if got, ok := completeInteractiveSlashCommand("/usr/bin/env"); ok {
 		t.Fatalf("completeInteractiveSlashCommand(path) = %q, true; want no completion", got)
+	}
+}
+
+// TestParseModelCommandName extracts the selected model profile from /model.
+func TestParseModelCommandName(t *testing.T) {
+	if got := parseModelCommandName(" /model mlx "); got != "mlx" {
+		t.Fatalf("parseModelCommandName() = %q, want mlx", got)
+	}
+	if got := parseModelCommandName("/model"); got != "" {
+		t.Fatalf("parseModelCommandName(/model) = %q, want empty", got)
 	}
 }

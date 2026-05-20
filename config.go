@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,6 +46,7 @@ type config struct {
 	ModelName              string
 	DefaultModelName       string
 	Models                 []modelConfig
+	ConfigPath             string
 	SupportsResponseFormat bool
 
 	// Execution options control command timeouts, confirmation flow and shell execution mode.
@@ -322,10 +324,10 @@ func normalizeModelConfigs(fileModels []fileModelConfig) []modelConfig {
 }
 
 // loadFileConfig loads the preferred config file, falling back to the legacy path if needed.
-func loadFileConfig() (fileConfig, error) {
+func loadFileConfig() (fileConfig, string, error) {
 	path, err := settingsPath()
 	if err != nil {
-		return fileConfig{}, err
+		return fileConfig{}, "", err
 	}
 
 	data, err := os.ReadFile(path)
@@ -333,27 +335,27 @@ func loadFileConfig() (fileConfig, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			legacyPath, legacyErr := legacySettingsPath()
 			if legacyErr != nil {
-				return fileConfig{}, legacyErr
+				return fileConfig{}, "", legacyErr
 			}
 			data, err = os.ReadFile(legacyPath)
 			if err != nil {
 				if errors.Is(err, os.ErrNotExist) {
-					return fileConfig{}, nil
+					return fileConfig{}, "", nil
 				}
-				return fileConfig{}, err
+				return fileConfig{}, "", err
 			}
 			path = legacyPath
 		} else {
-			return fileConfig{}, err
+			return fileConfig{}, "", err
 		}
 	}
 
 	var cfg fileConfig
 	if _, err := toml.Decode(string(data), &cfg); err != nil {
-		return fileConfig{}, fmt.Errorf("invalid config file %s: %w", path, err)
+		return fileConfig{}, "", fmt.Errorf("invalid config file %s: %w", path, err)
 	}
 
-	return cfg, nil
+	return cfg, path, nil
 }
 
 // settingsPath returns the preferred path of the Shellia persistent config file.
@@ -417,6 +419,63 @@ func initConfigFileTo(target io.Writer, ui bool) error {
 		path,
 	})
 	return nil
+}
+
+// persistDefaultModel writes the selected profile as the persistent default model.
+func persistDefaultModel(cfg config, name string) error {
+	path := strings.TrimSpace(cfg.ConfigPath)
+	if path == "" {
+		return fmt.Errorf("cannot persist default_model: no config file was loaded")
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("cannot inspect config file: %w", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("cannot read config file: %w", err)
+	}
+
+	updated := updateDefaultModelTOML(string(data), name)
+	if err := os.WriteFile(path, []byte(updated), info.Mode().Perm()); err != nil {
+		return fmt.Errorf("cannot write config file: %w", err)
+	}
+	return nil
+}
+
+// updateDefaultModelTOML updates only the top-level default_model assignment.
+func updateDefaultModelTOML(content string, name string) string {
+	line := "default_model = " + strconv.Quote(name)
+	lines := strings.Split(content, "\n")
+	insertAt := len(lines)
+
+	for index, current := range lines {
+		trimmed := strings.TrimSpace(current)
+		if strings.HasPrefix(trimmed, "[") && insertAt == len(lines) {
+			insertAt = index
+		}
+		if isDefaultModelLine(current) {
+			lines[index] = line
+			return strings.Join(lines, "\n")
+		}
+	}
+
+	if content == "" {
+		return line + "\n"
+	}
+	lines = append(lines, "")
+	copy(lines[insertAt+1:], lines[insertAt:])
+	lines[insertAt] = line
+	return strings.Join(lines, "\n")
+}
+
+// isDefaultModelLine reports whether the TOML line assigns the top-level default_model key.
+func isDefaultModelLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return !strings.HasPrefix(trimmed, "#") &&
+		strings.HasPrefix(trimmed, "default_model") &&
+		strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(trimmed, "default_model")), "=")
 }
 
 // defaultConfigTemplate returns the base template for the persistent config.

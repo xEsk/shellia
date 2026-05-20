@@ -193,6 +193,8 @@ Useful commands in interactive mode:
 - `!<cmd>` to run one direct manual command
 - `/ai` to return to AI mode
 - `/mode` to show the current mode
+- `/model` to list configured model profiles
+- `/model <name>` to switch model profile and persist it as `default_model`
 - `/clear`, `/context`, `exit`, `/exit`, `/quit`
 
 ### One-shot mode

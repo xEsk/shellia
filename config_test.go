@@ -533,6 +533,50 @@ func TestInitConfigFileCreatesPreferredConfigPath(t *testing.T) {
 	}
 }
 
+// TestUpdateDefaultModelTOMLReplacesExisting checks the top-level default_model is updated in place.
+func TestUpdateDefaultModelTOMLReplacesExisting(t *testing.T) {
+	input := "# config\n default_model = \"openai\"\n\n[[models]]\nname = \"mlx\"\n"
+	got := updateDefaultModelTOML(input, "mlx")
+	want := "# config\ndefault_model = \"mlx\"\n\n[[models]]\nname = \"mlx\"\n"
+	if got != want {
+		t.Fatalf("updateDefaultModelTOML() = %q, want %q", got, want)
+	}
+}
+
+// TestUpdateDefaultModelTOMLInsertsBeforeFirstTable checks missing defaults are inserted without reordering tables.
+func TestUpdateDefaultModelTOMLInsertsBeforeFirstTable(t *testing.T) {
+	input := "# config\n\n[[models]]\nname = \"mlx\"\n"
+	got := updateDefaultModelTOML(input, "mlx")
+	want := "# config\n\ndefault_model = \"mlx\"\n[[models]]\nname = \"mlx\"\n"
+	if got != want {
+		t.Fatalf("updateDefaultModelTOML() = %q, want %q", got, want)
+	}
+}
+
+// TestPersistDefaultModelKeepsConfigBody checks only default_model is persisted.
+func TestPersistDefaultModelKeepsConfigBody(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := "# config\n\n[[models]]\nname = \"mlx\"\nmodel = \"qwen\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg := defaultConfig()
+	cfg.ConfigPath = path
+	if err := persistDefaultModel(cfg, "mlx"); err != nil {
+		t.Fatalf("persistDefaultModel() error = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "default_model = \"mlx\"") || !strings.Contains(got, "[[models]]\nname = \"mlx\"") {
+		t.Fatalf("persisted config = %q, want default and original model body", got)
+	}
+}
+
 // TestSettingsPathUsesXDGConfigHome checks the preferred config path follows XDG_CONFIG_HOME.
 func TestSettingsPathUsesXDGConfigHome(t *testing.T) {
 	home := t.TempDir()

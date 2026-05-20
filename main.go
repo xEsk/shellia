@@ -181,10 +181,11 @@ func parseArgs(args []string) (config, error) {
 // loadBaseConfig applies defaults → file → env in order.
 func loadBaseConfig() (config, error) {
 	cfg := defaultConfig()
-	fileCfg, err := loadFileConfig()
+	fileCfg, configPath, err := loadFileConfig()
 	if err != nil {
 		return config{}, err
 	}
+	cfg.ConfigPath = configPath
 	applyFileConfig(&cfg, fileCfg)
 	applyEnvConfig(&cfg)
 	return cfg, nil
@@ -349,6 +350,12 @@ func applySelectedModel(cfg *config) error {
 		return fmt.Errorf("configured model profile %q not found", name)
 	}
 
+	applyModelConfig(cfg, selected)
+	return nil
+}
+
+// applyModelConfig applies one configured model profile to the runtime config.
+func applyModelConfig(cfg *config, selected modelConfig) {
 	cfg.ModelName = selected.Name
 	cfg.BaseURL = selected.BaseURL
 	cfg.Model = selected.Model
@@ -357,7 +364,6 @@ func applySelectedModel(cfg *config) error {
 		cfg.APIKey = strings.TrimSpace(os.Getenv(selected.APIKeyEnv))
 	}
 	cfg.SupportsResponseFormat = selected.SupportsResponseFormat
-	return nil
 }
 
 // validateModelConfigs checks configured model profiles before selection.
@@ -485,7 +491,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			return
 		}
 
-		input, err := readInteractivePrompt(ui, reader, deps.Stdin, deps.Stdout, mode, cfg.ShowCommandPopup)
+		input, err := readInteractivePrompt(ui, reader, deps.Stdin, deps.Stdout, mode, cfg)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				fmt.Fprintln(deps.Stdout)
@@ -556,6 +562,18 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 				continue
 			case interactiveCommandMode:
 				printModeStatusTo(deps.Stdout, ui, "Current mode: "+string(mode))
+				continue
+			case interactiveCommandModel:
+				modelName := parseModelCommandName(trimmed)
+				if modelName == "" {
+					printModelProfilesTo(deps.Stdout, ui, cfg)
+					continue
+				}
+				if err := switchInteractiveModel(&cfg, modelName); err != nil {
+					printWarningTo(deps.Stderr, ui, err.Error())
+					continue
+				}
+				printModelSwitchTo(deps.Stdout, ui, cfg)
 				continue
 			case interactiveCommandPlan:
 				printWarningTo(deps.Stderr, ui, "Missing plan instruction.")
@@ -646,6 +664,55 @@ func renderModeForManualCommand(cfg config) manualRenderMode {
 		return manualRenderInteractive
 	}
 	return manualRenderInline
+}
+
+// printModelProfilesTo lists configured model profiles and marks the active one.
+func printModelProfilesTo(target io.Writer, ui bool, cfg config) {
+	if len(cfg.Models) == 0 {
+		renderPanel(target, ui, "models", colorYellow, []string{
+			"No configured model profiles.",
+			"Add [[models]] entries to config.toml.",
+		})
+		return
+	}
+
+	lines := make([]string, 0, len(cfg.Models))
+	for _, model := range cfg.Models {
+		marker := " "
+		if model.Name == cfg.ModelName {
+			marker = "*"
+		}
+		lines = append(lines, fmt.Sprintf("%s %s · %s", marker, model.Name, model.Model))
+	}
+	renderPanel(target, ui, "models", colorCyan, lines)
+}
+
+// switchInteractiveModel applies a configured model profile and persists it as the default.
+func switchInteractiveModel(cfg *config, name string) error {
+	if len(cfg.Models) == 0 {
+		return fmt.Errorf("no configured model profiles")
+	}
+	if err := validateModelConfigs(cfg.Models); err != nil {
+		return err
+	}
+
+	selected, ok := findModelConfig(cfg.Models, strings.TrimSpace(name))
+	if !ok {
+		return fmt.Errorf("configured model profile %q not found", strings.TrimSpace(name))
+	}
+
+	next := *cfg
+	applyModelConfig(&next, selected)
+	if requiresAPIKey(next) {
+		return missingAPIKeyError()
+	}
+
+	*cfg = next
+	cfg.DefaultModelName = selected.Name
+	if err := persistDefaultModel(*cfg, selected.Name); err != nil {
+		return fmt.Errorf("model switched to %s, but default_model was not persisted: %w", selected.Name, err)
+	}
+	return nil
 }
 
 // runTurn executes a full plan → confirm → execute → answer cycle, or stops after planning in plan-only mode.

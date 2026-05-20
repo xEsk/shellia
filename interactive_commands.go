@@ -13,6 +13,7 @@ const (
 	interactiveCommandShell   interactiveCommand = "shell"
 	interactiveCommandAI      interactiveCommand = "ai"
 	interactiveCommandMode    interactiveCommand = "mode"
+	interactiveCommandModel   interactiveCommand = "model"
 	interactiveCommandPlan    interactiveCommand = "plan"
 )
 
@@ -27,6 +28,7 @@ var interactiveSlashCommands = []interactiveCommandSpec{
 	{Input: "/plan", Command: interactiveCommandPlan, Description: "show a plan without running commands"},
 	{Input: "/ai", Command: interactiveCommandAI, Description: "return to prompt mode"},
 	{Input: "/mode", Command: interactiveCommandMode, Description: "show current mode"},
+	{Input: "/model", Command: interactiveCommandModel, Description: "switch configured model profile"},
 	{Input: "/context", Command: interactiveCommandContext, Description: "show current local context"},
 	{Input: "/clear", Command: interactiveCommandClear, Description: "clear the terminal"},
 	{Input: "/exit", Command: interactiveCommandExit, Description: "close the session"},
@@ -59,7 +61,7 @@ func parseInteractiveCommand(input string) interactiveCommand {
 	}
 
 	for _, spec := range interactiveSlashCommands {
-		if normalized == spec.Input {
+		if normalized == spec.Input || (spec.Command == interactiveCommandModel && strings.HasPrefix(normalized, spec.Input+" ")) {
 			return spec.Command
 		}
 	}
@@ -101,4 +103,14 @@ func completeInteractiveSlashCommand(input string) (string, bool) {
 		return "", false
 	}
 	return matches[0].Input, true
+}
+
+// parseModelCommandName extracts the optional profile name from a /model command.
+func parseModelCommandName(input string) string {
+	trimmed := strings.TrimSpace(input)
+	fields := strings.Fields(trimmed)
+	if len(fields) < 2 || strings.ToLower(fields[0]) != "/model" {
+		return ""
+	}
+	return fields[1]
 }

@@ -7,9 +7,14 @@ const (
 	commandMenuPadding     = 2
 )
 
+type commandMenuItem struct {
+	Input       string
+	Description string
+}
+
 // commandMenuLines renders the slash-command suggestions shown below the prompt.
-func commandMenuLines(ui bool, input string) []string {
-	suggestions := matchingInteractiveSlashCommands(input)
+func commandMenuLines(ui bool, input string, cfg config) []string {
+	suggestions := commandMenuSuggestions(input, cfg)
 	if len(suggestions) == 0 {
 		return nil
 	}
@@ -49,6 +54,78 @@ func commandMenuLines(ui bool, input string) []string {
 	return lines
 }
 
+// commandMenuSuggestions returns top-level slash commands or /model profile entries.
+func commandMenuSuggestions(input string, cfg config) []commandMenuItem {
+	if prefix, ok := modelMenuPrefix(input); ok {
+		return modelMenuSuggestions(prefix, cfg)
+	}
+
+	matches := matchingInteractiveSlashCommands(input)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	suggestions := make([]commandMenuItem, 0, len(matches))
+	for _, match := range matches {
+		suggestions = append(suggestions, commandMenuItem{
+			Input:       match.Input,
+			Description: match.Description,
+		})
+	}
+	return suggestions
+}
+
+// modelMenuPrefix extracts the profile-name prefix when the prompt is editing /model.
+func modelMenuPrefix(input string) (string, bool) {
+	if input == "" || strings.TrimLeft(input, " \t") != input {
+		return "", false
+	}
+	if strings.ContainsAny(input, "\r\n") {
+		return "", false
+	}
+
+	lower := strings.ToLower(input)
+	switch {
+	case lower == "/model":
+		return "", true
+	case strings.HasPrefix(lower, "/model "):
+		fields := strings.Fields(input)
+		if len(fields) > 2 {
+			return "", false
+		}
+		return strings.TrimSpace(input[len("/model"):]), true
+	default:
+		return "", false
+	}
+}
+
+// modelMenuSuggestions renders configured model profiles for the /model submenu.
+func modelMenuSuggestions(prefix string, cfg config) []commandMenuItem {
+	if len(cfg.Models) == 0 {
+		return []commandMenuItem{{
+			Input:       "no models",
+			Description: "configure [[models]] in config.toml",
+		}}
+	}
+
+	prefix = strings.ToLower(strings.TrimSpace(prefix))
+	suggestions := make([]commandMenuItem, 0, len(cfg.Models))
+	for _, model := range cfg.Models {
+		if prefix != "" && !strings.HasPrefix(strings.ToLower(model.Name), prefix) {
+			continue
+		}
+		name := model.Name
+		if model.Name == cfg.ModelName {
+			name = "* " + name
+		}
+		suggestions = append(suggestions, commandMenuItem{
+			Input:       name,
+			Description: model.Model,
+		})
+	}
+	return suggestions
+}
+
 // commandMenuBorderLine renders one compact border row for the command menu.
 func commandMenuBorderLine(ui bool, left string, right string, width int) string {
 	innerWidth := width - 2
@@ -56,4 +133,18 @@ func commandMenuBorderLine(ui bool, left string, right string, width int) string
 		innerWidth = 0
 	}
 	return style(ui, commandMenuBorderColor, left+strings.Repeat("─", innerWidth)+right)
+}
+
+// completeInteractiveCommand returns the first matching slash command or model profile.
+func completeInteractiveCommand(input string, cfg config) (string, bool) {
+	if prefix, ok := modelMenuPrefix(input); ok {
+		prefix = strings.ToLower(strings.TrimSpace(prefix))
+		for _, model := range cfg.Models {
+			if prefix == "" || strings.HasPrefix(strings.ToLower(model.Name), prefix) {
+				return "/model " + model.Name, true
+			}
+		}
+		return "", false
+	}
+	return completeInteractiveSlashCommand(input)
 }
