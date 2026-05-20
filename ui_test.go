@@ -94,6 +94,19 @@ func TestPrintContextRespectsContextConfig(t *testing.T) {
 	}
 }
 
+// TestPrintInteractiveCommandStartAddsLeadingBlankLine checks the interactive
+// command handoff does not appear glued to the prompt that launched it.
+func TestPrintInteractiveCommandStartAddsLeadingBlankLine(t *testing.T) {
+	var buffer bytes.Buffer
+
+	printInteractiveCommandStartTo(&buffer, false)
+
+	want := "\nShellia Starting interactive command. Shellia will resume when it exits.\n"
+	if got := buffer.String(); got != want {
+		t.Fatalf("printInteractiveCommandStartTo() = %q, want %q", got, want)
+	}
+}
+
 // TestPrintSeparatorUsesStandardLine checks that the shared separator matches the box width.
 func TestPrintSeparatorUsesStandardLine(t *testing.T) {
 	var buffer bytes.Buffer

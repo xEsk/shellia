@@ -511,7 +511,7 @@ func executeManualCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg co
 		box.Spacer()
 		box.Command(command)
 	} else if renderMode == manualRenderInteractive {
-		printInfoTo(deps.Stdout, ui, "Starting interactive command. Shellia will resume when it exits.")
+		printInteractiveCommandStartTo(deps.Stdout, ui)
 	}
 
 	output, exitCode, hadOutput, err := executeOneCommand(

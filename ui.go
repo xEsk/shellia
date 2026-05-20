@@ -422,6 +422,12 @@ func printInfoTo(target io.Writer, ui bool, message string) {
 	fmt.Fprintf(target, "%s %s\n", shelliaBrand(ui, false), style(ui, colorWhite+colorBold, message))
 }
 
+// printInteractiveCommandStartTo shows the handoff message before an interactive command starts.
+func printInteractiveCommandStartTo(target io.Writer, ui bool) {
+	fmt.Fprintln(target)
+	printInfoTo(target, ui, "Starting interactive command. Shellia will resume when it exits.")
+}
+
 // printModeStatus shows an interactive mode state change with cleaner output.
 func printModeStatus(ui bool, message string) {
 	printModeStatusTo(os.Stdout, ui, message)
