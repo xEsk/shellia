@@ -162,24 +162,38 @@ func exitWithError(ui bool, message string, code int) {
 }
 
 // printContext shows the detected context when debug mode is enabled.
-func printContext(ui bool, ctxInfo contextInfo) {
-	printContextTo(os.Stdout, ui, ctxInfo)
+func printContext(ui bool, cfg config, ctxInfo contextInfo) {
+	printContextTo(os.Stdout, ui, cfg, ctxInfo)
 }
 
 // printContextTo shows the detected context on the provided target.
-func printContextTo(target io.Writer, ui bool, ctxInfo contextInfo) {
-	lines := []string{
-		metaLine(ui, "cwd", ctxInfo.CWD),
-		metaLine(ui, "user", ctxInfo.User),
-		metaLine(ui, "os", ctxInfo.OS),
-		metaLine(ui, "shell", ctxInfo.Shell),
-		metaLine(ui, "git", strconv.FormatBool(ctxInfo.Git.IsRepo)),
-		metaLine(ui, "branch", fallbackValue(ctxInfo.Git.Branch, "-")),
+func printContextTo(target io.Writer, ui bool, cfg config, ctxInfo contextInfo) {
+	lines := make([]string, 0, 7)
+	if cfg.IncludeCWD {
+		lines = append(lines, metaLine(ui, "cwd", ctxInfo.CWD))
 	}
-	if ctxInfo.Git.StatusShort == "" {
-		lines = append(lines, metaLine(ui, "status", style(ui, colorDim, "(clean or empty)")))
-	} else {
-		lines = append(lines, fmt.Sprintf("%s\n%s", metaLabel(ui, "status"), indentLines(ctxInfo.Git.StatusShort, shellStreamPrefix(ui))))
+	if cfg.IncludeUser {
+		lines = append(lines, metaLine(ui, "user", ctxInfo.User))
+	}
+	if cfg.IncludeOS {
+		lines = append(lines, metaLine(ui, "os", ctxInfo.OS))
+	}
+	if cfg.IncludeShell {
+		lines = append(lines, metaLine(ui, "shell", ctxInfo.Shell))
+	}
+	if cfg.IncludeGit {
+		lines = append(lines,
+			metaLine(ui, "git", strconv.FormatBool(ctxInfo.Git.IsRepo)),
+			metaLine(ui, "branch", fallbackValue(ctxInfo.Git.Branch, "-")),
+		)
+		if ctxInfo.Git.StatusShort == "" {
+			lines = append(lines, metaLine(ui, "status", style(ui, colorDim, "(clean or empty)")))
+		} else {
+			lines = append(lines, fmt.Sprintf("%s\n%s", metaLabel(ui, "status"), indentLines(ctxInfo.Git.StatusShort, shellStreamPrefix(ui))))
+		}
+	}
+	if len(lines) == 0 {
+		lines = append(lines, style(ui, colorDim, "No local context shared by configuration."))
 	}
 	renderPanel(target, ui, "context", colorBlue, lines)
 }
@@ -342,15 +356,17 @@ func planOnlyResult(summary string, response llmResponse) string {
 }
 
 // printHeader shows a compact header with the global session state.
-func printHeader(ui bool, ctxInfo contextInfo) {
-	printHeaderTo(os.Stdout, ui, ctxInfo)
+func printHeader(ui bool, cfg config, ctxInfo contextInfo) {
+	printHeaderTo(os.Stdout, ui, cfg, ctxInfo)
 }
 
 // printHeaderTo shows a compact header with the global session state on the provided target.
-func printHeaderTo(target io.Writer, ui bool, ctxInfo contextInfo) {
+func printHeaderTo(target io.Writer, ui bool, cfg config, ctxInfo contextInfo) {
 	fmt.Fprintln(target)
 	fmt.Fprintln(target, shelliaBrand(ui, false)+style(ui, colorDim, " · ")+shelliaVersionBadge(ui))
-	fmt.Fprintln(target, style(ui, colorDim, fmt.Sprintf("%s · %s", ctxInfo.CWD, plainHeaderGitValue(ctxInfo))))
+	if headerContext := plainHeaderContextValue(cfg, ctxInfo); headerContext != "" {
+		fmt.Fprintln(target, style(ui, colorDim, headerContext))
+	}
 }
 
 // printSection draws a section header with stronger visual hierarchy.
@@ -1407,6 +1423,18 @@ func plainHeaderGitValue(ctxInfo contextInfo) string {
 		return branch + " (clean)"
 	}
 	return branch + " (dirty)"
+}
+
+// plainHeaderContextValue generates the short local context line for turn headers.
+func plainHeaderContextValue(cfg config, ctxInfo contextInfo) string {
+	parts := make([]string, 0, 2)
+	if cfg.IncludeCWD {
+		parts = append(parts, ctxInfo.CWD)
+	}
+	if cfg.IncludeGit {
+		parts = append(parts, plainHeaderGitValue(ctxInfo))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // plainHeaderModelValue generates a short model summary for the startup header.
