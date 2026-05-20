@@ -21,8 +21,9 @@ type loopLLMResponse struct {
 }
 
 type loopLLMRequest struct {
-	stream bool
-	body   string
+	stream        bool
+	body          string
+	authorization string
 }
 
 type loopLLMClient struct {
@@ -61,7 +62,11 @@ func (fake *loopLLMClient) RoundTrip(r *http.Request) (*http.Response, error) {
 
 	fake.mu.Lock()
 	index := len(fake.requests)
-	fake.requests = append(fake.requests, loopLLMRequest{stream: request.Stream, body: string(body)})
+	fake.requests = append(fake.requests, loopLLMRequest{
+		stream:        request.Stream,
+		body:          string(body),
+		authorization: r.Header.Get("Authorization"),
+	})
 	fake.mu.Unlock()
 
 	if index >= len(fake.responses) {
@@ -174,6 +179,18 @@ func (fake *loopLLMClient) requestBodies() []string {
 	return bodies
 }
 
+// requestAuthorizations returns the Authorization headers captured by the fake transport.
+func (fake *loopLLMClient) requestAuthorizations() []string {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+
+	headers := make([]string, 0, len(fake.requests))
+	for _, request := range fake.requests {
+		headers = append(headers, request.authorization)
+	}
+	return headers
+}
+
 // loopTestConfig returns a minimal config that points every model call at the fake transport.
 func loopTestConfig(baseURL string) config {
 	cfg := defaultConfig()
@@ -242,6 +259,130 @@ func captureMainLoopIO(t *testing.T, input string, client *http.Client, fn func(
 		t.Fatalf("ReadAll(stdout) error = %v", err)
 	}
 	return string(output)
+}
+
+// TestDoLLMRequestOmitsAuthorizationWhenAPIKeyEmpty checks local no-key endpoints get no auth header.
+func TestDoLLMRequestOmitsAuthorizationWhenAPIKeyEmpty(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{content: "ok"})
+	cfg := loopTestConfig("http://localhost")
+	cfg.APIKey = ""
+
+	_, err := doLLMRequest(context.Background(), fake.HTTPClient(), cfg, chatCompletionRequest{
+		Model:       cfg.Model,
+		Temperature: 0,
+		Messages:    []chatMessage{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("doLLMRequest() error = %v", err)
+	}
+
+	headers := fake.requestAuthorizations()
+	if len(headers) != 1 || headers[0] != "" {
+		t.Fatalf("Authorization headers = %#v, want empty header", headers)
+	}
+}
+
+// TestDoLLMRequestSendsAuthorizationWhenAPIKeySet checks keyed endpoints keep bearer auth.
+func TestDoLLMRequestSendsAuthorizationWhenAPIKeySet(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{content: "ok"})
+	cfg := loopTestConfig(fake.URL())
+	cfg.APIKey = "test-key"
+
+	_, err := doLLMRequest(context.Background(), fake.HTTPClient(), cfg, chatCompletionRequest{
+		Model:       cfg.Model,
+		Temperature: 0,
+		Messages:    []chatMessage{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("doLLMRequest() error = %v", err)
+	}
+
+	headers := fake.requestAuthorizations()
+	if len(headers) != 1 || headers[0] != "Bearer test-key" {
+		t.Fatalf("Authorization headers = %#v, want bearer token", headers)
+	}
+}
+
+// TestCallPlanningPromptOmitsResponseFormatForLocalNoKey checks MLX-style requests stay minimal.
+func TestCallPlanningPromptOmitsResponseFormatForLocalNoKey(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{content: "ok"})
+	cfg := loopTestConfig("http://localhost")
+	cfg.APIKey = ""
+
+	if _, err := callPlanningPrompt(context.Background(), fake.HTTPClient(), cfg, "system", "user"); err != nil {
+		t.Fatalf("callPlanningPrompt() error = %v", err)
+	}
+
+	bodies := fake.requestBodies()
+	if len(bodies) != 1 {
+		t.Fatalf("request bodies = %#v, want one body", bodies)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal([]byte(bodies[0]), &body); err != nil {
+		t.Fatalf("Unmarshal(request body) error = %v", err)
+	}
+	if _, ok := body["response_format"]; ok {
+		t.Fatalf("request body includes response_format: %s", bodies[0])
+	}
+	if _, ok := body["stop"]; ok {
+		t.Fatalf("request body includes stop: %s", bodies[0])
+	}
+}
+
+// TestCallPlanningPromptKeepsResponseFormatWithKey checks JSON mode remains for compatible providers.
+func TestCallPlanningPromptKeepsResponseFormatWithKey(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{content: "ok"})
+	cfg := loopTestConfig(fake.URL())
+
+	if _, err := callPlanningPrompt(context.Background(), fake.HTTPClient(), cfg, "system", "user"); err != nil {
+		t.Fatalf("callPlanningPrompt() error = %v", err)
+	}
+
+	bodies := fake.requestBodies()
+	if len(bodies) != 1 {
+		t.Fatalf("request bodies = %#v, want one body", bodies)
+	}
+
+	var body struct {
+		ResponseFormat *responseFormat `json:"response_format"`
+	}
+	if err := json.Unmarshal([]byte(bodies[0]), &body); err != nil {
+		t.Fatalf("Unmarshal(request body) error = %v", err)
+	}
+	if body.ResponseFormat == nil || body.ResponseFormat.Type != "json_object" {
+		t.Fatalf("response_format = %#v, want json_object", body.ResponseFormat)
+	}
+
+}
+
+// TestRunTurnPrintsRawPrompt checks --raw-prompt exposes the exact model prompt pair.
+func TestRunTurnPrintsRawPrompt(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{
+		content: `{"summary":"No command needed.","commands":[]}`,
+	})
+	cfg := loopTestConfig(fake.URL())
+	cfg.RawPrompt = true
+	ctxInfo := loopTestContext(t)
+
+	output := captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+		if _, err := runTurn(context.Background(), deps, false, cfg, &ctxInfo, "answer directly", nil, sessionState{}); err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	required := []string{
+		"Raw LLM prompt",
+		"system:",
+		"You are a shell planning assistant.",
+		"user:",
+		"User instruction:\nanswer directly",
+	}
+	for _, snippet := range required {
+		if !strings.Contains(output, snippet) {
+			t.Fatalf("runTurn() output missing %q in %q", snippet, output)
+		}
+	}
 }
 
 // TestRunTurnReturnsFinalAnswerWithoutCommands checks the answer-only path of the main turn loop.

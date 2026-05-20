@@ -7,6 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -21,10 +23,10 @@ const (
 	maxHistoryEntries = 8
 	maxPlanRounds     = 4
 
-	maxCommandTimeout  = 24 * time.Hour
-	maxRequestTimeout  = 10 * time.Minute
-	maxCaptureBytes    = 512 * 1024 * 1024 // 512 MB
-	maxOutputChars     = 100_000
+	maxCommandTimeout = 24 * time.Hour
+	maxRequestTimeout = 10 * time.Minute
+	maxCaptureBytes   = 512 * 1024 * 1024 // 512 MB
+	maxOutputChars    = 100_000
 )
 
 // version is set at build time via -ldflags "-X main.version=vX.Y.Z".
@@ -266,8 +268,8 @@ func finalizeConfig(fs *flag.FlagSet, cfg config, timeoutSecs, reqTimeoutSecs in
 	remaining := fs.Args()
 	if len(remaining) == 0 {
 		cfg.Interactive = true
-		if strings.TrimSpace(cfg.APIKey) == "" {
-			return config{}, fmt.Errorf("missing API key. Use --api-key or set SHELLIA_API_KEY")
+		if requiresAPIKey(cfg) {
+			return config{}, missingAPIKeyError()
 		}
 		return cfg, nil
 	}
@@ -278,11 +280,37 @@ func finalizeConfig(fs *flag.FlagSet, cfg config, timeoutSecs, reqTimeoutSecs in
 		return cfg, nil
 	}
 
-	if strings.TrimSpace(cfg.APIKey) == "" {
-		return config{}, fmt.Errorf("missing API key. Use --api-key or set SHELLIA_API_KEY")
+	if requiresAPIKey(cfg) {
+		return config{}, missingAPIKeyError()
 	}
 
 	return cfg, nil
+}
+
+// requiresAPIKey reports whether the configured endpoint needs an explicit API key.
+func requiresAPIKey(cfg config) bool {
+	return strings.TrimSpace(cfg.APIKey) == "" && !allowsEmptyAPIKey(cfg)
+}
+
+// allowsEmptyAPIKey permits local OpenAI-compatible servers such as MLX Server.
+func allowsEmptyAPIKey(cfg config) bool {
+	parsed, err := url.Parse(strings.TrimSpace(cfg.BaseURL))
+	if err != nil {
+		return false
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+	if host == "localhost" {
+		return true
+	}
+
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// missingAPIKeyError returns the shared user-facing API key validation error.
+func missingAPIKeyError() error {
+	return fmt.Errorf("missing API key. Use --api-key or set SHELLIA_API_KEY")
 }
 
 // usageFunc builds the Usage closure for the flag set.
@@ -325,7 +353,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 	state := sessionState{}
 	mode := interactiveModeAI
 
-	printSessionBannerTo(deps.Stdout, ui)
+	printSessionBannerTo(deps.Stdout, ui, cfg)
 
 	if strings.TrimSpace(cfg.Instruction) != "" {
 		turnCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
@@ -412,7 +440,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 				clearScreenTo(deps.Stdout)
 				continue
 			case interactiveCommandContext:
-				printContextTo(deps.Stdout, ui, *ctxInfo)
+				printContextTo(deps.Stdout, ui, cfg, *ctxInfo)
 				continue
 			case interactiveCommandShell:
 				mode = interactiveModeShell
@@ -520,10 +548,10 @@ func renderModeForManualCommand(cfg config) manualRenderMode {
 func runTurn(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo, instruction string, history []historyEntry, state sessionState) (turnResult, error) {
 	deps = deps.withDefaults()
 	if cfg.Debug || cfg.Verbose {
-		printContextTo(deps.Stdout, ui, *ctxInfo)
+		printContextTo(deps.Stdout, ui, cfg, *ctxInfo)
 	}
 
-	printHeaderTo(deps.Stdout, ui, *ctxInfo)
+	printHeaderTo(deps.Stdout, ui, cfg, *ctxInfo)
 	allExecutions := make([]commandExecution, 0, 4)
 	lastSummary := ""
 	lastPlans := []commandPlan(nil)
