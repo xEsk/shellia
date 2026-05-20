@@ -364,6 +364,17 @@ func printSectionTo(target io.Writer, ui bool, title string, color string) {
 	fmt.Fprintln(target, style(ui, color+colorBold, title))
 }
 
+// printRawPromptsTo prints the exact prompt messages sent to the model.
+func printRawPromptsTo(target io.Writer, ui bool, title string, systemPrompt string, userPrompt string) {
+	printSectionTo(target, ui, title, colorBlue)
+	fmt.Fprintln(target, "system:")
+	fmt.Fprintln(target, systemPrompt)
+	fmt.Fprintln(target)
+	fmt.Fprintln(target, "user:")
+	fmt.Fprintln(target, userPrompt)
+	fmt.Fprintln(target)
+}
+
 // printCommandExecution presents the active command inside a step box before running it.
 func printCommandExecution(ui bool, cfg config, index int, total int, plan commandPlan) *stepBox {
 	return printCommandExecutionTo(os.Stdout, ui, cfg, index, total, plan)
@@ -1396,6 +1407,11 @@ func plainHeaderGitValue(ctxInfo contextInfo) string {
 		return branch + " (clean)"
 	}
 	return branch + " (dirty)"
+}
+
+// plainHeaderModelValue generates a short model summary for the startup header.
+func plainHeaderModelValue(cfg config) string {
+	return fallbackValue(cfg.Model, "-")
 }
 
 // shellStreamPrefix returns the prefix used for each line of real shell output.

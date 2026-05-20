@@ -12,36 +12,38 @@ const (
 )
 
 // printSessionBanner shows the polished startup banner for the interactive session.
-func printSessionBanner(ui bool) {
-	printSessionBannerTo(os.Stdout, ui)
+func printSessionBanner(ui bool, cfg config) {
+	printSessionBannerTo(os.Stdout, ui, cfg)
 }
 
 // printSessionBannerTo shows the polished startup banner on the provided target.
-func printSessionBannerTo(target io.Writer, ui bool) {
+func printSessionBannerTo(target io.Writer, ui bool, cfg config) {
 	fmt.Fprintln(target)
-	renderSessionBanner(target, ui, boxWidthFor(target))
+	renderSessionBanner(target, ui, cfg, boxWidthFor(target))
 }
 
 // renderSessionBanner writes the startup banner using a compact grey panel when ANSI is available.
-func renderSessionBanner(target io.Writer, ui bool, maxWidth int) {
-	for _, line := range sessionBannerLines(ui, maxWidth) {
+func renderSessionBanner(target io.Writer, ui bool, cfg config, maxWidth int) {
+	for _, line := range sessionBannerLines(ui, cfg, maxWidth) {
 		fmt.Fprintln(target, line)
 	}
 }
 
 // sessionBannerLines returns the visible startup banner rows.
-func sessionBannerLines(ui bool, maxWidth int) []string {
+func sessionBannerLines(ui bool, cfg config, maxWidth int) []string {
 	if !ui {
 		return []string{
 			sessionBannerTitlePlain(),
+			"  model · " + plainHeaderModelValue(cfg),
 			"  " + sessionBannerShortcutLine,
 		}
 	}
 
-	width := sessionBannerWidth(maxWidth)
+	width := sessionBannerWidth(cfg, maxWidth)
 	return []string{
 		greyPanelBlankRow(width),
 		greyPanelRow(width, sessionBannerTitleSegments()...),
+		greyPanelRow(width, greyPanelSegment{text: "model · " + plainHeaderModelValue(cfg), color: greyPanelForeground + colorDim}),
 		greyPanelRow(width, greyPanelSegment{text: sessionBannerShortcutLine, color: greyPanelForeground + colorDim}),
 		greyPanelBlankRow(width),
 	}
@@ -63,9 +65,10 @@ func sessionBannerTitleSegments() []greyPanelSegment {
 }
 
 // sessionBannerWidth returns the compact panel width required for the banner.
-func sessionBannerWidth(maxWidth int) int {
+func sessionBannerWidth(cfg config, maxWidth int) int {
 	width := max(
 		visibleWidth(sessionBannerTitlePlain()),
+		visibleWidth("model · "+plainHeaderModelValue(cfg)),
 		visibleWidth(sessionBannerShortcutLine),
 	) + (greyPanelHorizontalPadding * 2)
 

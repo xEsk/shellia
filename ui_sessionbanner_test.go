@@ -14,9 +14,13 @@ func TestSessionBannerLinesPlain(t *testing.T) {
 		version = previousVersion
 	})
 
-	got := sessionBannerLines(false, 80)
+	cfg := defaultConfig()
+	cfg.Model = "test-model"
+
+	got := sessionBannerLines(false, cfg, 80)
 	want := []string{
 		"shellia session · v9.9.9",
+		"  model · test-model",
 		"  !<cmd>  /shell  /ai  /mode  exit  /quit  /clear  /context",
 	}
 
@@ -33,9 +37,12 @@ func TestSessionBannerLinesANSI(t *testing.T) {
 		version = previousVersion
 	})
 
-	got := sessionBannerLines(true, 80)
-	if len(got) != 4 {
-		t.Fatalf("sessionBannerLines(true) returned %d rows, want %d", len(got), 4)
+	cfg := defaultConfig()
+	cfg.Model = "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit"
+
+	got := sessionBannerLines(true, cfg, 80)
+	if len(got) != 5 {
+		t.Fatalf("sessionBannerLines(true) returned %d rows, want %d", len(got), 5)
 	}
 
 	width := visibleWidth(got[0])
@@ -53,5 +60,8 @@ func TestSessionBannerLinesANSI(t *testing.T) {
 	}
 	if !strings.Contains(got[1], "shell") || !strings.Contains(got[1], "dev") {
 		t.Fatalf("sessionBannerLines(true) title row missing brand or version: %q", got[1])
+	}
+	if !strings.Contains(got[2], "model") || !strings.Contains(got[2], cfg.Model) {
+		t.Fatalf("sessionBannerLines(true) model row missing configured model: %q", got[2])
 	}
 }
