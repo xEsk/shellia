@@ -101,6 +101,55 @@ func TestParseArgsEnablesPlanOnlyFlags(t *testing.T) {
 	}
 }
 
+// TestParseArgsRequiresAPIKeyForRemoteEndpoints checks hosted endpoints still need credentials.
+func TestParseArgsRequiresAPIKeyForRemoteEndpoints(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("SHELLIA_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+
+	_, err := parseArgs([]string{
+		"--base-url", "https://api.openai.com/v1",
+		"--model", "test-model",
+		"run git status",
+	})
+	if err == nil {
+		t.Fatalf("parseArgs() error = nil, want missing API key")
+	}
+	if !strings.Contains(err.Error(), "missing API key") {
+		t.Fatalf("parseArgs() error = %q, want missing API key", err.Error())
+	}
+}
+
+// TestParseArgsAllowsEmptyAPIKeyForLoopbackEndpoints checks local model servers need no fake key.
+func TestParseArgsAllowsEmptyAPIKeyForLoopbackEndpoints(t *testing.T) {
+	for _, baseURL := range []string{
+		"http://localhost:8080/v1",
+		"http://127.0.0.1:8080/v1",
+		"http://[::1]:8080/v1",
+	} {
+		t.Run(baseURL, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("SHELLIA_API_KEY", "")
+			t.Setenv("OPENAI_API_KEY", "")
+
+			cfg, err := parseArgs([]string{
+				"--base-url", baseURL,
+				"--model", "test-model",
+				"run git status",
+			})
+			if err != nil {
+				t.Fatalf("parseArgs() error = %v", err)
+			}
+			if cfg.APIKey != "" {
+				t.Fatalf("APIKey = %q, want empty", cfg.APIKey)
+			}
+			if cfg.BaseURL != baseURL {
+				t.Fatalf("BaseURL = %q, want %q", cfg.BaseURL, baseURL)
+			}
+		})
+	}
+}
+
 // TestLoadBaseConfigRejectsInvalidConfig checks broken TOML is surfaced instead of ignored.
 func TestLoadBaseConfigRejectsInvalidConfig(t *testing.T) {
 	home := t.TempDir()

@@ -290,13 +290,15 @@ func defaultConfigTemplate() string {
 # SHELLIA_MODEL, OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL (in priority order).
 
 [llm]
-# OpenAI-compatible API endpoint. Works with OpenAI, Ollama, Groq, LM Studio, etc.
+# OpenAI-compatible API endpoint. Works with OpenAI, Ollama, Groq, LM Studio,
+# MLX Server, etc. For MLX Server use: http://localhost:8080/v1
 base_url = "https://api.openai.com/v1"
 
 # Model name passed to the API. Use any model your endpoint supports.
 model = "gpt-5.4-mini"
 
 # API key. Leave empty to rely on the SHELLIA_API_KEY or OPENAI_API_KEY env var.
+# Local loopback endpoints such as MLX Server can also run with an empty key.
 api_key = ""
 
 [execution]
