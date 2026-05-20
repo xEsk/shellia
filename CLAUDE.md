@@ -2,11 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+IMPORTANT: When applicable, prefer using goland-index MCP tools for code navigation and refactoring.
+
 ## Project Overview
 
 Shellia is a terminal-native AI shell agent CLI. It converts natural language instructions into inspectable shell commands, classifying each command's risk locally before execution and requiring per-command confirmation for anything risky or dangerous.
 
 ## Build & Development Commands
+
 
 ```bash
 go build -o shellia .           # Build local binary

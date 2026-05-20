@@ -6,6 +6,8 @@ Shellia is a small Go CLI kept mostly at the repository root. Core entry and flo
 
 Static website files for the public docs/release page live in `docs/` (`index.html`, `styles.css`, `script.js`). Release automation is defined in `.github/workflows/release.yml`.
 
+IMPORTANT: When applicable, prefer using goland-index MCP tools for code navigation and refactoring.
+
 ## Build, Test, and Development Commands
 
 - `go build -o shellia .` builds the local CLI binary.
