@@ -1,350 +1,1487 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Shellia</title>
-    <meta
-      name="description"
-      content="Shellia is a terminal-native AI shell agent that turns natural language into safe, inspectable command execution."
-    />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="./styles.css" />
-  </head>
-  <body>
-    <div class="page-shell">
-      <div class="site-banner" role="note" aria-label="Project status">
-        <span class="site-banner-label">In development</span>
-        <p>
-          <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> is still experimental. Expect rough edges, fast iteration, and behavior that may change between versions.
-        </p>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Shellia — run shell tasks safely in plain English.</title>
+<meta name="description" content="Shellia is an open-source AI shell agent for developers who want plain-language terminal automation with inspectable plans, local safety checks, and explicit confirmation." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --bg:#050809;
+  --surface:#0d1113;
+  --surface-2:#13181b;
+  --hairline:rgba(255,255,255,0.06);
+  --line:rgba(255,255,255,0.10);
+  --line-2:rgba(255,255,255,0.18);
+  --text:#f3f3f5;
+  --muted:#8b8e98;
+  --dim:#5a5d68;
+  --faint:#3a3c45;
+  --accent:#6feaff;
+  --accent-strong:#a7f3ff;
+  --accent-wash:rgba(111,234,255,0.10);
+  --accent-ring:rgba(111,234,255,0.28);
+  --safe:#8df0b6;
+  --risky:#ffd476;
+  --danger:#ff8090;
+  --font-display:"Inter Tight","Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --font-body:"Inter Tight","Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --font-mono:"JetBrains Mono","SFMono-Regular",ui-monospace,monospace;
+  --pad-section:128px;
+  --pad-section-after-sep:96px;
+  --pad-section-compact:72px;
+  --pad-section-tight:48px;
+  --pad-x:clamp(20px,4vw,56px);
+  --gap:clamp(20px,2.4vw,32px);
+  --radius:14px;
+  --radius-lg:22px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth; -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility}
+body{
+  margin:0; color:var(--text); background:var(--bg);
+  font-family:var(--font-body);
+  font-size:16px; line-height:1.6;
+  overflow-x:hidden;
+}
+/* subtle noise + grid drift in the background */
+body::before{
+  content:""; position:fixed; inset:-50%; z-index:-2; pointer-events:none;
+  background:
+    radial-gradient(60% 40% at 20% 0%, rgba(111,234,255,0.10), transparent 60%),
+    radial-gradient(50% 40% at 100% 100%, rgba(141,240,182,0.06), transparent 60%);
+  filter:blur(40px);
+}
+body::after{
+  content:""; position:fixed; inset:0; z-index:-1; pointer-events:none;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+  background-size:96px 96px;
+  background-position:0 0;
+  mask-image:radial-gradient(75% 60% at 50% 30%, #000 0%, transparent 100%);
+  opacity:0.7;
+}
+a{color:inherit; text-decoration:none}
+button{font:inherit; color:inherit; background:none; border:0; cursor:pointer}
+code, pre{font-family:var(--font-mono)}
+:not(pre) > code{
+  display:inline-flex; align-items:center;
+  padding:0.06em 0.42em;
+  border:1px solid var(--line);
+  border-radius:6px;
+  background:rgba(255,255,255,0.03);
+  color:var(--text);
+  font-size:0.88em; line-height:1.4;
+  white-space:nowrap;
+}
+
+/* ───────── layout shell ───────── */
+.wrap{width:100%; max-width:1320px; margin:0 auto; padding:0 var(--pad-x)}
+.section{padding:var(--pad-section) 0; position:relative}
+.section-after-sep{padding-top:var(--pad-section-after-sep)}
+.section-compact{padding:var(--pad-section-tight) 0 var(--pad-section-compact)}
+.section-short-bottom{padding-bottom:var(--pad-section-compact)}
+.section-final{padding:var(--pad-section-compact) 0 0}
+
+/* ───────── nav ───────── */
+.nav{
+  position:sticky; top:0; z-index:50;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:18px var(--pad-x);
+  background:rgba(0,0,0,0.65);
+  backdrop-filter:blur(12px) saturate(1.2);
+  -webkit-backdrop-filter:blur(12px) saturate(1.2);
+  border-bottom:1px solid var(--hairline);
+}
+.brand{
+  display:inline-flex; align-items:center; gap:10px;
+  font-family:var(--font-mono); font-weight:700; font-size:15px; letter-spacing:-0.01em;
+}
+.brand-mark{
+  width:18px; height:18px; border-radius:5px; position:relative;
+  background:linear-gradient(135deg, var(--accent) 0%, #237a8a 100%);
+  box-shadow:0 0 0 4px var(--accent-wash), inset 0 0 0 1px rgba(255,255,255,0.15);
+}
+.brand-mark::after{
+  content:"›"; position:absolute; inset:0;
+  display:grid; place-items:center;
+  color:#0a0a0c; font-weight:900; font-size:13px;
+  font-family:var(--font-mono);
+  transform:translate(-0.5px,-1px);
+}
+.shellia{font-family:var(--font-mono); font-weight:700; color:var(--text)}
+.shellia .ia{color:var(--accent)}
+.nav-links{display:flex; align-items:center; gap:28px; color:var(--muted); font-size:13.5px}
+.nav-links a{position:relative; transition:color .2s}
+.nav-links a:hover{color:var(--text)}
+.nav-links a.active{color:var(--accent-strong)}
+.nav-links a.active::after{
+  content:"";
+  position:absolute;
+  left:0; right:0; bottom:-8px;
+  height:1px;
+  background:var(--accent);
+  box-shadow:0 0 10px var(--accent-ring);
+}
+.nav-cta{
+  display:inline-flex; align-items:center; gap:8px;
+  padding:9px 14px; border-radius:999px;
+  border:1px solid var(--line-2);
+  background:rgba(255,255,255,0.03);
+  font-size:13px; font-weight:500;
+  transition:background .2s, border-color .2s;
+}
+.nav-cta:hover{background:rgba(255,255,255,0.06); border-color:var(--accent-ring)}
+.nav-cta svg{width:14px; height:14px}
+
+/* ───────── banner ───────── */
+.banner{
+  display:flex; align-items:center; justify-content:center; gap:14px;
+  padding:10px 16px;
+  border-bottom:1px solid var(--hairline);
+  font-family:var(--font-mono); font-size:12.5px; color:var(--muted);
+}
+.banner-tag{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:3px 9px; border-radius:999px;
+  background:var(--accent-wash); color:var(--accent-strong);
+  border:1px solid var(--accent-ring);
+  font-size:11px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase;
+}
+.banner-tag::before{
+  content:""; width:6px; height:6px; border-radius:50%;
+  background:var(--accent); box-shadow:0 0 8px var(--accent);
+  animation:pulse 2s ease-in-out infinite;
+}
+@keyframes pulse{0%,100%{opacity:1; transform:scale(1)} 50%{opacity:.55; transform:scale(0.85)}}
+
+/* ───────── eyebrow + type ───────── */
+.eyebrow{
+  display:inline-flex; align-items:center; gap:10px;
+  font-family:var(--font-mono); font-size:12.5px; font-weight:500;
+  color:var(--accent); letter-spacing:0.04em;
+  text-transform:lowercase;
+}
+.eyebrow::before{
+  content:""; width:18px; height:1px; background:var(--accent); display:inline-block;
+}
+h1, h2, h3{margin:0; font-family:var(--font-display); font-weight:800; letter-spacing:-0.04em; line-height:0.95}
+h1{font-size:clamp(2.6rem, 5.8vw, 5.8rem)}
+h2{font-size:clamp(2.2rem, 4.6vw, 4.6rem)}
+h3{font-size:1.25rem; font-weight:700; letter-spacing:-0.02em; line-height:1.2}
+p{margin:0}
+.lead{color:var(--muted); font-size:clamp(1.05rem,1.2vw,1.18rem); line-height:1.65; max-width:36rem}
+
+/* ───────── buttons ───────── */
+.btn{
+  display:inline-flex; align-items:center; gap:8px;
+  padding:13px 20px; border-radius:999px;
+  font-size:14.5px; font-weight:600;
+  transition:transform .15s, background .2s, border-color .2s, color .2s;
+  border:1px solid transparent;
+  white-space:nowrap;
+}
+.btn:hover{transform:translateY(-1px)}
+.btn-primary{background:var(--accent); color:#0a0a0c}
+.btn-primary:hover{background:var(--accent-strong)}
+.btn-ghost{color:var(--text); border-color:var(--line-2); background:rgba(255,255,255,0.02)}
+.btn-ghost:hover{border-color:var(--accent-ring); background:var(--accent-wash); color:var(--accent-strong)}
+.btn svg{width:14px; height:14px}
+
+/* ───────── hero shared ───────── */
+.hero{padding:64px 0 56px; position:relative}
+.hero-eyebrow-row{display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:28px}
+.hero-spec{
+  font-family:var(--font-mono); font-size:11.5px; color:var(--dim);
+  display:inline-flex; align-items:center; gap:8px;
+}
+.hero-spec::before{
+  content:""; width:8px; height:8px; border:1px solid var(--faint); transform:rotate(45deg)
+}
+.hero-actions{display:flex; flex-wrap:wrap; gap:12px; margin-top:32px}
+.hero-meta{
+  display:flex; align-items:center; gap:16px; margin-top:24px;
+  font-family:var(--font-mono); font-size:12px; color:var(--dim);
+}
+.hero-meta-dot{width:6px; height:6px; background:var(--safe); border-radius:50%; box-shadow:0 0 8px var(--safe)}
+
+/* ───────── trust strip ───────── */
+.trust-strip{
+  display:grid;
+  grid-template-columns:repeat(4, minmax(0,1fr));
+  gap:0;
+  margin-top:34px;
+  border:1px solid var(--hairline);
+  border-radius:var(--radius);
+  overflow:hidden;
+  background:rgba(255,255,255,0.015);
+}
+.trust-item{
+  padding:16px 18px;
+  border-right:1px solid var(--hairline);
+}
+.trust-item:last-child{border-right:0}
+.trust-item b{
+  display:block;
+  font-family:var(--font-mono);
+  font-size:11.5px;
+  color:var(--accent-strong);
+  text-transform:uppercase;
+  letter-spacing:0.08em;
+  margin-bottom:4px;
+}
+.trust-item span{
+  display:block;
+  color:var(--muted);
+  font-size:13.5px;
+  line-height:1.45;
+}
+
+/* ───────── hero split ───────── */
+.hero-a .hero-grid{
+  display:grid; grid-template-columns:minmax(0, 1.05fr) minmax(0, 1.1fr);
+  gap:48px; align-items:center;
+}
+.hero-a h1{margin-bottom:24px}
+.hero-term .terminal{
+  height:clamp(430px, calc(100vh - 220px), 640px);
+  max-height:calc(100vh - 160px);
+}
+
+/* ───────── terminal window ───────── */
+.terminal{
+  position:relative;
+  display:flex;
+  flex-direction:column;
+  border:1px solid var(--line);
+  border-radius:var(--radius-lg);
+  background:#26353a;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.02) inset,
+    0 24px 80px rgba(0,0,0,0.6),
+    0 4px 16px rgba(111,234,255,0.06);
+  overflow:hidden;
+}
+.terminal::before{
+  content:""; position:absolute; inset:0; pointer-events:none;
+  background:
+    radial-gradient(55% 45% at 24% 10%, rgba(255,255,255,0.08), transparent 62%),
+    radial-gradient(42% 48% at 76% 76%, rgba(255,255,255,0.045), transparent 68%);
+}
+.term-chrome{
+  display:flex; align-items:center; gap:8px;
+  flex:0 0 auto;
+  padding:14px 16px;
+  border-bottom:1px solid var(--hairline);
+  background:rgba(255,255,255,0.02);
+}
+.term-chrome .dot{width:11px; height:11px; border-radius:50%; opacity:0.85}
+.term-chrome .dot.r{background:#ff6d7b}
+.term-chrome .dot.y{background:#ffd476}
+.term-chrome .dot.g{background:#8df0b6}
+.term-title{
+  margin-left:auto; font-family:var(--font-mono); font-size:11.5px;
+  color:var(--dim);
+}
+.term-title .arrow-pulse{color:var(--accent); animation:pulse 2s infinite}
+.term-body{
+  flex:1 1 auto;
+  min-height:0;
+  padding:22px 22px 24px;
+  font-family:var(--font-mono); font-size:16px; line-height:1.55;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  scrollbar-color:rgba(111,234,255,0.45) rgba(255,255,255,0.08);
+  scrollbar-width:thin;
+}
+.term-body::-webkit-scrollbar{width:10px}
+.term-body::-webkit-scrollbar-track{background:rgba(255,255,255,0.08)}
+.term-body::-webkit-scrollbar-thumb{background:rgba(111,234,255,0.45); border-radius:999px; border:2px solid transparent; background-clip:content-box}
+.tline{margin:0; color:var(--text)}
+.tline + .tline{margin-top:2px}
+.tline.muted{color:#9aa4a6}
+.tline.output{color:var(--muted)}
+.tline.output-text{padding-left:1.1rem; color:#9aa4a6}
+.tline.output-raw{color:var(--text)}
+.tline.answer{color:var(--text); font-weight:500}
+.prompt{color:var(--accent); font-weight:700}
+.status-danger{color:var(--danger)}
+.confirm-yes{color:#f5df52; font-weight:700}
+.session-dot{color:var(--dim)}
+.session-mode{color:var(--accent); font-weight:700}
+.prompt-arr{color:var(--text); opacity:0.7; margin:0 6px}
+.prompt-cursor{display:inline-block; width:0.62em; height:1.25em; margin-left:8px; background:#b8c4c4; vertical-align:-0.2em; animation:caret-blink 1.05s steps(1) infinite}
+.prompt-cursor-line{margin-left:0}
+.tcursor::after{content:""; display:inline-block; width:0.62em; height:1.25em; margin-left:8px; background:#b8c4c4; vertical-align:-0.2em; animation:caret-blink 1.05s steps(1) infinite}
+.tcursor.done::after{content:none}
+@keyframes blink{0%,49%{opacity:1} 50%,100%{opacity:0}}
+@keyframes caret-blink{0%,52%{opacity:1} 53%,100%{opacity:0}}
+.tblock{margin-top:18px}
+.tdiv{height:1px; margin:26px 0; background:rgba(238,247,248,0.72)}
+.tbtitle{color:#b89cff; font-weight:700; margin:0}
+.tbtitle-mode{color:var(--accent)}
+.tbtitle-step{color:#b89cff}
+.tcmd{
+  display:inline-flex; padding:12px 16px; margin:18px 0;
+  background:#3f3f3f;
+  border:0;
+  border-radius:0;
+  gap:10px; align-items:baseline;
+  width:max-content; max-width:100%;
+}
+.tcmd .pfx{color:var(--accent); font-weight:700; flex-shrink:0}
+.tcmd .txt{color:var(--text); font-weight:500; word-break:break-word}
+.bullet{color:var(--text)}
+.bullet.warn{color:#f5df52}
+.bullet.muted-bullet{color:#9aa4a6}
+.kw{color:var(--risky); font-weight:600}
+.term-mock{transition:opacity .42s ease, transform .42s ease}
+.term-mock.fade{opacity:0; transform:translateY(6px)}
+.typed-text{transition:opacity .42s ease}
+.typed-text.fade{opacity:0}
+.reveal{opacity:0; transform:translateY(8px); transition:opacity .42s ease, transform .42s ease}
+.reveal.in{opacity:1; transform:none}
+
+/* ───────── animated section dividers ───────── */
+.sep{
+  display:flex; align-items:center; gap:14px;
+  padding:24px 0;
+  border-top:1px solid var(--hairline);
+  border-bottom:1px solid var(--hairline);
+  font-family:var(--font-mono); font-size:12.5px; color:var(--dim);
+  overflow:hidden;
+}
+.sep .sep-prompt{color:var(--accent); font-weight:600}
+.sep .sep-text{flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.sep .sep-text::after{content:"▌"; color:var(--accent); margin-left:1px; animation:blink 1s steps(1) infinite}
+.sep .sep-ms{color:var(--faint); flex:0 0 auto}
+
+/* ───────── pillars ───────── */
+.pillars{
+  display:grid; grid-template-columns:repeat(3, minmax(0,1fr));
+  gap:0;
+  border-top:1px solid var(--hairline);
+  border-bottom:1px solid var(--hairline);
+}
+.pillar{padding:36px 28px; border-right:1px solid var(--hairline)}
+.pillar:last-child{border-right:0}
+.pillar-tag{
+  display:inline-flex; gap:8px; align-items:center;
+  font-family:var(--font-mono); font-size:11.5px;
+  color:var(--accent); text-transform:uppercase; letter-spacing:0.08em;
+  margin-bottom:14px;
+}
+.pillar-tag::before{
+  content:""; width:6px; height:6px; background:var(--accent); border-radius:50%;
+}
+.pillar h3{margin-bottom:8px; font-size:1.1rem}
+.pillar p{color:var(--muted); font-size:14.5px; line-height:1.6}
+
+/* ───────── modes (tabs) ───────── */
+.modes-head{
+  display:flex; flex-direction:column; align-items:center; gap:28px;
+  margin-bottom:48px; text-align:center;
+}
+.modes-head h2{max-width:22ch}
+.modes-tabs{
+  display:inline-flex; padding:5px; gap:3px;
+  border:1px solid var(--line); border-radius:999px;
+  background:rgba(255,255,255,0.02);
+}
+.modes-tab{
+  padding:9px 16px; border-radius:999px;
+  font-family:var(--font-mono); font-size:13px; color:var(--muted);
+  display:inline-flex; align-items:center; gap:8px;
+  transition:background .2s, color .2s;
+  cursor:pointer;
+}
+.modes-tab .key{
+  font-size:10.5px; padding:2px 6px;
+  border:1px solid var(--line); border-radius:4px;
+  color:var(--dim);
+}
+.modes-tab:hover{color:var(--text)}
+.modes-tab.on{background:var(--accent-wash); color:var(--accent-strong)}
+.modes-tab.on .key{border-color:var(--accent-ring); color:var(--accent-strong)}
+.modes-pane{
+  display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.1fr); gap:32px;
+  align-items:stretch;
+}
+.modes-copy{padding-top:8px}
+.modes-copy .pane-label{font-family:var(--font-mono); color:var(--accent); margin-bottom:18px; font-size:13px}
+.modes-copy h3{font-size:1.8rem; margin-bottom:18px; letter-spacing:-0.02em}
+.modes-copy p{color:var(--muted); margin-bottom:14px; font-size:15.5px}
+.modes-copy .pane-list{margin:18px 0 0; padding:0; list-style:none}
+.modes-copy .pane-list li{
+  padding:10px 0; border-top:1px solid var(--hairline);
+  display:flex; gap:14px; align-items:flex-start;
+  font-size:14px; color:var(--muted);
+}
+.modes-copy .pane-list li::before{
+  content:""; width:6px; height:6px; margin-top:7px;
+  background:var(--accent); border-radius:50%; flex-shrink:0;
+}
+.modes-copy .pane-list b{color:var(--text); font-weight:600}
+.modes-demo{position:relative}
+.modes-demo .terminal{height:100%}
+.modes-pane[hidden]{display:none}
+
+/* ───────── how it works ───────── */
+.how-grid{
+  display:grid; grid-template-columns:repeat(4, minmax(0,1fr));
+  gap:0;
+  border-top:1px solid var(--hairline);
+  margin-top:48px;
+}
+.how-step{
+  padding:32px 24px 36px; border-right:1px solid var(--hairline);
+  position:relative;
+}
+.how-step:last-child{border-right:0}
+.how-num{
+  display:inline-block; font-family:var(--font-mono); font-size:11.5px;
+  color:var(--accent); margin-bottom:14px;
+}
+.how-step h3{margin-bottom:10px; font-size:1.18rem}
+.how-step p{color:var(--muted); font-size:14.5px; line-height:1.6}
+.how-step::before{
+  content:""; position:absolute; top:-1px; left:0; right:0; height:1px;
+  background:var(--accent);
+  transform:scaleX(0); transform-origin:left; transition:transform .6s ease .1s;
+}
+.how-step.in::before{transform:scaleX(1)}
+
+/* ───────── safety classifier ───────── */
+.safety-grid{
+  display:grid; grid-template-columns:minmax(0,0.95fr) minmax(0,1.05fr); gap:48px;
+  align-items:start;
+}
+.safety-copy h2{margin-bottom:24px}
+.safety-tiers{display:flex; flex-direction:column; gap:14px; margin-top:32px}
+.safety-tier{
+  display:flex; gap:18px; align-items:flex-start;
+  padding:16px 18px;
+  border:1px solid var(--line); border-radius:12px;
+  background:rgba(255,255,255,0.015);
+}
+.safety-tier .lvl{
+  font-family:var(--font-mono); font-size:11px; font-weight:700;
+  padding:5px 9px; border-radius:6px; letter-spacing:0.06em;
+  text-transform:uppercase; flex-shrink:0;
+}
+.safety-tier.safe .lvl{background:rgba(141,240,182,0.12); color:var(--safe); border:1px solid rgba(141,240,182,0.3)}
+.safety-tier.risky .lvl{background:rgba(255,212,118,0.12); color:var(--risky); border:1px solid rgba(255,212,118,0.3)}
+.safety-tier.danger .lvl{background:rgba(255,128,144,0.12); color:var(--danger); border:1px solid rgba(255,128,144,0.3)}
+.safety-tier h4{margin:0 0 4px; font-family:var(--font-display); font-size:15px; font-weight:700}
+.safety-tier p{font-size:13.5px; color:var(--muted); line-height:1.5}
+.safety-tier-text{flex:1; min-width:0}
+.classifier{
+  border:1px solid var(--line); border-radius:var(--radius-lg);
+  background:linear-gradient(180deg, #0a0a0e, #050507);
+  padding:28px;
+  position:relative;
+  min-height:540px;
+  overflow:hidden;
+}
+.classifier-head{
+  display:flex; justify-content:space-between; align-items:center;
+  font-family:var(--font-mono); font-size:11.5px; color:var(--dim);
+  margin-bottom:24px;
+  border-bottom:1px solid var(--hairline);
+  padding-bottom:14px;
+  text-transform:uppercase; letter-spacing:0.08em;
+}
+.classifier-head .hbtn{display:flex; gap:6px}
+.classifier-head .hbtn span{width:7px; height:7px; border-radius:50%; background:var(--faint)}
+.classifier-head .hbtn span:first-child{background:var(--accent)}
+.classifier-rows{display:flex; flex-direction:column; gap:8px}
+.cls-row{
+  display:grid; grid-template-columns:1fr auto; gap:14px; align-items:center;
+  padding:12px 14px;
+  border:1px solid var(--hairline);
+  border-radius:8px;
+  background:rgba(255,255,255,0.015);
+  font-family:var(--font-mono); font-size:13px;
+  opacity:0; transform:translateY(8px);
+  transition:opacity .35s ease, transform .35s ease, border-color .25s ease;
+}
+.cls-row.in{opacity:1; transform:none}
+.cls-row .cmd{color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.cls-row .badge{
+  font-size:10.5px; font-weight:700; letter-spacing:0.06em;
+  padding:4px 9px; border-radius:5px; text-transform:uppercase;
+  opacity:0; transform:scale(0.85);
+  transition:opacity .35s ease .2s, transform .35s ease .2s;
+}
+.cls-row.tagged .badge{opacity:1; transform:none}
+.cls-row.safe{border-color:rgba(141,240,182,0.22)}
+.cls-row.risky{border-color:rgba(255,212,118,0.22)}
+.cls-row.danger{border-color:rgba(255,128,144,0.22)}
+.cls-row.safe .badge{background:rgba(141,240,182,0.12); color:var(--safe)}
+.cls-row.risky .badge{background:rgba(255,212,118,0.12); color:var(--risky)}
+.cls-row.danger .badge{background:rgba(255,128,144,0.12); color:var(--danger)}
+.classifier-foot{
+  margin-top:18px;
+  padding-top:14px;
+  border-top:1px solid var(--hairline);
+  font-family:var(--font-mono); font-size:11.5px; color:var(--dim);
+  display:flex; gap:14px; flex-wrap:wrap;
+}
+.classifier-foot .stat{display:inline-flex; gap:8px; align-items:center}
+.classifier-foot .stat .d{width:6px; height:6px; border-radius:50%}
+.classifier-foot .stat.s .d{background:var(--safe)}
+.classifier-foot .stat.r .d{background:var(--risky)}
+.classifier-foot .stat.d-stat .d{background:var(--danger)}
+
+/* ───────── runtime + integrations ───────── */
+.runtime-grid{
+  display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.1fr); gap:48px;
+  align-items:start;
+}
+.runtime-copy h2{margin-bottom:24px}
+.runtime-copy p{color:var(--muted); margin-bottom:18px; font-size:15.5px; line-height:1.7}
+.runtime-copy ul{margin:24px 0 0; padding:0; list-style:none}
+.runtime-copy li{padding:12px 0; border-top:1px solid var(--hairline); color:var(--muted); font-size:14.5px; display:flex; gap:14px}
+.runtime-copy li b{color:var(--text); font-weight:600; flex-shrink:0; min-width:180px; font-family:var(--font-mono); font-size:13px}
+.codeblock{
+  border:1px solid var(--line);
+  border-radius:var(--radius-lg);
+  background:#06060a;
+  overflow:hidden;
+}
+.codeblock-head{
+  display:flex; justify-content:space-between; align-items:center;
+  padding:12px 18px;
+  border-bottom:1px solid var(--hairline);
+  background:rgba(255,255,255,0.02);
+  font-family:var(--font-mono); font-size:11.5px; color:var(--dim);
+  text-transform:uppercase; letter-spacing:0.06em;
+}
+.codeblock-head .lang{color:var(--accent-strong)}
+.codeblock pre{
+  margin:0; padding:24px;
+  font-family:var(--font-mono); font-size:13.5px; line-height:1.75;
+  color:#dadbe2; overflow:auto;
+}
+.cb-key{color:var(--muted)}
+.cb-str{color:#a8e1b6}
+.cb-num{color:var(--accent-strong)}
+.cb-comment{color:var(--faint); font-style:italic}
+.cb-section{color:var(--accent)}
+
+.integrations{
+  display:grid; grid-template-columns:repeat(3, minmax(0,1fr));
+  gap:14px;
+  margin-top:40px;
+}
+.int-card{
+  padding:24px 22px;
+  border:1px solid var(--line);
+  border-radius:14px;
+  background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.005));
+  position:relative; overflow:hidden;
+  transition:border-color .25s ease, transform .25s ease;
+}
+.int-card:hover{border-color:var(--accent-ring); transform:translateY(-2px)}
+.int-card h4{margin:0 0 8px; font-size:1rem; font-weight:700; letter-spacing:-0.02em}
+.int-card p{color:var(--muted); font-size:13.5px; line-height:1.5}
+.int-card .int-list{
+  margin-top:14px; padding-top:14px;
+  border-top:1px solid var(--hairline);
+  display:flex; flex-wrap:wrap; gap:6px;
+  font-family:var(--font-mono); font-size:11.5px; color:var(--muted);
+}
+.int-card .int-list span{
+  padding:3px 8px; border-radius:4px;
+  background:rgba(255,255,255,0.03);
+  border:1px solid var(--hairline);
+}
+.int-card-tag{
+  position:absolute; top:18px; right:18px;
+  font-family:var(--font-mono); font-size:10.5px; color:var(--accent);
+  padding:3px 8px; border-radius:4px;
+  background:var(--accent-wash); border:1px solid var(--accent-ring);
+  letter-spacing:0.06em; text-transform:uppercase;
+}
+
+/* ───────── download ───────── */
+.download-card{
+  border:1px solid var(--line);
+  border-radius:var(--radius-lg);
+  overflow:hidden;
+  background:linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.005));
+  margin-top:48px;
+}
+.download-head{
+  display:flex; justify-content:space-between; align-items:center;
+  padding:22px 28px;
+  border-bottom:1px solid var(--hairline);
+  background:rgba(255,255,255,0.015);
+}
+.download-head .version{font-family:var(--font-mono); font-size:12px; color:var(--accent)}
+.download-head h3{font-size:1.05rem; font-weight:700}
+.download-row{
+  display:grid; grid-template-columns:140px 1fr; gap:32px;
+  padding:24px 28px;
+  border-bottom:1px solid var(--hairline);
+  align-items:center;
+}
+.download-row:last-child{border-bottom:0}
+.download-os{
+  display:flex; gap:10px; align-items:center;
+  font-family:var(--font-mono); font-size:13px; color:var(--text); font-weight:600;
+}
+.download-os svg{width:16px; height:16px; opacity:0.7}
+.download-assets{display:flex; flex-wrap:wrap; gap:10px}
+.download-asset{
+  display:inline-flex; align-items:center; gap:10px;
+  padding:10px 16px; border-radius:10px;
+  border:1px solid var(--line);
+  background:rgba(255,255,255,0.02);
+  font-family:var(--font-mono); font-size:13px;
+  transition:border-color .25s, background .25s, transform .15s;
+}
+.download-asset:hover{border-color:var(--accent-ring); background:var(--accent-wash); transform:translateY(-1px)}
+.download-asset .arch{color:var(--muted); font-size:11px; padding:2px 6px; background:rgba(255,255,255,0.04); border-radius:4px}
+.download-asset .dl{width:13px; height:13px; color:var(--accent)}
+.download-foot{
+  display:flex; gap:24px; flex-wrap:wrap;
+  padding:18px 28px;
+  font-family:var(--font-mono); font-size:13px;
+}
+.download-foot a{color:var(--muted); display:inline-flex; gap:6px; align-items:center; transition:color .2s}
+.download-foot a:hover{color:var(--accent-strong)}
+.download-foot a svg{width:12px; height:12px}
+
+/* ───────── quickstart ───────── */
+.quickstart-grid{display:grid; grid-template-columns:minmax(0,0.9fr) minmax(0,1.1fr); gap:48px; align-items:start; margin-top:48px}
+.quickstart-copy{padding-top:8px}
+.quickstart-copy h3{margin-bottom:16px; font-size:1.4rem; letter-spacing:-0.02em}
+.quickstart-copy p{color:var(--muted); margin-bottom:14px; font-size:15px; line-height:1.7}
+.quickstart-copy ul{margin:16px 0; padding:0; list-style:none}
+.quickstart-copy li{padding:10px 0; border-top:1px solid var(--hairline); color:var(--muted); font-size:14px; line-height:1.6}
+
+/* ───────── FAQ ───────── */
+.faq{
+  margin-top:48px;
+  border-top:1px solid var(--hairline);
+}
+.faq-item{border-bottom:1px solid var(--hairline)}
+.faq-q{
+  display:flex; align-items:center; justify-content:space-between; gap:24px;
+  width:100%; padding:24px 4px;
+  text-align:left; color:var(--text);
+  font-family:var(--font-display); font-size:1.18rem; font-weight:600; letter-spacing:-0.02em;
+  transition:color .2s;
+}
+.faq-q .q-text{flex:1; min-width:0; line-height:1.4}
+.faq-q .q-text code{vertical-align:baseline}
+.faq-q:hover{color:var(--accent-strong)}
+.faq-q .ic{
+  width:28px; height:28px; border-radius:50%;
+  display:grid; place-items:center;
+  border:1px solid var(--line);
+  font-family:var(--font-mono); font-size:14px; color:var(--accent);
+  transition:transform .3s ease, background .25s;
+  flex-shrink:0;
+}
+.faq-item.open .faq-q .ic{transform:rotate(45deg); background:var(--accent-wash)}
+.faq-a{
+  display:grid;
+  grid-template-rows:0fr;
+  overflow:hidden;
+  padding:0 4px;
+  transition:grid-template-rows .34s ease, padding-bottom .34s ease;
+  color:var(--muted); font-size:15px; line-height:1.7;
+}
+.faq-a > *{overflow:hidden}
+.faq-item.open .faq-a{grid-template-rows:1fr; padding-bottom:28px}
+.faq-a code{font-size:0.9em}
+
+/* ───────── final cta ───────── */
+.final-cta{
+  border:1px solid var(--line);
+  border-radius:var(--radius-lg);
+  background:
+    linear-gradient(135deg, rgba(111,234,255,0.10), transparent 38%),
+    linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.005));
+  padding:48px;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:32px;
+  align-items:center;
+}
+.final-cta h2{
+  font-size:clamp(2rem, 3.6vw, 3.6rem);
+  max-width:18ch;
+  margin-top:18px;
+  margin-bottom:18px;
+}
+.final-cta p{
+  color:var(--muted);
+  max-width:38rem;
+  font-size:16px;
+  line-height:1.7;
+}
+.final-cta-actions{
+  display:flex;
+  gap:12px;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+}
+
+/* ───────── footer ───────── */
+.foot{
+  margin-top:var(--pad-section-compact);
+  padding:48px 0 32px;
+  border-top:1px solid var(--hairline);
+  position:relative;
+  overflow:hidden;
+}
+.foot-tagline{
+  text-align:center; color:var(--muted); font-size:14px; line-height:1.6;
+  max-width:34rem; margin:24px auto 0;
+}
+.foot-base{
+  margin-top:48px; padding-top:24px;
+  border-top:1px solid var(--hairline);
+  display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap;
+  font-family:var(--font-mono); font-size:12px; color:var(--dim);
+}
+.foot-base .foot-base-mid{display:inline-flex; gap:20px; align-items:center; flex-wrap:wrap}
+.foot-base a{color:var(--dim); transition:color .2s}
+.foot-base a:hover{color:var(--accent-strong)}
+
+/* ───────── responsive ───────── */
+@media (max-width:980px){
+  .hero-a .hero-grid,
+  .modes-pane,
+  .safety-grid,
+  .runtime-grid,
+  .quickstart-grid{
+    grid-template-columns:1fr;
+  }
+  .integrations{grid-template-columns:repeat(2, minmax(0,1fr))}
+  .pillars{grid-template-columns:1fr}
+  .pillar{border-right:0; border-bottom:1px solid var(--hairline)}
+  .pillar:last-child{border-bottom:0}
+  .how-grid{grid-template-columns:repeat(2, minmax(0,1fr))}
+  .how-step:nth-child(2){border-right:0}
+  .how-step:nth-child(1), .how-step:nth-child(2){border-bottom:1px solid var(--hairline)}
+  .nav-links{display:none}
+  .download-row{grid-template-columns:1fr; gap:12px}
+  .runtime-copy li{flex-direction:column; gap:4px}
+  .runtime-copy li b{min-width:auto}
+  .trust-strip{grid-template-columns:repeat(2, minmax(0,1fr))}
+  .trust-item:nth-child(2){border-right:0}
+  .trust-item:nth-child(1), .trust-item:nth-child(2){border-bottom:1px solid var(--hairline)}
+  .final-cta{grid-template-columns:1fr; padding:36px}
+  .final-cta-actions{justify-content:flex-start}
+  .foot-base{flex-direction:column; align-items:center; text-align:center}
+}
+@media (max-width:600px){
+  :root{
+    --pad-section:96px;
+    --pad-section-after-sep:72px;
+    --pad-section-compact:56px;
+    --pad-section-tight:40px;
+  }
+  .integrations{grid-template-columns:1fr}
+  .how-grid{grid-template-columns:1fr}
+  .how-step{border-right:0; border-bottom:1px solid var(--hairline)}
+  .how-step:last-child{border-bottom:0}
+  .modes-tabs{flex-wrap:wrap; justify-content:center}
+  .hero-term .terminal{height:min(520px, calc(100vh - 120px)); max-height:calc(100vh - 96px)}
+  .term-body{font-size:12px}
+  .hero-actions .btn{width:100%; justify-content:center; min-height:48px}
+  .trust-strip{grid-template-columns:1fr}
+  .trust-item, .trust-item:nth-child(2){border-right:0}
+  .trust-item{border-bottom:1px solid var(--hairline)}
+  .trust-item:last-child{border-bottom:0}
+  .final-cta{padding:28px}
+  .final-cta-actions .btn{width:100%; justify-content:center; min-height:48px}
+}
+</style>
+</head>
+<body>
+
+<div class="banner">
+  <span class="banner-tag">In development</span>
+  <span>v0.x · open-source CLI · macOS and Linux releases</span>
+</div>
+
+<nav class="nav">
+  <a class="brand" href="#top">
+    <span class="brand-mark"></span>
+    <span class="shellia">shell<span class="ia">ia</span></span>
+  </a>
+  <div class="nav-links">
+    <a href="#modes">Modes</a>
+    <a href="#how">How it works</a>
+    <a href="#safety">Safety</a>
+    <a href="#download">Download</a>
+    <a href="#faq">FAQ</a>
+  </div>
+  <a class="nav-cta" href="https://github.com/xEsk/shellia" target="_blank" rel="noopener">
+    <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+    GitHub
+  </a>
+</nav>
+
+<main id="top">
+<div class="wrap">
+
+<!-- ════════ HERO — split ════════ -->
+<section class="hero hero-a">
+  <div class="hero-eyebrow-row">
+    <span class="eyebrow">terminal-native ai shell agent</span>
+    <span class="hero-spec">single static binary · macOS / Linux</span>
+  </div>
+  <div class="hero-grid">
+    <div class="hero-copy">
+      <h1>Run safer shell tasks<br>in plain English.</h1>
+      <p class="lead" style="margin-top:28px">
+        <span class="shellia">shell<span class="ia">ia</span></span> turns terminal intent into inspectable command plans,
+        re-checks every command locally, and asks before anything changes on your machine.
+      </p>
+      <div class="hero-meta">
+        <span class="hero-meta-dot"></span>
+        <span>OpenAI-compatible · bring your own model · no telemetry</span>
       </div>
-
-      <header class="site-header">
-        <a class="brand" href="#top" aria-label="Shellia home">
-          <span class="brand-mark"></span>
-          <span class="brand-word shellia-word">Shell<span class="shellia-ia">ia</span></span>
-        </a>
-
-        <nav class="site-nav" aria-label="Primary">
-          <a href="#how-it-works">How it works</a>
-          <a href="#runtime">Runtime</a>
-          <a href="#download">Download</a>
-          <a href="#quickstart">Quick start</a>
-        </nav>
-      </header>
-
-      <main id="top">
-        <section class="hero">
-          <div class="hero-copy">
-            <p class="eyebrow">Terminal-native AI shell agent</p>
-            <h1>Natural language <span class="in">in</span>. Explicit command execution <span class="out">out</span>.</h1>
-            <p class="hero-lead">
-              <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> plans commands in your real shell context, asks for confirmation when it
-              matters, keeps the session state alive, and stays readable the whole time.
-            </p>
-
-            <div class="hero-actions">
-              <a class="button button-primary" href="#quickstart">See quick start</a>
-              <a class="button button-secondary" href="#runtime">Inspect the runtime</a>
-            </div>
-
-            <ul class="hero-points" aria-label="Highlights">
-              <li>OpenAI-compatible, including Ollama-style endpoints.</li>
-              <li>Prompt mode, direct command mode, and shell mode in one session.</li>
-              <li>Plans, confirmations, edits, and observations stay explicit.</li>
-            </ul>
-          </div>
-
-          <div class="hero-terminal" aria-hidden="true">
-            <div class="terminal-window">
-              <div class="terminal-chrome">
-                <span class="dot dot-red"></span>
-                <span class="dot dot-yellow"></span>
-                <span class="dot dot-green"></span>
-                <span class="terminal-title"><span class="shellia-word shellia-word-lower">shell<span class="shellia-ia">ia</span></span> session</span>
-              </div>
-
-              <div class="terminal-body">
-                <p class="terminal-line terminal-line-muted">What do you want <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> to do?</p>
-                <p class="terminal-line">
-                  <span class="prompt-label">you</span>
-                  <span class="prompt-arrow">›</span>
-                  <span class="typed-text"></span>
-                </p>
-
-                <div class="terminal-mock" data-terminal-mock></div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="signal-strip" aria-label="Core ideas">
-          <div>
-            <span class="signal-label">Context-aware</span>
-            <p>Shell, cwd, git state, short-term session memory.</p>
-          </div>
-          <div>
-            <span class="signal-label">Inspectable</span>
-            <p>Plans first, confirmations where needed, output kept visible.</p>
-          </div>
-          <div>
-            <span class="signal-label">Configurable</span>
-            <p>Models, API endpoints, output capture, shell engine behavior.</p>
-          </div>
-        </section>
-
-        <section class="content-section" id="how-it-works">
-          <div class="section-heading">
-            <p class="eyebrow">How it works</p>
-            <h2>Not an autonomous black box. A live shell workflow with a model in the loop.</h2>
-          </div>
-
-          <div class="flow-list">
-            <article>
-              <span class="flow-index">01</span>
-              <h3>Read local context</h3>
-              <p><span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> starts from your actual directory, shell, git state, and recent session memory.</p>
-            </article>
-            <article>
-              <span class="flow-index">02</span>
-              <h3>Plan explicitly</h3>
-              <p>The model proposes concrete commands, <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> reclassifies them locally, and you can inspect or edit them before they run.</p>
-            </article>
-            <article>
-              <span class="flow-index">03</span>
-              <h3>Observe and re-plan</h3>
-              <p>If later steps depend on real output, <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> can pause, inspect, and continue with a better-informed next round.</p>
-            </article>
-            <article>
-              <span class="flow-index">04</span>
-              <h3>Stay in the same session</h3>
-              <p>Prompt mode, <code>!</code> commands, and <code>/shell</code> all keep sharing the same working context.</p>
-            </article>
-          </div>
-        </section>
-
-        <section class="content-section runtime-section" id="runtime">
-          <div class="section-heading">
-            <p class="eyebrow">Runtime</p>
-            <h2>One tool, two manual engines, one consistent session.</h2>
-          </div>
-
-          <div class="runtime-grid">
-            <div class="runtime-copy">
-              <p>
-                <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> supports prompt mode for AI planning and direct command execution when you
-                already know what you want to run.
-              </p>
-
-              <ul class="runtime-list">
-                <li><code>you ›</code> for natural-language requests.</li>
-                <li><code>!&lt;cmd&gt;</code> for one direct command.</li>
-                <li><code>/shell</code> for a manual shell loop inside the same context.</li>
-                <li><code>/ai</code> to return to prompt mode.</li>
-                <li><code>exit</code> or <code>/exit</code> to close the session.</li>
-                <li><code>y / e / i / n</code> to run, edit, force interactive, or cancel AI-proposed steps.</li>
-              </ul>
-            </div>
-
-            <div class="runtime-code">
-              <pre><code>[execution]
-shell_mode           = "interactive"
-command_mode         = "plain"
-confirmation_default = "none"
-
-[llm]
-base_url = "https://api.openai.com/v1"
-model    = "gpt-5.4-mini"
-
-[output]
-capture_stdout_bytes = 131072
-capture_stderr_bytes = 262144
-
-[ui]
-show_system_output = true
-show_command_popup = true</code></pre>
-            </div>
-          </div>
-        </section>
-
-        <section class="content-section integrations-section">
-          <div class="section-heading">
-            <p class="eyebrow">Integrations</p>
-            <h2>Bring your own model endpoint. Keep the Shell<span class="shellia-ia">ia</span> workflow.</h2>
-          </div>
-
-          <div class="integration-surface" aria-label="Supported provider types">
-            <div class="integration-surface-copy">
-              <p>
-                <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> talks to any endpoint that behaves like the OpenAI Chat Completions API.
-                Set a base URL, choose a model, provide a key, and keep the same terminal workflow.
-              </p>
-              <p>
-                Hosted providers, local runtimes, and private gateways all fit the same flow.
-              </p>
-            </div>
-
-            <div class="integration-rail-head">
-              <span class="integration-panel-label">OpenAI-compatible</span>
-            </div>
-
-            <div class="integration-rail-row">
-              <span class="integration-group-title">Hosted</span>
-              <ul class="integration-pill-list">
-                <li>OpenAI</li>
-                <li>OpenRouter</li>
-              </ul>
-            </div>
-
-            <div class="integration-rail-row">
-              <span class="integration-group-title">Local</span>
-              <ul class="integration-pill-list">
-                <li>Ollama-compatible endpoints</li>
-                <li>LM Studio</li>
-              </ul>
-            </div>
-
-            <div class="integration-rail-row">
-              <span class="integration-group-title">Private</span>
-              <ul class="integration-pill-list">
-                <li>Local gateways</li>
-                <li>Private OpenAI-style APIs</li>
-              </ul>
-            </div>
-          </div>
-        </section>
-
-        <section class="content-section" id="download">
-          <div class="section-heading">
-            <p class="eyebrow">Download</p>
-            <h2>One binary. No dependencies.</h2>
-          </div>
-
-          <div class="download-surface">
-            <div class="download-surface-head">
-              <span class="integration-panel-label">Latest release</span>
-              <span class="download-version" id="download-version"></span>
-            </div>
-
-            <p class="download-intro">
-              <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> ships as a single static binary for macOS and Linux.
-              Download, move it to your <code>PATH</code>, and run.
-            </p>
-
-            <div class="download-row">
-              <span class="download-os">macOS</span>
-              <div class="download-asset-list">
-                <a class="download-asset" data-os="darwin" data-arch="arm64" href="https://github.com/xEsk/shellia/releases/latest" aria-label="Download for macOS Apple Silicon">
-                  <svg class="download-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2v9M4.5 8l3.5 3.5L11.5 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-                  <span>Apple Silicon</span>
-                  <span class="download-arch">arm64</span>
-                </a>
-                <a class="download-asset" data-os="darwin" data-arch="amd64" href="https://github.com/xEsk/shellia/releases/latest" aria-label="Download for macOS Intel">
-                  <svg class="download-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2v9M4.5 8l3.5 3.5L11.5 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-                  <span>Intel Mac</span>
-                  <span class="download-arch">amd64</span>
-                </a>
-              </div>
-            </div>
-
-            <div class="download-row">
-              <span class="download-os">Linux</span>
-              <div class="download-asset-list">
-                <a class="download-asset" data-os="linux" data-arch="arm64" href="https://github.com/xEsk/shellia/releases/latest" aria-label="Download for Linux arm64">
-                  <svg class="download-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2v9M4.5 8l3.5 3.5L11.5 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-                  <span>arm64</span>
-                  <span class="download-arch">arm64</span>
-                </a>
-                <a class="download-asset" data-os="linux" data-arch="amd64" href="https://github.com/xEsk/shellia/releases/latest" aria-label="Download for Linux amd64">
-                  <svg class="download-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2v9M4.5 8l3.5 3.5L11.5 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-                  <span>amd64</span>
-                  <span class="download-arch">amd64</span>
-                </a>
-              </div>
-            </div>
-
-            <div class="download-links-row">
-              <a class="download-text-link" href="https://github.com/xEsk/shellia" target="_blank" rel="noopener">
-                Source code
-                <svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 9.5l7-7M4 2.5h5.5V8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </a>
-              <a class="download-text-link" href="https://github.com/xEsk/shellia/releases" target="_blank" rel="noopener">
-                Older versions
-                <svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 9.5l7-7M4 2.5h5.5V8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </a>
-            </div>
-          </div>
-        </section>
-
-        <section class="content-section quickstart-section" id="quickstart">
-          <div class="section-heading">
-            <p class="eyebrow">Quick start</p>
-            <h2>Start simple, stay explicit, and keep the session alive.</h2>
-          </div>
-
-          <div class="quickstart-grid">
-            <div>
-              <pre><code>go build -o shellia .
-./shellia
-
-# one-shot
-./shellia "run git status"
-
-# create config
-./shellia config init
-
-# direct command
-!pwd
-
-# manual shell loop
-/shell
-pwd
-cd project
-/ai
-
-# ask Shellia to plan
-check if brew has outdated packages
-
-# edit a proposed step before running it
-press e at confirmation</code></pre>
-            </div>
-
-            <div class="quickstart-copy">
-              <p>
-                Start in prompt mode when you want planning, confirmations, and a readable audit of
-                what <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> is about to do.
-              </p>
-              <p>
-                Switch to <code>!</code> for one direct command, or <code>/shell</code> when you want
-                a manual loop in the same live context. The point is not to hide the terminal. The
-                point is to make it easier to drive.
-              </p>
-              <ul class="runtime-list">
-                <li>Use prompt mode for multi-step tasks or when output from one command affects the next.</li>
-                <li>Use <code>e</code> if a proposed command is close but needs your final tweak.</li>
-                <li>Use <code>i</code> when a proposed step should run interactively in a real terminal session.</li>
-                <li>Keep commands explicit. <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> works best when you can inspect every step.</li>
-              </ul>
-            </div>
-          </div>
-        </section>
-
-        <footer class="site-footer" aria-label="Site footer">
-          <p>
-            By <strong>Xescode</strong> ·
-            <span class="shellia-word">Shell<span class="shellia-ia">ia</span></span> is licensed under
-            <a href="https://github.com/xEsk/shellia?tab=MPL-2.0-1-ov-file#readme" target="_blank" rel="noopener">MPL-2.0</a>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="#download">Download Shellia <svg viewBox="0 0 16 16" fill="none"><path d="M8 2v9M4.5 8L8 11.5 11.5 8M2 13h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+        <a class="btn btn-ghost" href="#how">How it works</a>
+      </div>
+      <div class="trust-strip" aria-label="Shellia trust signals">
+        <div class="trust-item"><b>Open source</b><span>MPL-2.0 project you can inspect.</span></div>
+        <div class="trust-item"><b>Local safety</b><span>Commands are classified on your machine.</span></div>
+        <div class="trust-item"><b>No telemetry</b><span>Only your configured LLM endpoint is called.</span></div>
+        <div class="trust-item"><b>Real shell</b><span>Works with your cwd, git state, and session.</span></div>
+      </div>
+    </div>
+    <div class="hero-term">
+      <div class="terminal" id="terminalA">
+        <div class="term-chrome">
+          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+          <span class="term-title"><span class="arrow-pulse">›</span> shellia &mdash; ~/projects/api</span>
+        </div>
+        <div class="term-body">
+          <p class="tline muted">What do you want <span class="shellia">Shell<span class="ia">ia</span></span> to do?</p>
+          <p class="tline">
+            <span class="prompt">you</span><span class="prompt-arr">›</span><span class="typed-text tcursor" data-typed></span>
           </p>
-        </footer>
-      </main>
+          <div class="term-mock" data-term-mock></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</div><!-- /wrap -->
+
+<!-- ════════ animated separator 1 ════════ -->
+<div class="wrap"><div class="sep" data-sep data-prompt="› reading context"
+  data-sequence="cwd: ~/projects/api · zsh · git main · staged: 3 · session memory: empty"
+  data-ms="14ms"></div></div>
+
+<!-- ════════ pillars ════════ -->
+<div class="wrap">
+<section class="section section-compact">
+  <div class="pillars">
+    <div class="pillar">
+      <div class="pillar-tag">reads context</div>
+      <h3>Your shell, not its imagination</h3>
+      <p>Working directory, shell engine, git state, recent commands, short-term session memory. The model sees what you actually have.</p>
+    </div>
+    <div class="pillar">
+      <div class="pillar-tag">plans first</div>
+      <h3>Full plan before execution</h3>
+      <p>Every proposed command is shown with intent, output capture, and a local risk grade — before <code>Enter</code> does anything.</p>
+    </div>
+    <div class="pillar">
+      <div class="pillar-tag">asks first</div>
+      <h3>Confirmation is a feature</h3>
+      <p>Risky and dangerous commands gate behind <code>y / e / i / n</code>. No defaults run anything you didn't see.</p>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- ════════ separator 2 ════════ -->
+<div class="wrap"><div class="sep" data-sep data-prompt="› entering modes"
+  data-sequence="prompt mode · direct command · interactive shell loop · all sharing one session"
+  data-ms="08ms"></div></div>
+
+<!-- ════════ modes ════════ -->
+<div class="wrap">
+<section class="section section-after-sep" id="modes">
+  <div class="modes-head">
+    <div>
+      <span class="eyebrow">three modes</span>
+      <h2 style="margin-top:18px">One tool. Three ways to drive it.</h2>
+    </div>
+    <div class="modes-tabs" role="tablist">
+      <button class="modes-tab on" data-mode="prompt"><span class="key">you ›</span>prompt</button>
+      <button class="modes-tab" data-mode="direct"><span class="key">!</span>direct</button>
+      <button class="modes-tab" data-mode="shell"><span class="key">/shell</span>loop</button>
+    </div>
+  </div>
+
+
+
+  <div class="modes-pane" data-mode-pane="prompt">
+    <div class="modes-copy">
+      <div class="pane-label">prompt mode — <code>you ›</code></div>
+      <h3>Ask for what you want. Read what it plans.</h3>
+      <p>The default. Type intent in plain English and Shellia comes back with a structured plan: one step per command, each tagged with its risk grade. Approve, edit (<code>e</code>), or bail (<code>n</code>) per step.</p>
+      <ul class="pane-list">
+        <li><b>Multi-step plans</b><span>Iterates after each command if a later step depends on what the previous one returned.</span></li>
+        <li><b>Session memory</b><span>"do the Docker thing from before" actually works.</span></li>
+        <li><b>Inspectable</b><span>Use <code>--verbose</code> to see the full plan, classification, and capture limits.</span></li>
+      </ul>
+    </div>
+    <div class="modes-demo">
+      <div class="terminal">
+        <div class="term-chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="term-title">prompt mode</span></div>
+        <div class="term-body" style="min-height:380px">
+          <p class="tline"><span class="prompt">you</span><span class="prompt-arr">›</span>which branches were merged into main last month?</p>
+          <div class="tdiv"></div>
+          <p class="tbtitle">plan</p>
+          <p class="tline"><span class="bullet">•</span> list merged branches with their merge dates</p>
+          <p class="tline"><span class="bullet">•</span> filter to last 30 days</p>
+          <div class="tcmd"><span class="pfx">run ›</span><span class="txt">git log --merges --since="30 days ago" --pretty=format:"%h %s"</span></div>
+          <p class="tline output"><span class="bullet warn">•</span> <span class="kw">confirm</span> Run step 1/1? [y/e/i/n]: <span style="color:var(--safe)">y</span></p>
+          <p class="tline output-text">a3f1b2c Merge pull request #421 from feat/billing</p>
+          <p class="tline output-text">d8e4a91 Merge pull request #418 from fix/timeouts</p>
+          <p class="tline output-text">…and 4 more</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modes-pane" data-mode-pane="direct" hidden>
+    <div class="modes-copy">
+      <div class="pane-label">direct mode — <code>!&lt;cmd&gt;</code></div>
+      <h3>You already know. Just run it.</h3>
+      <p>Prefix any line with <code>!</code> and Shellia runs it verbatim — no model call, no plan. Structured output and session state still apply, so the next prompt-mode question knows what just happened.</p>
+      <ul class="pane-list">
+        <li><b>Two engines</b><span><code>command_mode = "plain"</code> for structured output, <code>"interactive"</code> for a real TTY pass-through.</span></li>
+        <li><b>State preserved</b><span>cwd survives, git context refreshes, captured output feeds future plans.</span></li>
+        <li><b>Zero friction</b><span>No "you" prefix, no plan, no confirmation. It's a shell.</span></li>
+      </ul>
+    </div>
+    <div class="modes-demo">
+      <div class="terminal">
+        <div class="term-chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="term-title">direct mode</span></div>
+        <div class="term-body" style="min-height:380px">
+          <p class="tline"><span class="prompt">you</span><span class="prompt-arr">›</span>!cd packages/web</p>
+          <p class="tline output"><span class="bullet">•</span> cwd → ~/projects/api/packages/web</p>
+          <div class="tdiv"></div>
+          <p class="tline"><span class="prompt">you</span><span class="prompt-arr">›</span>!pnpm test --filter checkout</p>
+          <p class="tline output"><span class="bullet">•</span> system output</p>
+          <p class="tline output-text">PASS  src/checkout/total.test.ts</p>
+          <p class="tline output-text">PASS  src/checkout/coupon.test.ts</p>
+          <p class="tline output-text">Tests: 24 passed, 24 total · 1.4s</p>
+          <div class="tdiv"></div>
+          <p class="tline"><span class="prompt">you</span><span class="prompt-arr">›</span>now run only the ones that took longer than 100ms</p>
+          <p class="tline muted">↳ session memory: 24 tests passed · cwd packages/web</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modes-pane" data-mode-pane="shell" hidden>
+    <div class="modes-copy">
+      <div class="pane-label">shell loop — <code>/shell</code></div>
+      <h3>A manual shell that still feeds the AI.</h3>
+      <p>Type <code>/shell</code> and you're in a normal REPL. Run as many commands as you want. Every result feeds Shellia's context, so when you flip back with <code>/ai</code> the model already knows what just happened.</p>
+      <ul class="pane-list">
+        <li><b>Real terminal</b><span>Interactive engine by default — <code>vim</code>, <code>htop</code>, <code>psql</code> all work.</span></li>
+        <li><b>Returns context</b><span>Switch back to AI and ask "what did I just break" — it has the receipts.</span></li>
+        <li><b>One session</b><span>cwd, env, git, captured output: shared across all three modes.</span></li>
+      </ul>
+    </div>
+    <div class="modes-demo">
+      <div class="terminal">
+        <div class="term-chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="term-title">shell loop</span></div>
+        <div class="term-body" style="min-height:380px">
+          <p class="tline"><span class="prompt">you</span><span class="prompt-arr">›</span>/shell</p>
+          <p class="tline muted">→ shell mode (interactive)</p>
+          <div class="tdiv"></div>
+          <p class="tline"><span class="prompt" style="color:var(--risky)">shell</span><span class="prompt-arr">›</span>git status --short</p>
+          <p class="tline output-text">M  docs/index.html</p>
+          <p class="tline output-text">M  internal/runtime.go</p>
+          <p class="tline"><span class="prompt" style="color:var(--risky)">shell</span><span class="prompt-arr">›</span>go test ./internal/...</p>
+          <p class="tline output-text">ok  internal/runtime  0.21s</p>
+          <p class="tline"><span class="prompt" style="color:var(--risky)">shell</span><span class="prompt-arr">›</span>/ai</p>
+          <div class="tdiv"></div>
+          <p class="tline"><span class="prompt">you</span><span class="prompt-arr">›</span>commit the docs change with a useful message</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- ════════ separator 3 ════════ -->
+<div class="wrap"><div class="sep" data-sep data-prompt="› planning"
+  data-sequence="step 01 read context · step 02 propose · step 03 classify · step 04 confirm · step 05 run"
+  data-ms="22ms"></div></div>
+
+<!-- ════════ how it works ════════ -->
+<div class="wrap">
+<section class="section section-after-sep" id="how">
+  <div style="display:flex; flex-wrap:wrap; gap:32px; justify-content:space-between; align-items:flex-end">
+    <div>
+      <span class="eyebrow">how it works</span>
+      <h2 style="margin-top:18px; max-width:18ch">Not a black box.<br>A live shell with a model in the loop.</h2>
+    </div>
+    <p class="lead" style="max-width:26rem">Four phases run per request. At each phase, the next action is visible before it runs.</p>
+  </div>
+  <div class="how-grid">
+    <div class="how-step" data-reveal>
+      <span class="how-num">01 / read</span>
+      <h3>Local context</h3>
+      <p>Shellia detects cwd, current user, OS, shell engine, and git repo state. Plus a small in-process memory of what just happened.</p>
+    </div>
+    <div class="how-step" data-reveal>
+      <span class="how-num">02 / plan</span>
+      <h3>Propose</h3>
+      <p>Your instruction + that context goes to the configured LLM. It comes back with a structured, multi-step plan — not a wall of prose.</p>
+    </div>
+    <div class="how-step" data-reveal>
+      <span class="how-num">03 / classify</span>
+      <h3>Re-grade locally</h3>
+      <p>Every command is re-classified <b style="color:var(--safe)">safe</b>, <b style="color:var(--risky)">risky</b>, or <b style="color:var(--danger)">dangerous</b> by rules that live on your machine — not whatever the model felt like saying.</p>
+    </div>
+    <div class="how-step" data-reveal>
+      <span class="how-num">04 / confirm</span>
+      <h3>Execute &amp; observe</h3>
+      <p>You see the plan. You confirm or edit. Shellia runs it, captures output, and if a later step needs that output, it re-plans before continuing.</p>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- ════════ separator 4 ════════ -->
+<div class="wrap"><div class="sep" data-sep data-prompt="› safety"
+  data-sequence="safe → auto with --yes-safe · risky → confirm · dangerous → confirm + double-take · sudo → loud"
+  data-ms="03ms"></div></div>
+
+<!-- ════════ safety classifier ════════ -->
+<div class="wrap">
+<section class="section section-after-sep" id="safety">
+  <div class="safety-grid">
+    <div class="safety-copy">
+      <span class="eyebrow">safety model</span>
+      <h2 style="margin-top:18px">Shellia doesn't trust the model. Neither should you.</h2>
+      <p class="lead" style="margin-top:24px">Every command — proposed or pasted — is re-classified by a local rule set before it's allowed near your shell. The model's opinion doesn't get a vote.</p>
+      <div class="safety-tiers">
+        <div class="safety-tier safe">
+          <span class="lvl">safe</span>
+          <div class="safety-tier-text">
+            <h4>Read-only and obviously harmless</h4>
+            <p>Listings, status, inspections. Can auto-run under <code>--yes-safe</code>.</p>
+          </div>
+        </div>
+        <div class="safety-tier risky">
+          <span class="lvl">risky</span>
+          <div class="safety-tier-text">
+            <h4>Mutates state in ways you'd want to notice</h4>
+            <p>Filesystem changes, network pulls, container ops. Always confirmed.</p>
+          </div>
+        </div>
+        <div class="safety-tier danger">
+          <span class="lvl">danger</span>
+          <div class="safety-tier-text">
+            <h4>Could ruin your week</h4>
+            <p><code>sudo</code>, destructive deletes, system modifications. Confirmed loudly. No defaults.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="classifier" id="classifier">
+      <div class="classifier-head">
+        <span>live · local classifier</span>
+        <span class="hbtn"><span></span><span></span><span></span></span>
+      </div>
+      <div class="classifier-rows" data-cls-rows></div>
+      <div class="classifier-foot">
+        <span class="stat s"><span class="d"></span>safe · auto-runnable</span>
+        <span class="stat r"><span class="d"></span>risky · prompts</span>
+        <span class="stat d-stat"><span class="d"></span>dangerous · confirms loudly</span>
+      </div>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- ════════ separator 5 ════════ -->
+<div class="wrap"><div class="sep" data-sep data-prompt="› runtime"
+  data-sequence="config: ~/.config/shellia/config.toml · llm: any openai-compatible · capture: bounded · shell: pick your engine"
+  data-ms="11ms"></div></div>
+
+<!-- ════════ runtime + config ════════ -->
+<div class="wrap">
+<section class="section section-after-sep" id="runtime">
+  <div class="runtime-grid">
+    <div class="runtime-copy">
+      <span class="eyebrow">runtime</span>
+      <h2 style="margin-top:18px">Configure once. Stay weird.</h2>
+      <p>One config file, named model profiles, three engines, sensible defaults. <code>shellia config init</code> creates <code>~/.config/shellia/config.toml</code>; the old <code>~/.shellia/config.toml</code> path is only a fallback. <code>default_model</code> picks the LLM profile. <code>shell_mode</code> picks how <code>/shell</code> runs. <code>command_mode</code> picks how <code>!cmd</code> runs.</p>
+      <ul>
+        <li><b>[[models]]</b><span>name each endpoint and select it with <code>default_model</code> or <code>--model-name</code></span></li>
+        <li><b>supports_response_format</b><span>leave enabled for OpenAI/llama.cpp · disable for MLX LM Server</span></li>
+        <li><b>shell_mode</b><span><code>"interactive"</code> drops into a real TTY · <code>"plain"</code> stays structured</span></li>
+        <li><b>command_mode</b><span>same toggle for <code>!&lt;cmd&gt;</code></span></li>
+        <li><b>confirmation_default</b><span><code>none</code> · <code>yes</code> · <code>no</code> · <code>edit</code> · <code>interactive</code></span></li>
+        <li><b>--yes-safe</b><span>auto-runs commands the local classifier already marked safe</span></li>
+        <li><b>capture_*_bytes</b><span>bounded log capture so the model never sees a 4MB log</span></li>
+      </ul>
+    </div>
+    <div class="codeblock">
+      <div class="codeblock-head">
+        <span>~/.config/shellia/config.toml</span>
+        <span class="lang">toml</span>
+      </div>
+      <pre><span class="cb-key">default_model</span> = <span class="cb-str">"openai"</span>
+
+<span class="cb-section">[[models]]</span>
+<span class="cb-key">name</span> = <span class="cb-str">"openai"</span>
+<span class="cb-key">base_url</span> = <span class="cb-str">"https://api.openai.com/v1"</span>
+<span class="cb-key">model</span> = <span class="cb-str">"gpt-5.4-mini"</span>
+<span class="cb-key">api_key_env</span> = <span class="cb-str">"SHELLIA_API_KEY"</span>
+<span class="cb-key">supports_response_format</span> = <span class="cb-num">true</span>
+
+<span class="cb-section">[[models]]</span>
+<span class="cb-key">name</span> = <span class="cb-str">"mlx"</span>
+<span class="cb-key">base_url</span> = <span class="cb-str">"http://localhost:8080/v1"</span>
+<span class="cb-key">model</span> = <span class="cb-str">"mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit"</span>
+<span class="cb-key">api_key</span> = <span class="cb-str">""</span>
+<span class="cb-key">supports_response_format</span> = <span class="cb-num">false</span> <span class="cb-comment"># recommended for MLX LM Server</span>
+
+<span class="cb-section">[[models]]</span>
+<span class="cb-key">name</span> = <span class="cb-str">"llama-cpp"</span>
+<span class="cb-key">base_url</span> = <span class="cb-str">"http://localhost:8080/v1"</span>
+<span class="cb-key">model</span> = <span class="cb-str">"unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:UD-Q4_K_XL"</span>
+<span class="cb-key">api_key</span> = <span class="cb-str">""</span>
+<span class="cb-key">supports_response_format</span> = <span class="cb-num">true</span>
+
+<span class="cb-section">[execution]</span>
+<span class="cb-key">timeout_seconds</span>         = <span class="cb-num">120</span>
+<span class="cb-key">yes_safe</span>                = <span class="cb-num">false</span>
+<span class="cb-key">continue_on_error</span>       = <span class="cb-num">false</span>
+<span class="cb-key">confirmation_default</span>    = <span class="cb-str">"none"</span>
+<span class="cb-key">shell_mode</span>              = <span class="cb-str">"interactive"</span>
+<span class="cb-key">command_mode</span>            = <span class="cb-str">"plain"</span>
+
+<span class="cb-section">[output]</span>
+<span class="cb-key">capture_stdout_bytes</span> = <span class="cb-num">131072</span>
+<span class="cb-key">capture_stderr_bytes</span> = <span class="cb-num">262144</span>
+
+<span class="cb-section">[ui]</span>
+<span class="cb-key">show_system_output</span> = <span class="cb-num">true</span>
+<span class="cb-key">show_command_popup</span> = <span class="cb-num">true</span></pre>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- ════════ separator 6 ════════ -->
+<div class="wrap"><div class="sep" data-sep data-prompt="› integrations"
+  data-sequence="openai · openrouter · ollama · mlx server · llama.cpp · lm studio · your own gateway · anything that speaks /chat/completions"
+  data-ms="05ms"></div></div>
+
+<!-- ════════ integrations ════════ -->
+<div class="wrap">
+<section class="section section-after-sep" id="integrations">
+  <div style="display:flex; flex-wrap:wrap; gap:32px; justify-content:space-between; align-items:flex-end">
+    <div>
+      <span class="eyebrow">integrations</span>
+      <h2 style="margin-top:18px; max-width:20ch">Any model that speaks OpenAI.</h2>
+    </div>
+    <p class="lead" style="max-width:30rem">Point Shellia at any endpoint that implements <code>/chat/completions</code>. Hosted, local, or sitting behind your own gateway — it's all the same three settings.</p>
+  </div>
+  <div class="integrations">
+    <div class="int-card">
+      <span class="int-card-tag">hosted</span>
+      <h4>OpenAI</h4>
+      <p>The default. Drop in your key and pick a model.</p>
+      <div class="int-list"><span>gpt-5.4-mini</span><span>gpt-5</span><span>o4</span></div>
+    </div>
+    <div class="int-card">
+      <span class="int-card-tag">hosted</span>
+      <h4>OpenRouter</h4>
+      <p>Any model behind the OpenRouter <code>/chat/completions</code> proxy.</p>
+      <div class="int-list"><span>claude</span><span>gemini</span><span>llama</span><span>and friends</span></div>
+    </div>
+    <div class="int-card">
+      <span class="int-card-tag">local</span>
+      <h4>Ollama</h4>
+      <p>Local models served from <code>localhost:11434</code> with no network round-trip.</p>
+      <div class="int-list"><span>llama 3.1</span><span>qwen</span><span>mistral</span></div>
+    </div>
+    <div class="int-card">
+      <span class="int-card-tag">local</span>
+      <h4>MLX Server</h4>
+      <p>Apple Silicon local models served by <code>mlx_lm.server</code> on <code>localhost:8080</code>. Configure <code>supports_response_format = false</code>.</p>
+      <div class="int-list"><span>mlx-community</span><span>prompt JSON</span></div>
+    </div>
+    <div class="int-card">
+      <span class="int-card-tag">local</span>
+      <h4>llama.cpp</h4>
+      <p>GGUF models served by <code>llama-server</code> through its OpenAI-compatible API.</p>
+      <div class="int-list"><span>GGUF</span><span>localhost:8080</span></div>
+    </div>
+    <div class="int-card">
+      <span class="int-card-tag">local</span>
+      <h4>LM Studio</h4>
+      <p>GUI model runtime with an OpenAI-compatible server toggle.</p>
+      <div class="int-list"><span>any GGUF</span><span>localhost:1234</span></div>
+    </div>
+    <div class="int-card">
+      <span class="int-card-tag">private</span>
+      <h4>Your gateway</h4>
+      <p>Internal proxies, LiteLLM, vLLM, Azure OpenAI deployments. If it speaks the protocol, Shellia speaks back.</p>
+      <div class="int-list"><span>bring your own</span></div>
+    </div>
+    <div class="int-card">
+      <span class="int-card-tag">env</span>
+      <h4>Falls back to env</h4>
+      <p><code>OPENAI_BASE_URL</code>, <code>OPENAI_API_KEY</code>, <code>OPENAI_MODEL</code> — already set? You're done.</p>
+      <div class="int-list"><span>SHELLIA_*</span><span>OPENAI_*</span></div>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- ════════ separator 7 ════════ -->
+<div class="wrap"><div class="sep" data-sep data-prompt="› download"
+  data-sequence="single static binary · macOS arm64/amd64 · linux arm64/amd64 · no daemon · no install script"
+  data-ms="02ms"></div></div>
+
+<!-- ════════ download ════════ -->
+<div class="wrap">
+<section class="section section-after-sep" id="download">
+  <div style="display:flex; flex-wrap:wrap; gap:32px; justify-content:space-between; align-items:flex-end">
+    <div>
+      <span class="eyebrow">download</span>
+      <h2 style="margin-top:18px">One binary. No dependencies.</h2>
+    </div>
+    <p class="lead" style="max-width:30rem">Grab the right tarball, drop it on your <code>PATH</code>, run it. No daemon, no install script, no node_modules.</p>
+  </div>
+
+  <div class="download-card">
+    <div class="download-head">
+      <h3>Latest release</h3>
+      <span class="version" id="download-version">checking…</span>
     </div>
 
-    <script src="./script.js"></script>
-  </body>
+    <div class="download-row">
+      <span class="download-os">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M10.84 1.31c.79.96.59 2.36-.3 3.32-.95 1.02-2.36 1.34-3.13.42-.79-.94-.6-2.34.32-3.34.92-1 2.32-1.36 3.11-.4zM11.6 5.6c-.6-.45-1.27-.7-1.96-.7-1.13 0-1.96.62-2.62.62-.69 0-1.55-.6-2.5-.58-1.28.02-2.46.74-3.12 1.87-1.33 2.3-.34 5.7.96 7.57.64.92 1.4 1.94 2.39 1.9.96-.04 1.32-.62 2.48-.62 1.16 0 1.48.62 2.49.6 1.04-.02 1.69-.93 2.32-1.85.73-1.05 1.03-2.07 1.05-2.12-.02-.01-2.02-.78-2.04-3.09-.02-1.94 1.58-2.87 1.66-2.92-.92-1.34-2.32-1.5-2.82-1.54z"/></svg>
+        macOS
+      </span>
+      <div class="download-assets">
+        <a class="download-asset" data-os="darwin" data-arch="arm64" href="https://github.com/xEsk/shellia/releases/latest">
+          <svg class="dl" viewBox="0 0 16 16" fill="none"><path d="M8 2v9M4.5 8L8 11.5 11.5 8M2 13h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Apple Silicon <span class="arch">arm64</span>
+        </a>
+        <a class="download-asset" data-os="darwin" data-arch="amd64" href="https://github.com/xEsk/shellia/releases/latest">
+          <svg class="dl" viewBox="0 0 16 16" fill="none"><path d="M8 2v9M4.5 8L8 11.5 11.5 8M2 13h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Intel <span class="arch">amd64</span>
+        </a>
+      </div>
+    </div>
+
+    <div class="download-row">
+      <span class="download-os">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.2c-.7 0-1.3.3-1.7.8-.4.5-.6 1.2-.6 2.1 0 .3 0 .6.1.9-.5.4-.9.9-1.2 1.4-.6 1.2-.9 2.7-.9 3.7 0 .9-.3 1.5-.7 2.1-.4.6-.9 1.1-1.3 1.8-.2.3-.3.7-.1 1.1.2.4.5.6.9.6.5 0 1 0 1.5-.1.5.5 1 1 1.6 1.3.6.3 1.3.4 2 .4h.8c.7 0 1.4-.1 2-.4.6-.3 1.1-.8 1.6-1.3.5.1 1 .1 1.5.1.4 0 .7-.2.9-.6.2-.4.1-.8-.1-1.1-.4-.7-.9-1.2-1.3-1.8-.4-.6-.7-1.2-.7-2.1 0-1-.3-2.5-.9-3.7-.3-.5-.7-1-1.2-1.4 0-.3.1-.6.1-.9 0-.9-.2-1.6-.6-2.1-.4-.5-1-.8-1.7-.8z"/></svg>
+        Linux
+      </span>
+      <div class="download-assets">
+        <a class="download-asset" data-os="linux" data-arch="arm64" href="https://github.com/xEsk/shellia/releases/latest">
+          <svg class="dl" viewBox="0 0 16 16" fill="none"><path d="M8 2v9M4.5 8L8 11.5 11.5 8M2 13h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          arm64 <span class="arch">arm64</span>
+        </a>
+        <a class="download-asset" data-os="linux" data-arch="amd64" href="https://github.com/xEsk/shellia/releases/latest">
+          <svg class="dl" viewBox="0 0 16 16" fill="none"><path d="M8 2v9M4.5 8L8 11.5 11.5 8M2 13h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          amd64 <span class="arch">amd64</span>
+        </a>
+      </div>
+    </div>
+
+    <div class="download-foot">
+      <a href="https://github.com/xEsk/shellia" target="_blank" rel="noopener">Source on GitHub <svg viewBox="0 0 12 12" fill="none"><path d="M2.5 9.5l7-7M4 2.5h5.5V8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+      <a href="https://github.com/xEsk/shellia/releases" target="_blank" rel="noopener">All releases <svg viewBox="0 0 12 12" fill="none"><path d="M2.5 9.5l7-7M4 2.5h5.5V8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+      <a href="https://github.com/xEsk/shellia?tab=MPL-2.0-1-ov-file" target="_blank" rel="noopener">License (MPL-2.0) <svg viewBox="0 0 12 12" fill="none"><path d="M2.5 9.5l7-7M4 2.5h5.5V8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- ════════ separator 8 ════════ -->
+<div class="wrap"><div class="sep" data-sep data-prompt="› quick start"
+  data-sequence="install → run → type → confirm → done · the whole loop"
+  data-ms="01ms"></div></div>
+
+<!-- ════════ quickstart ════════ -->
+<div class="wrap">
+<section class="section section-after-sep" id="quickstart">
+  <span class="eyebrow">quick start</span>
+  <h2 style="margin-top:18px; max-width:20ch">Start simple.<br>Stay explicit.</h2>
+
+  <div class="quickstart-grid">
+    <div class="quickstart-copy">
+      <h3>The whole thing in 6 lines.</h3>
+      <p>Default to prompt mode for anything multi-step. Drop to <code>!</code> when you already know. Use <code>/shell</code> when you want a manual loop that still feeds the model. Every option appears in <code>--help</code> — but you rarely need it.</p>
+      <ul>
+        <li><b style="color:var(--text)">y</b> — run the proposed command as-is</li>
+        <li><b style="color:var(--text)">e</b> — edit before running</li>
+        <li><b style="color:var(--text)">i</b> — run interactively in a real TTY</li>
+        <li><b style="color:var(--text)">n</b> — bail out</li>
+      </ul>
+      <p style="margin-top:24px">No keystroke maps to "do it anyway, I trust you". That's a feature.</p>
+    </div>
+    <div class="codeblock">
+      <div class="codeblock-head"><span>terminal</span><span class="lang">zsh</span></div>
+      <pre><span class="cb-comment"># grab the binary</span>
+$ tar -xzf shellia_darwin_arm64.tar.gz
+$ mv shellia /usr/local/bin/
+
+<span class="cb-comment"># run it</span>
+$ shellia
+shellia › <span class="cb-section">find files larger than 100MB</span>
+
+<span class="cb-comment"># one-shot</span>
+$ shellia <span class="cb-str">"clean the dist folder if any"</span>
+
+<span class="cb-comment"># direct mode inside session</span>
+shellia › !git status
+
+<span class="cb-comment"># bring your own model</span>
+$ shellia \
+    --base-url <span class="cb-str">"http://localhost:11434/v1"</span> \
+    --model <span class="cb-str">"llama3.1"</span> \
+    <span class="cb-str">"show outdated brew packages"</span>
+
+<span class="cb-comment"># llama.cpp</span>
+$ llama-server -hf <span class="cb-str">"unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:UD-Q4_K_XL"</span> --port 8080
+$ shellia \
+    --base-url <span class="cb-str">"http://localhost:8080/v1"</span> \
+    --model <span class="cb-str">"unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:UD-Q4_K_XL"</span> \
+    <span class="cb-str">"show outdated brew packages"</span></pre>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- ════════ separator 9 ════════ -->
+<div class="wrap"><div class="sep" data-sep data-prompt="› faq"
+  data-sequence="answering the obvious questions before you ask them · including the rm -rf one"
+  data-ms="06ms"></div></div>
+
+<!-- ════════ FAQ ════════ -->
+<div class="wrap">
+<section class="section section-after-sep section-short-bottom" id="faq">
+  <span class="eyebrow">faq</span>
+  <h2 style="margin-top:18px">Questions before you give a CLI a shell.</h2>
+
+  <div class="faq" id="faq-list">
+    <div class="faq-item">
+      <button class="faq-q"><span class="q-text">Will it <code>rm -rf /</code> my home directory?</span><span class="ic">+</span></button>
+      <div class="faq-a">
+        <p>Not without you typing <code>y</code> first. Destructive commands hit the <b style="color:var(--danger)">dangerous</b> tier and Shellia gates them behind explicit confirmation. The local classifier doesn't ask the model for permission — it flags <code>rm</code>, <code>sudo</code>, and friends before the plan even reaches you. Worst case: you read the plan, hit <code>n</code>, walk away.</p>
+      </div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q"><span class="q-text">Does it phone home?</span><span class="ic">+</span></button>
+      <div class="faq-a">
+        <p>Only to your configured LLM endpoint. No telemetry, no analytics, no sneaky pings. The binary is open source under MPL-2.0 — read the network calls yourself, or pipe through a local proxy and watch them.</p>
+      </div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q"><span class="q-text">Can I bring my own model?</span><span class="ic">+</span></button>
+      <div class="faq-a">
+        <p>Yes. Anything that speaks OpenAI Chat Completions: hosted (OpenAI, OpenRouter), local (Ollama, MLX Server, llama.cpp, LM Studio), or your private gateway. Configure it as a <code>[[models]]</code> profile with <code>base_url</code>, <code>model</code>, and an API key when the endpoint requires one. For MLX LM Server, set <code>supports_response_format = false</code>.</p>
+      </div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q"><span class="q-text">Does it work on Windows?</span><span class="ic">+</span></button>
+      <div class="faq-a">
+        <p>Native binaries ship for macOS and Linux. WSL is your friend on Windows for now. Native Windows is on the maybe-list.</p>
+      </div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q"><span class="q-text">What if the model hallucinates a command?</span><span class="ic">+</span></button>
+      <div class="faq-a">
+        <p>You'll see the full plan first. Press <code>e</code> to edit, <code>n</code> to bail, <code>y</code> to run. There's no "Enter to run" default unless you opt in via <code>confirmation_default</code> — and even then, dangerous commands ignore it.</p>
+      </div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q"><span class="q-text">Is this a coding agent? A Cursor / Devin?</span><span class="ic">+</span></button>
+      <div class="faq-a">
+        <p>No. Shellia stays in the terminal, runs shell commands in your real <code>cwd</code>, and gives you the reins back. It's not trying to write your app. It's just trying to make the next <code>git rebase --interactive</code> less hostile.</p>
+      </div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q"><span class="q-text">Will it work without internet?</span><span class="ic">+</span></button>
+      <div class="faq-a">
+        <p>Yes — point it at a local model (Ollama / MLX Server / llama.cpp / LM Studio). The classifier, plan execution, and confirmation flow all run on your machine regardless.</p>
+      </div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q"><span class="q-text">Why <code>shellia</code>? Couldn't think of a name?</span><span class="ic">+</span></button>
+      <div class="faq-a">
+        <p>"Shell" + "IA" (Spanish for AI). It's also short, lowercase-friendly, and survives both <code>brew install</code> and being yelled at on a Tuesday.</p>
+      </div>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- ════════ final cta ════════ -->
+<div class="wrap">
+<section class="section section-final">
+  <div class="final-cta">
+    <div>
+      <span class="eyebrow">try it locally</span>
+      <h2>Give your shell a planning step.</h2>
+      <p>Download the binary, point it at your preferred OpenAI-compatible model, and use plain English when the next terminal task needs context and care.</p>
+    </div>
+    <div class="final-cta-actions">
+      <a class="btn btn-primary" href="#download">Download Shellia <svg viewBox="0 0 16 16" fill="none"><path d="M8 2v9M4.5 8L8 11.5 11.5 8M2 13h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+      <a class="btn btn-ghost" href="https://github.com/xEsk/shellia" target="_blank" rel="noopener">View source</a>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- ════════ footer ════════ -->
+<div class="wrap">
+<footer class="foot">
+  <p class="foot-tagline">
+    A terminal-native AI shell agent. Local-first, model-agnostic, allergic to magic.<br>
+    Built by <a href="https://github.com/xEsk" target="_blank" rel="noopener" style="color:var(--text); font-weight:500">Xescode</a> in the open.
+  </p>
+  <div class="foot-base">
+    <span>© 2026 Xescode</span>
+    <span class="foot-base-mid">
+      <a href="https://github.com/xEsk/shellia" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/xEsk/shellia/releases" target="_blank" rel="noopener">Releases</a>
+      <a href="https://github.com/xEsk/shellia?tab=MPL-2.0-1-ov-file" target="_blank" rel="noopener">MPL-2.0</a>
+    </span>
+    <span>shell › <span style="color:var(--accent)">/exit</span></span>
+  </div>
+</footer>
+</div>
+
+</main>
+
+<script src="./script.js"></script>
+</body>
 </html>
