@@ -45,6 +45,23 @@ type chatCompletionEnvelope struct {
 	} `json:"choices"`
 }
 
+// llmPromptRequest groups the context needed to build one planning prompt.
+type llmPromptRequest struct {
+	Config              config
+	ContextInfo         contextInfo
+	Instruction         string
+	ResolvedInstruction string
+	History             []historyEntry
+	State               sessionState
+	Observations        []commandExecution
+}
+
+// discoveryPromptRequest adds the failed response that triggered discovery repair.
+type discoveryPromptRequest struct {
+	Prompt   llmPromptRequest
+	Previous llmResponse
+}
+
 // streamChunk is a single SSE delta from a streaming completion response.
 type streamChunk struct {
 	Choices []struct {
@@ -272,43 +289,47 @@ func readHTTPErrorBody(body io.Reader) string {
 }
 
 // callLLM sends the instruction and context to the model to obtain an execution plan.
-func callLLM(ctx context.Context, client *http.Client, cfg config, ctxInfo contextInfo, instruction string, history []historyEntry, state sessionState, observations []commandExecution) (string, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, cfg.RequestTimeout)
+func callLLM(ctx context.Context, client *http.Client, request llmPromptRequest) (string, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, request.Config.RequestTimeout)
 	defer cancel()
 
-	systemPrompt, userPrompt := buildLLMPrompts(cfg, ctxInfo, instruction, history, state, observations)
-	return callPlanningPrompt(reqCtx, client, cfg, systemPrompt, userPrompt)
+	systemPrompt, userPrompt := buildLLMPrompts(request)
+	return callPlanningPrompt(reqCtx, client, request.Config, systemPrompt, userPrompt)
 }
 
 // buildLLMPrompts builds the initial planning prompt pair.
-func buildLLMPrompts(cfg config, ctxInfo contextInfo, instruction string, history []historyEntry, state sessionState, observations []commandExecution) (string, string) {
-	resolvedInstruction := resolveInstructionForPlanning(instruction, state)
-	if !cfg.IncludeSessionMemory {
-		resolvedInstruction = instruction
-	}
-	if cfg.PlanOnly {
-		return buildPlanOnlySystemPrompt(), buildUserPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations)
+func buildLLMPrompts(request llmPromptRequest) (string, string) {
+	resolvedInstruction := resolveInstructionForPlanning(request.Instruction, request.State)
+	if !request.Config.IncludeSessionMemory {
+		resolvedInstruction = request.Instruction
 	}
 
-	return buildSystemPrompt(), buildUserPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations)
+	request.ResolvedInstruction = resolvedInstruction
+	if request.Config.PlanOnly {
+		return buildPlanOnlySystemPrompt(), buildUserPrompt(request)
+	}
+
+	return buildSystemPrompt(), buildUserPrompt(request)
 }
 
 // callDiscoveryRepairLLM retries an empty planning response with a discovery-only repair prompt.
-func callDiscoveryRepairLLM(ctx context.Context, client *http.Client, cfg config, ctxInfo contextInfo, instruction string, history []historyEntry, state sessionState, observations []commandExecution, previous llmResponse) (string, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, cfg.RequestTimeout)
+func callDiscoveryRepairLLM(ctx context.Context, client *http.Client, request discoveryPromptRequest) (string, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, request.Prompt.Config.RequestTimeout)
 	defer cancel()
 
-	systemPrompt, userPrompt := buildDiscoveryRepairLLMPrompts(cfg, ctxInfo, instruction, history, state, observations, previous)
-	return callPlanningPrompt(reqCtx, client, cfg, systemPrompt, userPrompt)
+	systemPrompt, userPrompt := buildDiscoveryRepairLLMPrompts(request)
+	return callPlanningPrompt(reqCtx, client, request.Prompt.Config, systemPrompt, userPrompt)
 }
 
 // buildDiscoveryRepairLLMPrompts builds the discovery repair prompt pair.
-func buildDiscoveryRepairLLMPrompts(cfg config, ctxInfo contextInfo, instruction string, history []historyEntry, state sessionState, observations []commandExecution, previous llmResponse) (string, string) {
-	resolvedInstruction := resolveInstructionForPlanning(instruction, state)
-	if !cfg.IncludeSessionMemory {
-		resolvedInstruction = instruction
+func buildDiscoveryRepairLLMPrompts(request discoveryPromptRequest) (string, string) {
+	resolvedInstruction := resolveInstructionForPlanning(request.Prompt.Instruction, request.Prompt.State)
+	if !request.Prompt.Config.IncludeSessionMemory {
+		resolvedInstruction = request.Prompt.Instruction
 	}
-	return buildSystemPrompt(), buildDiscoveryRepairPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations, previous)
+
+	request.Prompt.ResolvedInstruction = resolvedInstruction
+	return buildSystemPrompt(), buildDiscoveryRepairPrompt(request)
 }
 
 // callPlanningPrompt sends a planning prompt pair to the model and returns the raw JSON response.
@@ -471,70 +492,92 @@ func normalizePlan(response llmResponse) (string, []commandPlan, error) {
 
 // buildSystemPrompt defines the strict contract the model must follow.
 func buildSystemPrompt() string {
-	return "You are a shell planning assistant. " +
-		"You convert natural language instructions into shell commands for the user's current machine. " +
-		"You must be conservative, accurate, and avoid hallucinating tools or paths. " +
-		"Only use commands that are standard or clearly available from the provided context. " +
-		"Never propose interactive editors like nano, vim, less, top, or man. " +
-		"Do not use placeholders. " +
-		"Return pure shell commands only. " +
-		"Do not include explanatory echo, printf, comments, labels, banners, or formatting commands inside the command field. " +
-		"Do not chain commands with ';', '&&', '||', or pipes unless the user explicitly asked for a pipeline and it is strictly necessary. " +
-		"Prefer one atomic command per step. " +
-		"Use session memory to resolve follow-up references such as 'before', 'that', 'do it now', or 'the docker thing'. " +
-		"If the user is clearly continuing an earlier task, continue that task instead of treating the request as unrelated. " +
-		"If a later action depends on information that must be discovered from command output first, return only the information-gathering commands for this round and set requires_observation=true. " +
-		"Never include a command whose arguments or options would change based on the output of another command in the same response; describe it in observation_reason instead. " +
-		"When requires_observation=true, also set observation_reason to a short explanation of what still needs to be learned from the real output. " +
-		"After the shell provides that observed output in a later prompt, use it to produce the next commands. " +
-		"If a command cannot be built yet because a mandatory user-provided detail is still missing, return no commands and set requires_input=true. " +
-		"When requires_input=true, also set input_reason to a short explanation of which detail is missing. " +
-		"If the observed outputs already answer the user's question, return no commands and put the answer in summary instead of asking to run more commands. " +
-		"However, if the current user instruction explicitly asks to repeat, rerun, retry, or execute an earlier action again, treat it as a fresh execution request. " +
-		"You may briefly mention that the recent observation probably made the repeat unnecessary, but still propose the command again when it is concrete and safe enough to run through Shellia's normal confirmation flow. " +
-		"Do not repeat an inspection command that was already executed and already provided the needed information, unless the user explicitly asks to rerun it. " +
-		"When only a small detail is missing, prefer a short safe inspection or verification command over returning no commands. " +
-		"When investigating how a local tool or dependency is installed or managed, do not stop after a single unsuccessful ownership check if other plausible local discovery paths still exist. " +
-		"Do not refuse only because a referenced file has an unusual extension; if needed, inspect it safely first. " +
-		"If the task is ambiguous, choose the safest minimal plan. " +
-		"Return only strict JSON with this exact schema: " +
-		`{"summary":"short explanation","requires_observation":false,"observation_reason":"","requires_input":false,"input_reason":"","commands":[{"command":"string","purpose":"string","risk":"safe|medium|high","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}. ` +
-		"The commands array may contain multiple commands in execution order. " +
-		"Any command that changes the filesystem, uses sudo, changes system users, permissions, services, packages, or network state must have requires_confirmation=true. " +
-		"Because Shellia already asks the user to confirm risky commands before execution, prefer a known non-interactive confirmation flag only when you are confident it is correct instead of making the tool ask for confirmation again. " +
-		"If a command launches a prompt, REPL, TUI, password prompt, interactive installer, fuzzy finder, or anything that needs a real terminal session, set interactive=true and explain why in interactive_reason. " +
-		"If observed output shows a confirmation prompt or another terminal question, do not repeat the same non-interactive command; choose a known non-interactive variant with high confidence or set interactive=true. " +
-		"If the request cannot be fulfilled safely with confidence, return an empty commands array."
+	return strings.Join(buildSystemPromptSentences(), " ")
+}
+
+// buildSystemPromptSentences returns the stable system prompt contract.
+func buildSystemPromptSentences() []string {
+	return []string{
+		"You are a shell planning assistant.",
+		"You convert natural language instructions into shell commands for the user's current machine.",
+		"You must be conservative, accurate, and avoid hallucinating tools or paths.",
+		"Only use commands that are standard or clearly available from the provided context.",
+		"Never propose interactive editors like nano, vim, less, top, or man.",
+		"Do not use placeholders.",
+		"Return pure shell commands only.",
+		"Do not include explanatory echo, printf, comments, labels, banners, or formatting commands inside the command field.",
+		"Do not chain commands with ';', '&&', '||', or pipes unless the user explicitly asked for a pipeline and it is strictly necessary.",
+		"Prefer one atomic command per step.",
+		"Use session memory to resolve follow-up references such as 'before', 'that', 'do it now', or 'the docker thing'.",
+		"If the user is clearly continuing an earlier task, continue that task instead of treating the request as unrelated.",
+		"If a later action depends on information that must be discovered from command output first, return only the information-gathering commands for this round and set requires_observation=true.",
+		"Never include a command whose arguments or options would change based on the output of another command in the same response; describe it in observation_reason instead.",
+		"When requires_observation=true, also set observation_reason to a short explanation of what still needs to be learned from the real output.",
+		"After the shell provides that observed output in a later prompt, use it to produce the next commands.",
+		"If a command cannot be built yet because a mandatory user-provided detail is still missing, return no commands and set requires_input=true.",
+		"When requires_input=true, also set input_reason to a short explanation of which detail is missing.",
+		"If the observed outputs already answer the user's question, return no commands and put the answer in summary instead of asking to run more commands.",
+		"However, if the current user instruction explicitly asks to repeat, rerun, retry, or execute an earlier action again, treat it as a fresh execution request.",
+		"You may briefly mention that the recent observation probably made the repeat unnecessary, but still propose the command again when it is concrete and safe enough to run through Shellia's normal confirmation flow.",
+		"Do not repeat an inspection command that was already executed and already provided the needed information, unless the user explicitly asks to rerun it.",
+		"When only a small detail is missing, prefer a short safe inspection or verification command over returning no commands.",
+		"When investigating how a local tool or dependency is installed or managed, do not stop after a single unsuccessful ownership check if other plausible local discovery paths still exist.",
+		"Do not refuse only because a referenced file has an unusual extension; if needed, inspect it safely first.",
+		"If the task is ambiguous, choose the safest minimal plan.",
+		"Return only strict JSON with this exact schema:",
+		`{"summary":"short explanation","requires_observation":false,"observation_reason":"","requires_input":false,"input_reason":"","commands":[{"command":"string","purpose":"string","risk":"safe|medium|high","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}.`,
+		"The commands array may contain multiple commands in execution order.",
+		"Any command that changes the filesystem, uses sudo, changes system users, permissions, services, packages, or network state must have requires_confirmation=true.",
+		"Because Shellia already asks the user to confirm risky commands before execution, prefer a known non-interactive confirmation flag only when you are confident it is correct instead of making the tool ask for confirmation again.",
+		"If a command launches a prompt, REPL, TUI, password prompt, interactive installer, fuzzy finder, or anything that needs a real terminal session, set interactive=true and explain why in interactive_reason.",
+		"If observed output shows a confirmation prompt or another terminal question, do not repeat the same non-interactive command; choose a known non-interactive variant with high confidence or set interactive=true.",
+		"If the request cannot be fulfilled safely with confidence, return an empty commands array.",
+	}
 }
 
 // buildPlanOnlySystemPrompt defines the non-executing plan contract.
 func buildPlanOnlySystemPrompt() string {
-	return "You are a shell planning assistant in non-executing plan mode. " +
-		"You produce an operational plan for a human to review and run manually; Shellia will not execute commands. " +
-		"You must be conservative, accurate, and avoid hallucinating tools or paths. " +
-		"Only use commands that are standard or clearly available from the provided context. " +
-		"Never propose interactive editors like nano, vim, less, top, or man. " +
-		"Do not use placeholders in the command field. " +
-		"Return pure shell commands only in command fields. " +
-		"Do not include explanatory echo, printf, comments, labels, banners, or formatting commands inside command fields unless the user's task is specifically to create file content. " +
-		"Split the plan into useful stages through command purposes: preparation, inspection, decision, and manual execution. " +
-		"Include only commands that can be written with certainty using currently known information. " +
-		"Avoid redundant inspection steps; prefer one command that returns the fields needed for a decision. " +
-		"If later work depends on command output, return only the inspection and preparation commands that are exact now, set requires_observation=true, and write observation_reason as explicit branches. " +
-		"Never include a command in the commands array whose arguments or options would only be known after seeing inspection output; put those commands in observation_reason instead. " +
-		"The observation_reason must say what to do if the output shows a usable value, and what to do if it does not. " +
-		"If a later command cannot be exact until the user chooses a value from output, describe the command shape in observation_reason using the value by name, not as a placeholder command. " +
-		"If exact planning is impossible because a mandatory user-provided detail is missing, return no commands and set requires_input=true with a short input_reason. " +
-		"Return only strict JSON with this exact schema: " +
-		`{"summary":"short operational plan summary","requires_observation":false,"observation_reason":"","requires_input":false,"input_reason":"","commands":[{"command":"string","purpose":"string","risk":"safe|medium|high","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}. ` +
-		"The commands array may contain multiple commands in manual execution order. " +
-		"Any command that changes the filesystem, uses sudo, changes system users, permissions, services, packages, or network state must have requires_confirmation=true. " +
-		"If a command launches a prompt, REPL, TUI, password prompt, interactive installer, fuzzy finder, or anything that needs a real terminal session, set interactive=true and explain why in interactive_reason. " +
-		"If the request cannot be planned safely with confidence, return an empty commands array and explain it in summary."
+	return strings.Join(buildPlanOnlySystemPromptSentences(), " ")
+}
+
+// buildPlanOnlySystemPromptSentences returns the stable plan-only prompt contract.
+func buildPlanOnlySystemPromptSentences() []string {
+	return []string{
+		"You are a shell planning assistant in non-executing plan mode.",
+		"You produce an operational plan for a human to review and run manually; Shellia will not execute commands.",
+		"You must be conservative, accurate, and avoid hallucinating tools or paths.",
+		"Only use commands that are standard or clearly available from the provided context.",
+		"Never propose interactive editors like nano, vim, less, top, or man.",
+		"Do not use placeholders in the command field.",
+		"Return pure shell commands only in command fields.",
+		"Do not include explanatory echo, printf, comments, labels, banners, or formatting commands inside command fields unless the user's task is specifically to create file content.",
+		"Split the plan into useful stages through command purposes: preparation, inspection, decision, and manual execution.",
+		"Include only commands that can be written with certainty using currently known information.",
+		"Avoid redundant inspection steps; prefer one command that returns the fields needed for a decision.",
+		"If later work depends on command output, return only the inspection and preparation commands that are exact now, set requires_observation=true, and write observation_reason as explicit branches.",
+		"Never include a command in the commands array whose arguments or options would only be known after seeing inspection output; put those commands in observation_reason instead.",
+		"The observation_reason must say what to do if the output shows a usable value, and what to do if it does not.",
+		"If a later command cannot be exact until the user chooses a value from output, describe the command shape in observation_reason using the value by name, not as a placeholder command.",
+		"If exact planning is impossible because a mandatory user-provided detail is missing, return no commands and set requires_input=true with a short input_reason.",
+		"Return only strict JSON with this exact schema:",
+		`{"summary":"short operational plan summary","requires_observation":false,"observation_reason":"","requires_input":false,"input_reason":"","commands":[{"command":"string","purpose":"string","risk":"safe|medium|high","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}.`,
+		"The commands array may contain multiple commands in manual execution order.",
+		"Any command that changes the filesystem, uses sudo, changes system users, permissions, services, packages, or network state must have requires_confirmation=true.",
+		"If a command launches a prompt, REPL, TUI, password prompt, interactive installer, fuzzy finder, or anything that needs a real terminal session, set interactive=true and explain why in interactive_reason.",
+		"If the request cannot be planned safely with confidence, return an empty commands array and explain it in summary.",
+	}
 }
 
 // buildUserPrompt attaches the detected local context to the model prompt.
-func buildUserPrompt(cfg config, instruction string, resolvedInstruction string, ctxInfo contextInfo, history []historyEntry, state sessionState, observations []commandExecution) string {
+func buildUserPrompt(request llmPromptRequest) string {
+	cfg := request.Config
+	instruction := request.Instruction
+	resolvedInstruction := request.ResolvedInstruction
+	ctxInfo := request.ContextInfo
+	history := request.History
+	state := request.State
+	observations := request.Observations
+
 	historyBlock := ""
 	if cfg.IncludeSessionMemory && len(history) > 0 {
 		var b strings.Builder
@@ -608,17 +651,45 @@ func buildUserPrompt(cfg config, instruction string, resolvedInstruction string,
 
 	contextBlock := buildPromptContextBlock(cfg, ctxInfo)
 
-	return fmt.Sprintf(
-		"User instruction:\n%s%s%s%s%s\nCurrent context:\n%s%s\n\nRules:\n- Output exactly one JSON object. After the final closing brace, stop immediately. Do not repeat the JSON object. Do not append markdown, prose, or a second JSON object.\n- Commands run in the current Shellia session directory unless a command explicitly operates elsewhere.\n- Do not invent files, branches, remotes, package managers, or paths.\n- Prefer simple commands.\n- Return pure commands only, without echo/printf or shell decorations.\n- Split independent actions into separate commands instead of chaining them.\n- If a follow-up refers to an earlier task, use the resolved planning context, recent reusable observations, and session memory to continue it.\n- Recent reusable observations are provided for task continuity only — to resolve cross-turn references like \"that file\" or \"the docker thing\". They are NOT a reason to skip a fresh execution request.\n- If observed outputs from the CURRENT task round already answer the question, return no commands and answer directly in summary. Never skip commands based solely on reusable observations from prior turns.\n- Do not repeat an inspection command that already produced the needed information unless the user explicitly asks to rerun it.\n- If observed outputs from this task are provided, use them to decide the next commands instead of guessing.\n- If observed output shows a confirmation prompt or terminal question, do not repeat the same non-interactive command; choose a known non-interactive variant with high confidence or set interactive=true.\n- If Shellia already asks the user to confirm a risky command, avoid a second in-command confirmation prompt when a known non-interactive flag is available with high confidence.\n- If a mandatory user-provided detail is still missing, return no commands and explain the missing detail in summary and input_reason.\n- If a command needs a real terminal session, set interactive=true and explain why in interactive_reason.\n- If a request is still somewhat underspecified but can be advanced safely, propose a short inspection or verification command instead of immediately returning no commands.\n- If a referenced file might contain executable code, inspect or verify it before refusing based only on its extension.\n- If the request cannot be fulfilled safely with confidence, return an empty commands array and explain it in summary.\n%s",
-		instruction,
-		resolutionBlock,
-		memoryBlock,
-		reusableObservationBlock,
-		observationBlock,
-		contextBlock,
-		historyBlock,
-		planOnlyRules,
-	)
+	var prompt strings.Builder
+	prompt.WriteString("User instruction:\n")
+	prompt.WriteString(instruction)
+	prompt.WriteString(resolutionBlock)
+	prompt.WriteString(memoryBlock)
+	prompt.WriteString(reusableObservationBlock)
+	prompt.WriteString(observationBlock)
+	prompt.WriteString("\nCurrent context:\n")
+	prompt.WriteString(contextBlock)
+	prompt.WriteString(historyBlock)
+	prompt.WriteString("\n\nRules:\n")
+	prompt.WriteString(strings.Join(buildUserPromptRules(), "\n"))
+	prompt.WriteString("\n")
+	prompt.WriteString(planOnlyRules)
+	return prompt.String()
+}
+
+// buildUserPromptRules returns the stable planning rules included with every prompt.
+func buildUserPromptRules() []string {
+	return []string{
+		"- Output exactly one JSON object. After the final closing brace, stop immediately. Do not repeat the JSON object. Do not append markdown, prose, or a second JSON object.",
+		"- Commands run in the current Shellia session directory unless a command explicitly operates elsewhere.",
+		"- Do not invent files, branches, remotes, package managers, or paths.",
+		"- Prefer simple commands.",
+		"- Return pure commands only, without echo/printf or shell decorations.",
+		"- Split independent actions into separate commands instead of chaining them.",
+		"- If a follow-up refers to an earlier task, use the resolved planning context, recent reusable observations, and session memory to continue it.",
+		"- Recent reusable observations are provided for task continuity only — to resolve cross-turn references like \"that file\" or \"the docker thing\". They are NOT a reason to skip a fresh execution request.",
+		"- If observed outputs from the CURRENT task round already answer the question, return no commands and answer directly in summary. Never skip commands based solely on reusable observations from prior turns.",
+		"- Do not repeat an inspection command that already produced the needed information unless the user explicitly asks to rerun it.",
+		"- If observed outputs from this task are provided, use them to decide the next commands instead of guessing.",
+		"- If observed output shows a confirmation prompt or terminal question, do not repeat the same non-interactive command; choose a known non-interactive variant with high confidence or set interactive=true.",
+		"- If Shellia already asks the user to confirm a risky command, avoid a second in-command confirmation prompt when a known non-interactive flag is available with high confidence.",
+		"- If a mandatory user-provided detail is still missing, return no commands and explain the missing detail in summary and input_reason.",
+		"- If a command needs a real terminal session, set interactive=true and explain why in interactive_reason.",
+		"- If a request is still somewhat underspecified but can be advanced safely, propose a short inspection or verification command instead of immediately returning no commands.",
+		"- If a referenced file might contain executable code, inspect or verify it before refusing based only on its extension.",
+		"- If the request cannot be fulfilled safely with confidence, return an empty commands array and explain it in summary.",
+	}
 }
 
 // buildPromptContextBlock renders the local context fields enabled in config.
@@ -654,8 +725,9 @@ func buildPromptContextBlock(cfg config, ctxInfo contextInfo) string {
 }
 
 // buildDiscoveryRepairPrompt adds focused discovery guidance on top of the normal planning context.
-func buildDiscoveryRepairPrompt(cfg config, instruction string, resolvedInstruction string, ctxInfo contextInfo, history []historyEntry, state sessionState, observations []commandExecution, previous llmResponse) string {
-	basePrompt := buildUserPrompt(cfg, instruction, resolvedInstruction, ctxInfo, history, state, observations)
+func buildDiscoveryRepairPrompt(request discoveryPromptRequest) string {
+	basePrompt := buildUserPrompt(request.Prompt)
+	previous := request.Previous
 
 	var b strings.Builder
 	b.WriteString(basePrompt)

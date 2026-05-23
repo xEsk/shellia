@@ -7,7 +7,6 @@ import (
 
 var backtickCommandPattern = regexp.MustCompile("`([^`]+)`")
 
-
 // updateSessionState stores durable session memory after a successful turn.
 func updateSessionState(state *sessionState, instruction string, turn turnResult, cfg config) {
 	if state == nil {

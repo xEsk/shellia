@@ -174,14 +174,24 @@ func TestBuildUserPromptAlwaysAddsJSONGuidance(t *testing.T) {
 	localCfg := defaultConfig()
 	localCfg.BaseURL = "http://localhost:8080/v1"
 	localCfg.APIKey = ""
-	localPrompt := buildUserPrompt(localCfg, "list files", "list files", ctxInfo, nil, sessionState{}, nil)
+	localPrompt := buildUserPrompt(llmPromptRequest{
+		Config:              localCfg,
+		ContextInfo:         ctxInfo,
+		Instruction:         "list files",
+		ResolvedInstruction: "list files",
+	})
 	if !strings.Contains(localPrompt, "Do not repeat the JSON object") {
 		t.Fatalf("buildUserPrompt(local) missing JSON guidance: %q", localPrompt)
 	}
 
 	keyedCfg := defaultConfig()
 	keyedCfg.APIKey = "test-key"
-	keyedPrompt := buildUserPrompt(keyedCfg, "list files", "list files", ctxInfo, nil, sessionState{}, nil)
+	keyedPrompt := buildUserPrompt(llmPromptRequest{
+		Config:              keyedCfg,
+		ContextInfo:         ctxInfo,
+		Instruction:         "list files",
+		ResolvedInstruction: "list files",
+	})
 	if !strings.Contains(keyedPrompt, "Do not repeat the JSON object") {
 		t.Fatalf("buildUserPrompt(keyed) missing JSON guidance: %q", keyedPrompt)
 	}
@@ -202,7 +212,12 @@ func TestBuildUserPromptIncludesGitContextByDefault(t *testing.T) {
 		},
 	}
 
-	prompt := buildUserPrompt(cfg, "check status", "check status", ctxInfo, nil, sessionState{}, nil)
+	prompt := buildUserPrompt(llmPromptRequest{
+		Config:              cfg,
+		ContextInfo:         ctxInfo,
+		Instruction:         "check status",
+		ResolvedInstruction: "check status",
+	})
 
 	for _, snippet := range []string{"- git.is_repo: true", "- git.branch: main", "- git.status_short:\n M llm.go"} {
 		if !strings.Contains(prompt, snippet) {
@@ -227,7 +242,12 @@ func TestBuildUserPromptOmitsGitContextWhenDisabled(t *testing.T) {
 		},
 	}
 
-	prompt := buildUserPrompt(cfg, "check status", "check status", ctxInfo, nil, sessionState{}, nil)
+	prompt := buildUserPrompt(llmPromptRequest{
+		Config:              cfg,
+		ContextInfo:         ctxInfo,
+		Instruction:         "check status",
+		ResolvedInstruction: "check status",
+	})
 
 	for _, snippet := range []string{"git.is_repo", "git.branch", "git.status_short"} {
 		if strings.Contains(prompt, snippet) {
@@ -255,7 +275,14 @@ func TestBuildUserPromptOmitsSessionMemoryWhenDisabled(t *testing.T) {
 		LastReferencedFile:   "main.go",
 	}
 
-	prompt := buildUserPrompt(cfg, "do it", "Resolved: do previous task", ctxInfo, history, state, nil)
+	prompt := buildUserPrompt(llmPromptRequest{
+		Config:              cfg,
+		ContextInfo:         ctxInfo,
+		Instruction:         "do it",
+		ResolvedInstruction: "Resolved: do previous task",
+		History:             history,
+		State:               state,
+	})
 
 	for _, snippet := range []string{"Recent session context:", "Session memory:", "Resolved planning context:", "previous task", "last_suggested_command"} {
 		if strings.Contains(prompt, snippet) {
@@ -283,7 +310,14 @@ func TestBuildUserPromptOmitsRecentObservationsWhenDisabled(t *testing.T) {
 		{Purpose: "List files", Command: "ls", Stdout: capturedStream{Text: "main.go"}},
 	}
 
-	prompt := buildUserPrompt(cfg, "run it again", "run it again", ctxInfo, nil, state, observations)
+	prompt := buildUserPrompt(llmPromptRequest{
+		Config:              cfg,
+		ContextInfo:         ctxInfo,
+		Instruction:         "run it again",
+		ResolvedInstruction: "run it again",
+		State:               state,
+		Observations:        observations,
+	})
 
 	for _, snippet := range []string{"Recent reusable observations:", "Observed outputs from the current task:", "git status --short", "main.go"} {
 		if strings.Contains(prompt, snippet) {
@@ -303,7 +337,12 @@ func TestBuildUserPromptAddsPlanOnlyGuidance(t *testing.T) {
 		Shell: "/bin/zsh",
 	}
 
-	prompt := buildUserPrompt(cfg, "inspect docker", "inspect docker", ctxInfo, nil, sessionState{}, nil)
+	prompt := buildUserPrompt(llmPromptRequest{
+		Config:              cfg,
+		ContextInfo:         ctxInfo,
+		Instruction:         "inspect docker",
+		ResolvedInstruction: "inspect docker",
+	})
 
 	requiredSnippets := []string{
 		"Plan-only mode:",
@@ -339,7 +378,13 @@ func TestBuildUserPromptMakesReusableObservationsNonBlocking(t *testing.T) {
 		},
 	}
 
-	prompt := buildUserPrompt(cfg, "run it again", "run it again", ctxInfo, nil, state, nil)
+	prompt := buildUserPrompt(llmPromptRequest{
+		Config:              cfg,
+		ContextInfo:         ctxInfo,
+		Instruction:         "run it again",
+		ResolvedInstruction: "run it again",
+		State:               state,
+	})
 
 	requiredSnippets := []string{
 		"Recent reusable observations:",
@@ -383,7 +428,17 @@ func TestBuildDiscoveryRepairPromptIncludesContext(t *testing.T) {
 		InputReason:   "Need the installation method.",
 	}
 
-	prompt := buildDiscoveryRepairPrompt(cfg, "actualitza el claude-code", "actualitza el claude-code", ctxInfo, history, state, nil, previous)
+	prompt := buildDiscoveryRepairPrompt(discoveryPromptRequest{
+		Prompt: llmPromptRequest{
+			Config:              cfg,
+			ContextInfo:         ctxInfo,
+			Instruction:         "actualitza el claude-code",
+			ResolvedInstruction: "actualitza el claude-code",
+			History:             history,
+			State:               state,
+		},
+		Previous: previous,
+	})
 
 	requiredSnippets := []string{
 		"User instruction:",

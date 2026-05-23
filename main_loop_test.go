@@ -218,6 +218,15 @@ func loopTestContext(t *testing.T) contextInfo {
 	}
 }
 
+// loopTurnRequest returns a minimal turn request for main loop tests.
+func loopTurnRequest(cfg config, ctxInfo *contextInfo, instruction string) turnRequest {
+	return turnRequest{
+		Config:      cfg,
+		ContextInfo: ctxInfo,
+		Instruction: instruction,
+	}
+}
+
 // TestSwitchInteractiveModelAppliesAndPersistsDefault checks /model changes the runtime profile and config default.
 func TestSwitchInteractiveModelAppliesAndPersistsDefault(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
@@ -255,7 +264,7 @@ func TestSwitchInteractiveModelAppliesAndPersistsDefault(t *testing.T) {
 
 	ctxInfo := loopTestContext(t)
 	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
-		if _, err := runTurn(context.Background(), deps, false, cfg, &ctxInfo, "answer", nil, sessionState{}); err != nil {
+		if _, err := runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "answer")); err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
 	})
@@ -483,7 +492,7 @@ func TestRunTurnPrintsRawPrompt(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 
 	output := captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
-		if _, err := runTurn(context.Background(), deps, false, cfg, &ctxInfo, "answer directly", nil, sessionState{}); err != nil {
+		if _, err := runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "answer directly")); err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
 	})
@@ -513,7 +522,7 @@ func TestRunTurnReturnsFinalAnswerWithoutCommands(t *testing.T) {
 	var result turnResult
 	output := captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
 		var err error
-		result, err = runTurn(context.Background(), deps, false, cfg, &ctxInfo, "answer directly", nil, sessionState{})
+		result, err = runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "answer directly"))
 		if err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
@@ -547,7 +556,7 @@ func TestRunTurnExecutesSafePlanAndStreamsSummary(t *testing.T) {
 	var result turnResult
 	captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
 		var err error
-		result, err = runTurn(context.Background(), deps, false, cfg, &ctxInfo, "print marker", nil, sessionState{})
+		result, err = runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "print marker"))
 		if err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
@@ -592,7 +601,7 @@ func TestRunTurnDeclinesPlanWithoutExecuting(t *testing.T) {
 		}
 
 		var err error
-		result, err = runTurn(context.Background(), deps, false, cfg, &ctxInfo, "print marker", nil, sessionState{})
+		result, err = runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "print marker"))
 		if err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
@@ -630,7 +639,7 @@ func TestRunTurnPlanOnlyPrintsCommandsWithoutExecuting(t *testing.T) {
 		}
 
 		var err error
-		result, err = runTurn(context.Background(), deps, false, cfg, &ctxInfo, "create marker", nil, sessionState{})
+		result, err = runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "create marker"))
 		if err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
@@ -680,7 +689,7 @@ func TestRunTurnPlanOnlyExecutesAcceptedPlan(t *testing.T) {
 		}
 
 		var err error
-		result, err = runTurn(context.Background(), deps, false, cfg, &ctxInfo, "create marker", nil, sessionState{})
+		result, err = runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "create marker"))
 		if err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
@@ -710,7 +719,7 @@ func TestRunTurnPlanOnlyExplainsObservationDependency(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 
 	output := captureMainLoopIO(t, "no\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		if _, err := runTurn(context.Background(), deps, false, cfg, &ctxInfo, "install deps", nil, sessionState{}); err != nil {
+		if _, err := runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "install deps")); err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
 	})
@@ -738,7 +747,7 @@ func TestRunTurnPlanOnlySkipsDiscoveryRepair(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 
 	output := captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
-		if _, err := runTurn(context.Background(), deps, false, cfg, &ctxInfo, "run php in docker", nil, sessionState{}); err != nil {
+		if _, err := runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "run php in docker")); err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
 	})
@@ -764,7 +773,7 @@ func TestRunTurnPlanOnlyUsesDedicatedSystemPrompt(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 
 	captureMainLoopIO(t, "no\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		if _, err := runTurn(context.Background(), deps, false, cfg, &ctxInfo, "create marker", nil, sessionState{}); err != nil {
+		if _, err := runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "create marker")); err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
 	})

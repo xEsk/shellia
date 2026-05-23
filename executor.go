@@ -44,6 +44,27 @@ type commandExecution struct {
 	ExitCode int
 }
 
+// commandRunRequest groups the inputs needed to launch a shell command.
+type commandRunRequest struct {
+	ParentContext context.Context
+	Deps          runtimeDeps
+	UI            bool
+	Config        config
+	ContextInfo   contextInfo
+	Box           *stepBox
+	Command       string
+	Timeout       time.Duration
+	DirectStream  bool
+	Interactive   bool
+}
+
+// commandRunResult carries command output plus rendering state.
+type commandRunResult struct {
+	Output    commandExecution
+	ExitCode  int
+	HadOutput bool
+}
+
 // commandRunError represents an executed command that finished with an error or timeout.
 type commandRunError struct {
 	Command  string
@@ -457,13 +478,22 @@ func executeCommands(ctx context.Context, deps runtimeDeps, ui bool, cfg config,
 			}
 		}
 
-		output, exitCode, hadOutput, err := executeOneCommand(ctx, deps, ui, cfg, *ctxInfo, box, effectiveCommand, cfg.CommandTimeout, false, interactive)
+		result, err := executeOneCommand(ctx, commandRunRequest{
+			Deps:        deps,
+			UI:          ui,
+			Config:      cfg,
+			ContextInfo: *ctxInfo,
+			Box:         box,
+			Command:     effectiveCommand,
+			Timeout:     cfg.CommandTimeout,
+			Interactive: interactive,
+		})
 		executions = append(executions, commandExecution{
 			Command:  effectiveCommand,
 			Purpose:  plan.Purpose,
-			Stdout:   output.Stdout,
-			Stderr:   output.Stderr,
-			ExitCode: exitCode,
+			Stdout:   result.Output.Stdout,
+			Stderr:   result.Output.Stderr,
+			ExitCode: result.ExitCode,
 		})
 		if err != nil {
 			if box != nil {
@@ -492,8 +522,8 @@ func executeCommands(ctx context.Context, deps runtimeDeps, ui bool, cfg config,
 			return executions, err
 		}
 
-		applySessionState(ctxInfo, cfg, effectiveCommand, exitCode)
-		showCompletedMarker(box, hadOutput)
+		applySessionState(ctxInfo, cfg, effectiveCommand, result.ExitCode)
+		showCompletedMarker(box, result.HadOutput)
 		if box != nil {
 			box.Close()
 		}
@@ -514,24 +544,23 @@ func executeManualCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg co
 		printInteractiveCommandStartTo(deps.Stdout, ui)
 	}
 
-	output, exitCode, hadOutput, err := executeOneCommand(
-		ctx,
-		deps,
-		ui,
-		cfg,
-		*ctxInfo,
-		box,
-		command,
-		cfg.CommandTimeout,
-		renderMode == manualRenderDirect,
-		renderMode == manualRenderInteractive || renderMode == manualRenderShellInteractive,
-	)
+	result, err := executeOneCommand(ctx, commandRunRequest{
+		Deps:         deps,
+		UI:           ui,
+		Config:       cfg,
+		ContextInfo:  *ctxInfo,
+		Box:          box,
+		Command:      command,
+		Timeout:      cfg.CommandTimeout,
+		DirectStream: renderMode == manualRenderDirect,
+		Interactive:  renderMode == manualRenderInteractive || renderMode == manualRenderShellInteractive,
+	})
 	execution := commandExecution{
 		Command:  command,
 		Purpose:  "Manual shell command",
-		Stdout:   output.Stdout,
-		Stderr:   output.Stderr,
-		ExitCode: exitCode,
+		Stdout:   result.Output.Stdout,
+		Stderr:   result.Output.Stderr,
+		ExitCode: result.ExitCode,
 	}
 
 	if err != nil {
@@ -553,8 +582,8 @@ func executeManualCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg co
 		return execution, err
 	}
 
-	applySessionState(ctxInfo, cfg, command, exitCode)
-	showCompletedMarker(box, hadOutput)
+	applySessionState(ctxInfo, cfg, command, result.ExitCode)
+	showCompletedMarker(box, result.HadOutput)
 	if box != nil {
 		box.Close()
 	}
@@ -570,14 +599,19 @@ func showCompletedMarker(box *stepBox, hadOutput bool) {
 }
 
 // executeOneCommand launches a command via the current shell with real-time output streaming.
-// hadOutput is true when command output was rendered to the user.
-func executeOneCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo contextInfo, box *stepBox, command string, timeout time.Duration, directStream bool, interactive bool) (output commandExecution, exitCode int, hadOutput bool, err error) {
-	deps = deps.withDefaults()
+func executeOneCommand(ctx context.Context, request commandRunRequest) (commandRunResult, error) {
+	deps := request.Deps.withDefaults()
+	ui := request.UI
+	cfg := request.Config
+	ctxInfo := request.ContextInfo
+	box := request.Box
+	command := request.Command
+
 	var cmdCtx context.Context
 	var cancel context.CancelFunc
 
-	if timeout > 0 {
-		cmdCtx, cancel = context.WithTimeout(ctx, timeout)
+	if request.Timeout > 0 {
+		cmdCtx, cancel = context.WithTimeout(ctx, request.Timeout)
 	} else {
 		cmdCtx, cancel = context.WithCancel(ctx)
 	}
@@ -588,16 +622,40 @@ func executeOneCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg confi
 		shellPath = "/bin/sh"
 	}
 
-	if interactive {
+	if request.Interactive {
 		if box != nil {
 			box.Section("interactive session", colorYellow)
 			box.Text("Shellia will resume when the command exits.", colorDim)
 			box.Close()
 		}
-		return executeInteractiveCommand(cmdCtx, deps, ui, cfg, ctxInfo, shellPath, command)
+		output, exitCode, hadOutput, err := executeInteractiveCommand(cmdCtx, deps, ui, cfg, ctxInfo, shellPath, command)
+		return commandRunResult{
+			Output:    output,
+			ExitCode:  exitCode,
+			HadOutput: hadOutput,
+		}, err
 	}
 
-	cmd := exec.CommandContext(cmdCtx, shellPath, "-c", command)
+	request.ParentContext = ctx
+	request.Deps = deps
+	return executeNonInteractiveCommand(cmdCtx, request, shellPath, cancel)
+}
+
+// executeNonInteractiveCommand runs a shell command with captured stdout/stderr streams.
+func executeNonInteractiveCommand(
+	ctx context.Context,
+	request commandRunRequest,
+	shellPath string,
+	cancel context.CancelFunc,
+) (commandRunResult, error) {
+	deps := request.Deps
+	ui := request.UI
+	cfg := request.Config
+	ctxInfo := request.ContextInfo
+	box := request.Box
+	command := request.Command
+
+	cmd := exec.CommandContext(ctx, shellPath, "-c", command)
 	cmd.Dir = ctxInfo.CWD
 	cmd.Stdin = nil
 
@@ -610,7 +668,7 @@ func executeOneCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg confi
 	var stdoutWriter *prefixedWriter
 	var stderrWriter *prefixedWriter
 
-	if directStream {
+	if request.DirectStream {
 		stdoutStream = &directShellWriter{ui: ui, target: deps.Stdout, lineStart: true}
 		stderrStream = &directShellWriter{ui: ui, target: deps.Stderr, lineStart: true}
 	} else {
@@ -624,38 +682,57 @@ func executeOneCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg confi
 	cmd.Stderr = io.MultiWriter(stderrStream, stderrCapture, detector)
 
 	if err := cmd.Start(); err != nil {
-		return commandExecution{}, 1, false, fmt.Errorf("cannot start command %q: %w", command, err)
+		return commandRunResult{ExitCode: 1}, fmt.Errorf("cannot start command %q: %w", command, err)
 	}
 
 	waitErr := cmd.Wait()
 	if stdoutWriter != nil {
 		if err := stdoutWriter.Flush(); err != nil {
-			return commandExecution{Stdout: stdoutCapture.Stream(), Stderr: stderrCapture.Stream()}, 1, stdoutWriter.started || stderrWriter.started, err
+			return commandRunResult{
+				Output:    commandExecution{Stdout: stdoutCapture.Stream(), Stderr: stderrCapture.Stream()},
+				ExitCode:  1,
+				HadOutput: stdoutWriter.started || stderrWriter.started,
+			}, err
 		}
 	}
 	if stderrWriter != nil {
 		if err := stderrWriter.Flush(); err != nil {
-			return commandExecution{Stdout: stdoutCapture.Stream(), Stderr: stderrCapture.Stream()}, 1, stdoutWriter.started || stderrWriter.started, err
+			return commandRunResult{
+				Output:    commandExecution{Stdout: stdoutCapture.Stream(), Stderr: stderrCapture.Stream()},
+				ExitCode:  1,
+				HadOutput: stdoutWriter.started || stderrWriter.started,
+			}, err
 		}
 	}
-	if directStream {
+	if request.DirectStream {
 		if flusher, ok := stdoutStream.(*directShellWriter); ok {
 			if err := flusher.Flush(); err != nil {
-				return commandExecution{Stdout: stdoutCapture.Stream(), Stderr: stderrCapture.Stream()}, 1, false, err
+				return commandRunResult{
+					Output:   commandExecution{Stdout: stdoutCapture.Stream(), Stderr: stderrCapture.Stream()},
+					ExitCode: 1,
+				}, err
 			}
 		}
 		if flusher, ok := stderrStream.(*directShellWriter); ok {
 			if err := flusher.Flush(); err != nil {
-				return commandExecution{Stdout: stdoutCapture.Stream(), Stderr: stderrCapture.Stream()}, 1, false, err
+				return commandRunResult{
+					Output:   commandExecution{Stdout: stdoutCapture.Stream(), Stderr: stderrCapture.Stream()},
+					ExitCode: 1,
+				}, err
 			}
 		}
 	}
-	if directStream {
+	hadOutput := false
+	if request.DirectStream {
 		hadOutput = stdoutCapture.totalBytes > 0 || stderrCapture.totalBytes > 0
 	} else {
 		hadOutput = stdoutWriter.started || stderrWriter.started
 	}
-	output = commandExecution{Stdout: stdoutCapture.Stream(), Stderr: stderrCapture.Stream()}
+	output := commandExecution{Stdout: stdoutCapture.Stream(), Stderr: stderrCapture.Stream()}
+	result := commandRunResult{
+		Output:    output,
+		HadOutput: hadOutput,
+	}
 
 	if promptErr := detector.promptError(); promptErr != nil {
 		code := 1
@@ -663,16 +740,18 @@ func executeOneCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg confi
 		if errors.As(waitErr, &exitErr) {
 			code = exitErr.ExitCode()
 		}
-		return output, code, hadOutput, promptErr
+		result.ExitCode = code
+		return result, promptErr
 	}
 
-	if cmdCtx.Err() == context.DeadlineExceeded {
-		return output, 124, hadOutput, &commandRunError{Command: command, ExitCode: 124, TimedOut: true}
+	if ctx.Err() == context.DeadlineExceeded {
+		result.ExitCode = 124
+		return result, &commandRunError{Command: command, ExitCode: 124, TimedOut: true}
 	}
-	if ctx.Err() != nil {
+	if request.ParentContext.Err() != nil {
 		// Parent context cancelled (Ctrl+C): propagate directly so callers can
 		// detect context.Canceled with errors.Is and abort cleanly.
-		return output, 0, hadOutput, ctx.Err()
+		return result, request.ParentContext.Err()
 	}
 	if waitErr != nil {
 		code := 1
@@ -680,10 +759,11 @@ func executeOneCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg confi
 		if errors.As(waitErr, &exitErr) {
 			code = exitErr.ExitCode()
 		}
-		return output, code, hadOutput, &commandRunError{Command: command, ExitCode: code}
+		result.ExitCode = code
+		return result, &commandRunError{Command: command, ExitCode: code}
 	}
 
-	return output, 0, hadOutput, nil
+	return result, nil
 }
 
 // executeInteractiveCommand temporarily hands over the terminal to a process that

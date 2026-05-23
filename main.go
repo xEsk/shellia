@@ -85,6 +85,30 @@ type turnResult struct {
 	Executions []commandExecution
 }
 
+// planningRoundRequest groups one model planning attempt and its rendering dependencies.
+type planningRoundRequest struct {
+	Deps   runtimeDeps
+	UI     bool
+	Round  int
+	Prompt llmPromptRequest
+}
+
+// planningRoundResult is the normalized output of one planning attempt.
+type planningRoundResult struct {
+	Parsed  llmResponse
+	Summary string
+	Plans   []commandPlan
+}
+
+// turnRequest groups the context needed to process one user instruction.
+type turnRequest struct {
+	Config      config
+	ContextInfo *contextInfo
+	Instruction string
+	History     []historyEntry
+	State       sessionState
+}
+
 func main() {
 	deps := defaultRuntimeDeps()
 
@@ -127,7 +151,11 @@ func main() {
 		return
 	}
 
-	_, err = runTurn(appCtx, deps, ui, cfg, &ctxInfo, cfg.Instruction, nil, sessionState{})
+	_, err = runTurn(appCtx, deps, ui, turnRequest{
+		Config:      cfg,
+		ContextInfo: &ctxInfo,
+		Instruction: cfg.Instruction,
+	})
 	if err != nil {
 		switch {
 		case errors.Is(err, errAborted), errors.Is(err, context.Canceled):
@@ -480,7 +508,13 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 
 	if strings.TrimSpace(cfg.Instruction) != "" {
 		turnCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
-		turn, err := runTurn(turnCtx, deps, ui, cfg, ctxInfo, cfg.Instruction, history, state)
+		turn, err := runTurn(turnCtx, deps, ui, turnRequest{
+			Config:      cfg,
+			ContextInfo: ctxInfo,
+			Instruction: cfg.Instruction,
+			History:     history,
+			State:       state,
+		})
 		stop()
 		if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {
 			state.LastRetryInstruction = cfg.Instruction
@@ -524,7 +558,13 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			turnCfg := cfg
 			turnCfg.PlanOnly = true
 			turnCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
-			turn, err := runTurn(turnCtx, deps, ui, turnCfg, ctxInfo, plannedInstruction, history, state)
+			turn, err := runTurn(turnCtx, deps, ui, turnRequest{
+				Config:      turnCfg,
+				ContextInfo: ctxInfo,
+				Instruction: plannedInstruction,
+				History:     history,
+				State:       state,
+			})
 			stop()
 
 			if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {
@@ -635,7 +675,13 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 
 		// Per-turn signal context: Ctrl+C cancels only this turn, not the whole session.
 		turnCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
-		turn, err := runTurn(turnCtx, deps, ui, cfg, ctxInfo, instruction, history, state)
+		turn, err := runTurn(turnCtx, deps, ui, turnRequest{
+			Config:      cfg,
+			ContextInfo: ctxInfo,
+			Instruction: instruction,
+			History:     history,
+			State:       state,
+		})
 		stop()
 
 		if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {
@@ -729,8 +775,14 @@ func switchInteractiveModel(cfg *config, name string) error {
 }
 
 // runTurn executes a full plan → confirm → execute → answer cycle, or stops after planning in plan-only mode.
-func runTurn(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo, instruction string, history []historyEntry, state sessionState) (turnResult, error) {
+func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest) (turnResult, error) {
 	deps = deps.withDefaults()
+	cfg := request.Config
+	ctxInfo := request.ContextInfo
+	instruction := request.Instruction
+	history := request.History
+	state := request.State
+
 	if cfg.Debug || cfg.Verbose {
 		printContextTo(deps.Stdout, ui, cfg, *ctxInfo)
 	}
@@ -740,61 +792,27 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo
 	lastSummary := ""
 	lastPlans := []commandPlan(nil)
 
-	for round := 0; round < maxPlanRounds; round++ {
-		if cfg.RawPrompt {
-			systemPrompt, userPrompt := buildLLMPrompts(cfg, *ctxInfo, instruction, history, state, allExecutions)
-			printRawPromptsTo(deps.Stdout, ui, "Raw LLM prompt", systemPrompt, userPrompt)
+	for round := range maxPlanRounds {
+		promptRequest := llmPromptRequest{
+			Config:       cfg,
+			ContextInfo:  *ctxInfo,
+			Instruction:  instruction,
+			History:      history,
+			State:        state,
+			Observations: allExecutions,
 		}
-
-		thinking := startThinkingIndicator(ui, deps.Stdout)
-		rawResponse, err := callLLM(ctx, deps.HTTPClient, cfg, *ctxInfo, instruction, history, state, allExecutions)
-		if thinking != nil {
-			thinking.stop()
-		}
+		roundResult, err := runPlanningRound(ctx, planningRoundRequest{
+			Deps:   deps,
+			UI:     ui,
+			Round:  round,
+			Prompt: promptRequest,
+		})
 		if err != nil {
 			return turnResult{}, err
 		}
-
-		if cfg.RawResponse {
-			printSectionTo(deps.Stdout, ui, "Raw LLM response", colorBlue)
-			fmt.Fprintln(deps.Stdout, rawResponse)
-			fmt.Fprintln(deps.Stdout)
-		}
-
-		parsed, err := parseResponse(rawResponse)
-		if err != nil {
-			return turnResult{}, err
-		}
-
-		summary, plans, err := normalizePlan(parsed)
-		if err != nil {
-			return turnResult{}, err
-		}
-
-		if len(plans) == 0 && !cfg.PlanOnly && shouldRetryWithDiscoveryRepair(parsed, round, allExecutions) {
-			if cfg.RawPrompt {
-				systemPrompt, userPrompt := buildDiscoveryRepairLLMPrompts(cfg, *ctxInfo, instruction, history, state, allExecutions, parsed)
-				printRawPromptsTo(deps.Stdout, ui, "Raw discovery repair prompt", systemPrompt, userPrompt)
-			}
-
-			thinking = startThinkingIndicator(ui, deps.Stdout)
-			repairedRawResponse, repairErr := callDiscoveryRepairLLM(ctx, deps.HTTPClient, cfg, *ctxInfo, instruction, history, state, allExecutions, parsed)
-			if thinking != nil {
-				thinking.stop()
-			}
-			if repairErr == nil {
-				repairedParsed, parseErr := parseResponse(repairedRawResponse)
-				if parseErr == nil {
-					repairedSummary, repairedPlans, normalizeErr := normalizePlan(repairedParsed)
-					if normalizeErr == nil {
-						rawResponse = repairedRawResponse
-						parsed = repairedParsed
-						summary = repairedSummary
-						plans = repairedPlans
-					}
-				}
-			}
-		}
+		parsed := roundResult.Parsed
+		summary := roundResult.Summary
+		plans := roundResult.Plans
 
 		lastSummary = summary
 		lastPlans = plans
@@ -892,6 +910,101 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo
 		Plans:      lastPlans,
 		Executions: allExecutions,
 	}, nil
+}
+
+// runPlanningRound asks the model for one plan and applies discovery repair when useful.
+func runPlanningRound(ctx context.Context, request planningRoundRequest) (planningRoundResult, error) {
+	cfg := request.Prompt.Config
+	deps := request.Deps
+	ui := request.UI
+
+	if cfg.RawPrompt {
+		systemPrompt, userPrompt := buildLLMPrompts(request.Prompt)
+		printRawPromptsTo(deps.Stdout, ui, "Raw LLM prompt", systemPrompt, userPrompt)
+	}
+
+	thinking := startThinkingIndicator(ui, deps.Stdout)
+	rawResponse, err := callLLM(ctx, deps.HTTPClient, request.Prompt)
+	if thinking != nil {
+		thinking.stop()
+	}
+	if err != nil {
+		return planningRoundResult{}, err
+	}
+
+	if cfg.RawResponse {
+		printSectionTo(deps.Stdout, ui, "Raw LLM response", colorBlue)
+		fmt.Fprintln(deps.Stdout, rawResponse)
+		fmt.Fprintln(deps.Stdout)
+	}
+
+	parsed, err := parseResponse(rawResponse)
+	if err != nil {
+		return planningRoundResult{}, err
+	}
+
+	summary, plans, err := normalizePlan(parsed)
+	if err != nil {
+		return planningRoundResult{}, err
+	}
+
+	if len(plans) == 0 && !cfg.PlanOnly && shouldRetryWithDiscoveryRepair(parsed, request.Round, request.Prompt.Observations) {
+		repaired, ok := runDiscoveryRepair(ctx, request, parsed)
+		if ok {
+			return repaired, nil
+		}
+	}
+
+	return planningRoundResult{
+		Parsed:  parsed,
+		Summary: summary,
+		Plans:   plans,
+	}, nil
+}
+
+// runDiscoveryRepair tries one discovery-only retry after a recoverable empty plan.
+func runDiscoveryRepair(
+	ctx context.Context,
+	request planningRoundRequest,
+	previous llmResponse,
+) (planningRoundResult, bool) {
+	cfg := request.Prompt.Config
+	deps := request.Deps
+	ui := request.UI
+	repairRequest := discoveryPromptRequest{
+		Prompt:   request.Prompt,
+		Previous: previous,
+	}
+
+	if cfg.RawPrompt {
+		systemPrompt, userPrompt := buildDiscoveryRepairLLMPrompts(repairRequest)
+		printRawPromptsTo(deps.Stdout, ui, "Raw discovery repair prompt", systemPrompt, userPrompt)
+	}
+
+	thinking := startThinkingIndicator(ui, deps.Stdout)
+	repairedRawResponse, repairErr := callDiscoveryRepairLLM(ctx, deps.HTTPClient, repairRequest)
+	if thinking != nil {
+		thinking.stop()
+	}
+	if repairErr != nil {
+		return planningRoundResult{}, false
+	}
+
+	repairedParsed, parseErr := parseResponse(repairedRawResponse)
+	if parseErr != nil {
+		return planningRoundResult{}, false
+	}
+
+	repairedSummary, repairedPlans, normalizeErr := normalizePlan(repairedParsed)
+	if normalizeErr != nil {
+		return planningRoundResult{}, false
+	}
+
+	return planningRoundResult{
+		Parsed:  repairedParsed,
+		Summary: repairedSummary,
+		Plans:   repairedPlans,
+	}, true
 }
 
 // shouldRetryAfterExecutionError reports whether an execution failure should become a new planning observation.

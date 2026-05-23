@@ -562,7 +562,7 @@ func clearRenderedAnswer(target io.Writer, state *answerRenderState) {
 	if state.rows > 1 {
 		fmt.Fprintf(target, "\033[%dA", state.rows-1)
 	}
-	for index := 0; index < state.rows; index++ {
+	for index := range state.rows {
 		fmt.Fprint(target, "\033[2K")
 		if index < state.rows-1 {
 			fmt.Fprint(target, "\033[1B\r")
@@ -1075,7 +1075,7 @@ func wrapPromptRunesWithOffsets(buffer []rune, width int) ([]string, []int) {
 		}
 
 		lastSpace := -1
-		for index := 0; index < width; index++ {
+		for index := range width {
 			if unicode.IsSpace(buffer[start+index]) {
 				lastSpace = index
 			}
@@ -1337,7 +1337,7 @@ func clearEditablePromptTo(target io.Writer, state *editableRenderState) {
 	if state.cursorRow > 0 {
 		fmt.Fprintf(target, "\033[%dA", state.cursorRow)
 	}
-	for index := 0; index < state.rows; index++ {
+	for index := range state.rows {
 		fmt.Fprint(target, "\033[2K")
 		if index < state.rows-1 {
 			fmt.Fprint(target, "\033[1B\r")
