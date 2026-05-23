@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // TestDetectInteractivePromptMatchesConfirmationPrompt checks that a trailing yes/no prompt is detected.
@@ -136,6 +137,33 @@ func TestInteractivePromptDetectorHandlesChunkedOutput(t *testing.T) {
 	}
 	if err := detector.promptError(); err == nil {
 		t.Fatalf("promptError() = nil, want interactivePromptError")
+	}
+}
+
+// TestAppendInteractivePromptTailKeepsValidUTF8 checks byte trimming does not split runes.
+func TestAppendInteractivePromptTailKeepsValidUTF8(t *testing.T) {
+	got := appendInteractivePromptTail("prefix", "€ Password:", 12)
+	if !utf8.ValidString(got) {
+		t.Fatalf("appendInteractivePromptTail() returned invalid UTF-8: %q", got)
+	}
+	if _, ok := detectInteractivePrompt(got); !ok {
+		t.Fatalf("detectInteractivePrompt(%q) = false, want true", got)
+	}
+}
+
+// TestLimitedCaptureWriterStreamReplacesInvalidUTF8 checks truncated captures remain valid strings.
+func TestLimitedCaptureWriterStreamReplacesInvalidUTF8(t *testing.T) {
+	writer := &limitedCaptureWriter{limit: 2}
+	if _, err := writer.Write([]byte("€")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+
+	stream := writer.Stream()
+	if !utf8.ValidString(stream.Text) {
+		t.Fatalf("Stream().Text is invalid UTF-8: %q", stream.Text)
+	}
+	if stream.Text != "?" {
+		t.Fatalf("Stream().Text = %q, want replacement", stream.Text)
 	}
 }
 

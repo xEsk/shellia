@@ -797,6 +797,10 @@ func shouldRetryWithDiscoveryRepair(response llmResponse, round int, executions 
 // trimForSummary trims long output by rune count to avoid splitting multi-byte UTF-8 characters.
 // strategy controls which part of the text is kept when truncation is needed.
 func trimForSummary(text string, maxChars int, strategy truncationStrategy) string {
+	if maxChars <= 0 {
+		return ""
+	}
+
 	runes := []rune(strings.TrimSpace(text))
 	if len(runes) <= maxChars {
 		return string(runes)

@@ -24,6 +24,40 @@ func TestClassifyCommandRequiresConfirmationForCompoundSafeRoots(t *testing.T) {
 	}
 }
 
+// TestClassifyCommandEscalatesDangerousCompoundRoots checks hidden dangerous roots stay high risk.
+func TestClassifyCommandEscalatesDangerousCompoundRoots(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+	}{
+		{name: "and rm", command: "echo ok && rm -rf tmp"},
+		{name: "pipeline sudo", command: "cat file | sudo tee /etc/hosts"},
+		{name: "semicolon chmod", command: "echo ok; chmod 777 script.sh"},
+		{name: "background chown", command: "echo ok & chown root file"},
+		{name: "subshell rm", command: "(rm -rf tmp)"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classifyCommand(tt.command)
+			if got.Classification != classificationDangerous || got.Risk != riskHigh || !got.RequiresConfirmation {
+				t.Fatalf("classifyCommand(%q) = %#v, want high-risk confirmation", tt.command, got)
+			}
+		})
+	}
+}
+
+// TestClassifyCommandDoesNotEscalateQuotedDangerousWords checks quoted text is not treated as a root.
+func TestClassifyCommandDoesNotEscalateQuotedDangerousWords(t *testing.T) {
+	got := classifyCommand(`echo "rm -rf tmp" && true`)
+	if got.Classification == classificationDangerous || got.Risk == riskHigh {
+		t.Fatalf("classifyCommand() = %#v, want compound risky but not dangerous", got)
+	}
+	if !got.RequiresConfirmation {
+		t.Fatalf("classifyCommand() = %#v, want confirmation for compound shell", got)
+	}
+}
+
 // TestHasShellOperatorsIgnoresQuotedAndEscapedSeparators checks ordinary shell text is not over-classified.
 func TestHasShellOperatorsIgnoresQuotedAndEscapedSeparators(t *testing.T) {
 	cases := []struct {
@@ -34,6 +68,7 @@ func TestHasShellOperatorsIgnoresQuotedAndEscapedSeparators(t *testing.T) {
 		{name: "single quoted ampersand", command: `echo 'a & b'`},
 		{name: "escaped ampersand", command: `echo a\&b`},
 		{name: "quoted newline text", command: `echo "first\nsecond"`},
+		{name: "quoted parenthesis", command: `echo "(not a subshell)"`},
 	}
 
 	for _, tt := range cases {

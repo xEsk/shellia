@@ -21,6 +21,16 @@ func TestParseResponseAcceptsExtraTrailingBrace(t *testing.T) {
 	}
 }
 
+// TestTrimForSummaryHandlesNonPositiveLimit checks defensive callers cannot panic trimming output.
+func TestTrimForSummaryHandlesNonPositiveLimit(t *testing.T) {
+	if got := trimForSummary("abcdef", 0, truncationStart); got != "" {
+		t.Fatalf("trimForSummary(limit 0) = %q, want empty", got)
+	}
+	if got := trimForSummary("abcdef", -1, truncationStart); got != "" {
+		t.Fatalf("trimForSummary(limit -1) = %q, want empty", got)
+	}
+}
+
 // TestParseResponseKeepsBracesInsideStrings checks JSON extraction respects quoted content.
 func TestParseResponseKeepsBracesInsideStrings(t *testing.T) {
 	raw := `prefix {"summary":"Use {literal} braces.","commands":[]} suffix`

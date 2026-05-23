@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/creack/pty"
 	"golang.org/x/sys/unix"
@@ -213,7 +214,15 @@ func appendInteractivePromptTail(current string, chunk string, limit int) string
 	if limit <= 0 || len(combined) <= limit {
 		return combined
 	}
-	return combined[len(combined)-limit:]
+	combined = combined[len(combined)-limit:]
+	for !utf8.ValidString(combined) && len(combined) > 0 {
+		_, size := utf8.DecodeRuneInString(combined)
+		if size <= 0 {
+			break
+		}
+		combined = combined[size:]
+	}
+	return combined
 }
 
 // detectInteractivePrompt checks whether the current trailing output line is waiting for terminal input.
@@ -392,8 +401,9 @@ func (writer *limitedCaptureWriter) Write(data []byte) (int, error) {
 
 // Stream converts the captured buffer into a portable structure for the rest of the tool.
 func (writer *limitedCaptureWriter) Stream() capturedStream {
+	text := strings.ToValidUTF8(strings.TrimSpace(writer.buffer.String()), "?")
 	return capturedStream{
-		Text:       strings.TrimSpace(writer.buffer.String()),
+		Text:       text,
 		TotalBytes: writer.totalBytes,
 		KeptBytes:  writer.buffer.Len(),
 		Truncated:  writer.truncated,

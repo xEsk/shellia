@@ -3,6 +3,9 @@ package main
 // shellOperatorRule treats any shell composition as requiring confirmation.
 func shellOperatorRule(command string, tokens []string) (commandSafety, bool) {
 	if hasShellOperators(command) {
+		if hasDangerousCommandRoot(command) {
+			return dangerousSafety(), true
+		}
 		return riskySafety(), true
 	}
 	return commandSafety{}, false
@@ -10,16 +13,21 @@ func shellOperatorRule(command string, tokens []string) (commandSafety, bool) {
 
 // dangerousRootRule catches commands that are directly dangerous regardless of arguments.
 func dangerousRootRule(command string, tokens []string) (commandSafety, bool) {
+	if isDangerousRoot(tokens[0]) {
+		return dangerousSafety(), true
+	}
+	return commandSafety{}, false
+}
+
+// isDangerousRoot reports whether a command root is high risk regardless of arguments.
+func isDangerousRoot(root string) bool {
 	dangerousRoots := map[string]bool{
 		"sudo": true, "su": true, "rm": true, "dd": true, "mkfs": true, "shutdown": true,
 		"reboot": true, "halt": true, "poweroff": true, "useradd": true, "adduser": true,
 		"usermod": true, "userdel": true, "groupadd": true, "groupdel": true, "passwd": true,
 		"chmod": true, "chown": true, "chgrp": true,
 	}
-	if dangerousRoots[tokens[0]] {
-		return dangerousSafety(), true
-	}
-	return commandSafety{}, false
+	return dangerousRoots[root]
 }
 
 // gitRule allows only known read-only git subcommands to skip confirmation.
