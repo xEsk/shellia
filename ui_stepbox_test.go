@@ -17,7 +17,7 @@ func nonTerminalStdin(t *testing.T) *os.File {
 		t.Fatalf("CreateTemp(stdin) error = %v", err)
 	}
 	t.Cleanup(func() {
-		file.Close() //nolint:errcheck
+		file.Close() //nolint:errcheck // best-effort cleanup of the temporary test file.
 	})
 	return file
 }

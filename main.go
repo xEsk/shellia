@@ -32,8 +32,10 @@ const (
 // version is set at build time via -ldflags "-X main.version=vX.Y.Z".
 var version = "dev"
 
-var errAborted = errors.New("aborted by user")
-var errHelp = errors.New("help requested")
+var (
+	errAborted = errors.New("aborted by user")
+	errHelp    = errors.New("help requested")
+)
 
 type contextInfo struct {
 	CWD   string     `json:"cwd"`
@@ -137,14 +139,14 @@ func main() {
 		return
 	}
 
-	ctxInfo, err := getContext(cfg)
-	if err != nil {
-		exitWithError(ui, err.Error(), 1)
-	}
-
 	// appCtx is cancelled on the first Ctrl+C, aborting any in-flight LLM request.
 	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+
+	ctxInfo, err := getContext(appCtx, cfg)
+	if err != nil {
+		exitWithError(ui, err.Error(), 1)
+	}
 
 	if cfg.Interactive {
 		runInteractive(appCtx, deps, ui, cfg, &ctxInfo)

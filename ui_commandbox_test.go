@@ -60,7 +60,7 @@ func TestRenderCommandBoxPreservesCommandSpacing(t *testing.T) {
 
 // TestRenderCommandBoxPreservesExplicitNewlines checks multiline commands stay inside the panel.
 func TestRenderCommandBoxPreservesExplicitNewlines(t *testing.T) {
-	command := "cat <<'EOF' > hola.txt\nhola\nhola\nhola\nEOF"
+	command := "cat <<'EOF' > hola.txt\nhola\nadeu\nfins\nEOF"
 	got := renderCommandBox(true, command, 80)
 
 	if len(got) != 7 {

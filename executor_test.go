@@ -269,7 +269,7 @@ func TestApplySessionStateUpdatesCWDOnSuccessfulCD(t *testing.T) {
 	}
 	cfg := config{IncludeGit: false}
 
-	applySessionState(ctxInfo, cfg, "cd docs", 0)
+	applySessionState(context.Background(), ctxInfo, cfg, "cd docs", 0)
 
 	if ctxInfo.CWD != nextDir {
 		t.Fatalf("ctxInfo.CWD = %q, want %q", ctxInfo.CWD, nextDir)
@@ -284,7 +284,7 @@ func TestApplySessionStateIgnoresFailedCommand(t *testing.T) {
 	ctxInfo := &contextInfo{CWD: t.TempDir()}
 	before := *ctxInfo
 
-	applySessionState(ctxInfo, config{}, "cd docs", 1)
+	applySessionState(context.Background(), ctxInfo, config{}, "cd docs", 1)
 
 	if *ctxInfo != before {
 		t.Fatalf("ctxInfo = %#v, want unchanged %#v", *ctxInfo, before)

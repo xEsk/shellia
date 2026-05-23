@@ -140,7 +140,7 @@ func (box *stepBox) EditCommand(reader *bufio.Reader, stdin *os.File, initial st
 		fmt.Fprint(box.target, "\r\n")
 		return strings.TrimSpace(initial), nil
 	}
-	defer term.Restore(fd, state) //nolint:errcheck
+	defer term.Restore(fd, state) //nolint:errcheck // best-effort terminal restore before returning to normal input.
 
 	single := []byte{0}
 	box.renderEditableRow(prefixPlain, prefixRendered, buffer, cursor)

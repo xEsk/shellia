@@ -46,16 +46,15 @@ type commandExecution struct {
 
 // commandRunRequest groups the inputs needed to launch a shell command.
 type commandRunRequest struct {
-	ParentContext context.Context
-	Deps          runtimeDeps
-	UI            bool
-	Config        config
-	ContextInfo   contextInfo
-	Box           *stepBox
-	Command       string
-	Timeout       time.Duration
-	DirectStream  bool
-	Interactive   bool
+	Deps         runtimeDeps
+	UI           bool
+	Config       config
+	ContextInfo  contextInfo
+	Box          *stepBox
+	Command      string
+	Timeout      time.Duration
+	DirectStream bool
+	Interactive  bool
 }
 
 // commandRunResult carries command output plus rendering state.
@@ -263,7 +262,7 @@ func stripANSISequences(text string) string {
 	for index := 0; index < len(runes); index++ {
 		if runes[index] == '\033' && index+1 < len(runes) && runes[index+1] == '[' {
 			index += 2
-			for index < len(runes) && !(runes[index] >= '@' && runes[index] <= '~') {
+			for index < len(runes) && (runes[index] < '@' || runes[index] > '~') {
 				index++
 			}
 			continue
@@ -402,7 +401,7 @@ func (writer *limitedCaptureWriter) Stream() capturedStream {
 }
 
 // getContext collects the local context available to the model and UI.
-func getContext(cfg config) (contextInfo, error) {
+func getContext(parentCtx context.Context, cfg config) (contextInfo, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		return contextInfo{}, fmt.Errorf("cannot detect current directory: %w", err)
@@ -426,24 +425,24 @@ func getContext(cfg config) (contextInfo, error) {
 		ctx.User = currentUser.Username
 	}
 	if cfg.IncludeGit {
-		ctx.Git = getGitContext(wd)
+		ctx.Git = getGitContext(parentCtx, wd)
 	}
 	return ctx, nil
 }
 
 // getGitContext detects whether the current directory belongs to a Git repository.
-func getGitContext(cwd string) gitContext {
+func getGitContext(parentCtx context.Context, cwd string) gitContext {
 	if _, err := exec.LookPath("git"); err != nil {
 		return gitContext{}
 	}
 
-	if code, _ := runCommandCapture(cwd, "git", "rev-parse", "--is-inside-work-tree"); code != 0 {
+	if code, _ := runCommandCapture(parentCtx, cwd, "git", "rev-parse", "--is-inside-work-tree"); code != 0 {
 		return gitContext{}
 	}
 
 	ctx := gitContext{IsRepo: true}
 
-	if code, output := runCommandCapture(cwd, "git", "branch", "--show-current"); code == 0 {
+	if code, output := runCommandCapture(parentCtx, cwd, "git", "branch", "--show-current"); code == 0 {
 		if output == "" {
 			ctx.Branch = "DETACHED"
 		} else {
@@ -451,7 +450,7 @@ func getGitContext(cwd string) gitContext {
 		}
 	}
 
-	if code, output := runCommandCapture(cwd, "git", "status", "--short"); code == 0 {
+	if code, output := runCommandCapture(parentCtx, cwd, "git", "status", "--short"); code == 0 {
 		ctx.StatusShort = output
 	}
 
@@ -469,7 +468,7 @@ func executeCommands(ctx context.Context, deps runtimeDeps, ui bool, cfg config,
 		effectiveCommand := plan.Command
 		interactive := plan.Interactive
 
-		if !(cfg.YesSafe && plan.LocalSafe && !plan.Interactive) {
+		if !cfg.YesSafe || !plan.LocalSafe || plan.Interactive {
 			decision, editedCommand, err := promptConfirmation(box, reader, deps.Stdin, fmt.Sprintf("Run step %d/%d?", index+1, len(plans)), plan.Command, cfg.ConfirmationDefault)
 			if err != nil {
 				box.Close()
@@ -531,7 +530,7 @@ func executeCommands(ctx context.Context, deps runtimeDeps, ui bool, cfg config,
 			return executions, err
 		}
 
-		applySessionState(ctxInfo, cfg, effectiveCommand, result.ExitCode)
+		applySessionState(ctx, ctxInfo, cfg, effectiveCommand, result.ExitCode)
 		showCompletedMarker(box, result.HadOutput)
 		if box != nil {
 			box.Close()
@@ -545,11 +544,12 @@ func executeCommands(ctx context.Context, deps runtimeDeps, ui bool, cfg config,
 func executeManualCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo, command string, renderMode manualRenderMode) (commandExecution, error) {
 	deps = deps.withDefaults()
 	var box *stepBox
-	if renderMode == manualRenderInline {
+	switch renderMode {
+	case manualRenderInline:
 		box = newStepBox(deps.Stdout, ui, "shell")
 		box.Spacer()
 		box.Command(command)
-	} else if renderMode == manualRenderInteractive {
+	case manualRenderInteractive:
 		printInteractiveCommandStartTo(deps.Stdout, ui)
 	}
 
@@ -591,7 +591,7 @@ func executeManualCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg co
 		return execution, err
 	}
 
-	applySessionState(ctxInfo, cfg, command, result.ExitCode)
+	applySessionState(ctx, ctxInfo, cfg, command, result.ExitCode)
 	showCompletedMarker(box, result.HadOutput)
 	if box != nil {
 		box.Close()
@@ -645,14 +645,14 @@ func executeOneCommand(ctx context.Context, request commandRunRequest) (commandR
 		}, err
 	}
 
-	request.ParentContext = ctx
 	request.Deps = deps
-	return executeNonInteractiveCommand(cmdCtx, request, shellPath, cancel)
+	return executeNonInteractiveCommand(cmdCtx, ctx, request, shellPath, cancel)
 }
 
 // executeNonInteractiveCommand runs a shell command with captured stdout/stderr streams.
 func executeNonInteractiveCommand(
 	ctx context.Context,
+	parentCtx context.Context,
 	request commandRunRequest,
 	shellPath string,
 	cancel context.CancelFunc,
@@ -757,10 +757,10 @@ func executeNonInteractiveCommand(
 		result.ExitCode = 124
 		return result, &commandRunError{Command: command, ExitCode: 124, TimedOut: true, Err: ctx.Err()}
 	}
-	if request.ParentContext.Err() != nil {
+	if parentCtx.Err() != nil {
 		// Parent context cancelled (Ctrl+C): propagate directly so callers can
 		// detect context.Canceled with errors.Is and abort cleanly.
-		return result, request.ParentContext.Err()
+		return result, parentCtx.Err()
 	}
 	if waitErr != nil {
 		code := 1
@@ -786,7 +786,7 @@ func executeInteractiveCommand(ctx context.Context, deps runtimeDeps, ui bool, c
 	if err != nil {
 		return commandExecution{}, 1, false, fmt.Errorf("cannot start interactive command %q: %w", command, err)
 	}
-	defer ptmx.Close() //nolint:errcheck
+	defer ptmx.Close() //nolint:errcheck // best-effort PTY cleanup after command execution.
 
 	stdoutCapture := &limitedCaptureWriter{limit: cfg.CaptureStdoutBytes}
 	stream := io.MultiWriter(deps.Stdout, stdoutCapture)
@@ -798,13 +798,13 @@ func executeInteractiveCommand(ctx context.Context, deps runtimeDeps, ui bool, c
 		state, rawErr := term.MakeRaw(fd)
 		if rawErr == nil {
 			restoreTerminal = func() {
-				term.Restore(fd, state) //nolint:errcheck
+				term.Restore(fd, state) //nolint:errcheck // best-effort terminal restore during cleanup.
 			}
 		}
 	}
 	if blockErr := unix.SetNonblock(fd, true); blockErr == nil {
 		restoreBlocking = func() {
-			unix.SetNonblock(fd, false) //nolint:errcheck
+			unix.SetNonblock(fd, false) //nolint:errcheck // best-effort stdin mode restore during cleanup.
 		}
 	}
 	defer restoreTerminal()
@@ -884,7 +884,7 @@ done:
 }
 
 // applySessionState updates the persistent context when a command changes the session state.
-func applySessionState(ctxInfo *contextInfo, cfg config, command string, exitCode int) {
+func applySessionState(parentCtx context.Context, ctxInfo *contextInfo, cfg config, command string, exitCode int) {
 	if ctxInfo == nil || exitCode != 0 {
 		return
 	}
@@ -896,7 +896,7 @@ func applySessionState(ctxInfo *contextInfo, cfg config, command string, exitCod
 
 	ctxInfo.CWD = nextCWD
 	if cfg.IncludeGit {
-		ctxInfo.Git = getGitContext(nextCWD)
+		ctxInfo.Git = getGitContext(parentCtx, nextCWD)
 	} else {
 		ctxInfo.Git = gitContext{}
 	}
@@ -1035,8 +1035,8 @@ func staticFallbackAnswer(fallbackSummary string, executions []commandExecution)
 }
 
 // runCommandCapture runs a simple command and returns its combined output.
-func runCommandCapture(cwd, name string, args ...string) (int, string) {
-	cmd := exec.Command(name, args...)
+func runCommandCapture(parentCtx context.Context, cwd, name string, args ...string) (int, string) {
+	cmd := exec.CommandContext(parentCtx, name, args...)
 	cmd.Dir = cwd
 	output, err := cmd.CombinedOutput()
 	if err != nil {

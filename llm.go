@@ -796,22 +796,22 @@ func shouldRetryWithDiscoveryRepair(response llmResponse, round int, executions 
 
 // trimForSummary trims long output by rune count to avoid splitting multi-byte UTF-8 characters.
 // strategy controls which part of the text is kept when truncation is needed.
-func trimForSummary(text string, max int, strategy truncationStrategy) string {
+func trimForSummary(text string, maxChars int, strategy truncationStrategy) string {
 	runes := []rune(strings.TrimSpace(text))
-	if len(runes) <= max {
+	if len(runes) <= maxChars {
 		return string(runes)
 	}
 	switch strategy {
 	case truncationEnd:
-		return "[truncated...]\n" + string(runes[len(runes)-max:])
+		return "[truncated...]\n" + string(runes[len(runes)-maxChars:])
 	case truncationMixed:
-		head := max / 3
-		tail := max - head
+		head := maxChars / 3
+		tail := maxChars - head
 		omitted := len(runes) - head - tail
 		return string(runes[:head]) +
 			fmt.Sprintf("\n...[%d chars omitted]...\n", omitted) +
 			string(runes[len(runes)-tail:])
 	default: // truncationStart
-		return string(runes[:max]) + "\n...[truncated]"
+		return string(runes[:maxChars]) + "\n...[truncated]"
 	}
 }

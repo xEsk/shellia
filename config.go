@@ -13,9 +13,11 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-type commandEngineMode string
-type confirmationDefault string
-type truncationStrategy string
+type (
+	commandEngineMode   string
+	confirmationDefault string
+	truncationStrategy  string
+)
 
 const (
 	commandEnginePlain       commandEngineMode = "plain"
@@ -408,7 +410,7 @@ func initConfigFileTo(target io.Writer, ui bool) error {
 		}
 		return fmt.Errorf("cannot create config file: %w", err)
 	}
-	defer f.Close() //nolint:errcheck
+	defer f.Close() //nolint:errcheck // best-effort cleanup after write errors are handled explicitly.
 
 	if _, err := f.WriteString(defaultConfigTemplate()); err != nil {
 		return fmt.Errorf("cannot write config file: %w", err)

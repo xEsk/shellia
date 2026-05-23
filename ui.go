@@ -670,7 +670,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout
 		fmt.Fprint(stdout, prompt)
 		return readFallbackPromptLine(reader)
 	}
-	defer term.Restore(fd, state) //nolint:errcheck
+	defer term.Restore(fd, state) //nolint:errcheck // best-effort terminal restore before returning to normal input.
 
 	buffer := make([]rune, 0, 128)
 	cursor := 0
@@ -991,7 +991,7 @@ func readSingleConfirmationKey(stdin *os.File) (byte, bool, error) {
 	if err != nil {
 		return 0, false, nil
 	}
-	defer term.Restore(fd, state) //nolint:errcheck
+	defer term.Restore(fd, state) //nolint:errcheck // best-effort terminal restore before returning to normal input.
 
 	buffer := []byte{0}
 	_, err = stdin.Read(buffer)
@@ -1653,7 +1653,7 @@ func visibleWidth(text string) int {
 		if r == '\033' && i+1 < len(runes) && runes[i+1] == '[' {
 			// CSI sequence: \033[ ... final_byte (0x40–0x7E)
 			i += 2 // skip \033 and [
-			for i < len(runes) && !(runes[i] >= '@' && runes[i] <= '~') {
+			for i < len(runes) && (runes[i] < '@' || runes[i] > '~') {
 				i++
 			}
 			i++ // skip the final byte

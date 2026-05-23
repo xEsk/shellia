@@ -60,7 +60,7 @@ func (fake *loopLLMClient) RoundTrip(r *http.Request) (*http.Response, error) {
 
 	var request chatCompletionRequest
 	if err := json.Unmarshal(body, &request); err != nil {
-		return loopHTTPResponse(r, http.StatusBadRequest, "invalid request", nil), nil
+		return nil, fmt.Errorf("invalid fake llm request: %w", err)
 	}
 
 	fake.mu.Lock()
@@ -350,8 +350,8 @@ func captureMainLoopIO(t *testing.T, input string, client *http.Client, fn func(
 	}
 
 	defer func() {
-		stdinFile.Close()  //nolint:errcheck
-		stdoutFile.Close() //nolint:errcheck
+		stdinFile.Close()  //nolint:errcheck // best-effort cleanup of temporary test files.
+		stdoutFile.Close() //nolint:errcheck // best-effort cleanup of temporary test files.
 	}()
 
 	deps := defaultRuntimeDeps()
@@ -503,7 +503,6 @@ func TestCallPlanningPromptKeepsResponseFormatWithKey(t *testing.T) {
 	if body.ResponseFormat == nil || body.ResponseFormat.Type != "json_object" {
 		t.Fatalf("response_format = %#v, want json_object", body.ResponseFormat)
 	}
-
 }
 
 // TestRunTurnPrintsRawPrompt checks --raw-prompt exposes the exact model prompt pair.

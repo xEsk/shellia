@@ -142,11 +142,7 @@ func isFilesystemModification(tokens []string) bool {
 		"install": true, "truncate": true, "tee": true, "sed": true, "awk": true, "perl": true,
 		"tar": true, "unzip": true, "zip": true, "ln": true, "chmod": true, "chown": true, "chgrp": true,
 	}
-	if modifyingRoots[tokens[0]] {
-		return true
-	}
-
-	return false
+	return modifyingRoots[tokens[0]]
 }
 
 // isUserOrSystemModification detects actions on users, services, or packages.
