@@ -147,6 +147,50 @@ func TestParseArgsEnablesRawPrompt(t *testing.T) {
 	}
 }
 
+// TestParseArgsRejectsInvalidConfigCommand checks config commands fail before planning.
+func TestParseArgsRejectsInvalidConfigCommand(t *testing.T) {
+	for _, args := range [][]string{
+		{"config"},
+		{"config", "unknown"},
+		{"config", "path", "extra"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			_, err := parseArgs(args)
+			if err == nil {
+				t.Fatalf("parseArgs() error = nil, want invalid config command")
+			}
+			if !strings.Contains(err.Error(), "invalid config command") {
+				t.Fatalf("parseArgs() error = %q, want invalid config command", err.Error())
+			}
+		})
+	}
+}
+
+// TestParseArgsRejectsNonPositiveTimeouts checks timeout flags cannot disable safeguards.
+func TestParseArgsRejectsNonPositiveTimeouts(t *testing.T) {
+	for _, args := range [][]string{
+		{"--timeout", "0", "run git status"},
+		{"--timeout", "-1", "run git status"},
+		{"--request-timeout", "0", "run git status"},
+		{"--request-timeout", "-1", "run git status"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_CONFIG_HOME", "")
+			t.Setenv("SHELLIA_BASE_URL", "http://localhost:8080/v1")
+			t.Setenv("SHELLIA_MODEL", "test-model")
+
+			_, err := parseArgs(args)
+			if err == nil {
+				t.Fatalf("parseArgs() error = nil, want timeout validation error")
+			}
+			if !strings.Contains(err.Error(), "must be greater than 0") {
+				t.Fatalf("parseArgs() error = %q, want positive timeout validation", err.Error())
+			}
+		})
+	}
+}
+
 // TestParseArgsSelectsOnlyConfiguredModel checks a single model profile is selected automatically.
 func TestParseArgsSelectsOnlyConfiguredModel(t *testing.T) {
 	writeShelliaConfig(t, `
