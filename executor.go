@@ -70,6 +70,7 @@ type commandRunError struct {
 	Command  string
 	ExitCode int
 	TimedOut bool
+	Err      error
 }
 
 // interactivePromptError reports that a non-interactive command asked for terminal input.
@@ -87,6 +88,14 @@ func (err *commandRunError) Error() string {
 		return fmt.Sprintf("command timed out: %s", err.Command)
 	}
 	return fmt.Sprintf("command failed: %s", err.Command)
+}
+
+// Unwrap returns the underlying process or context error when available.
+func (err *commandRunError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.Err
 }
 
 // Error returns a short description of the interactive prompt failure.
@@ -692,7 +701,7 @@ func executeNonInteractiveCommand(
 				Output:    commandExecution{Stdout: stdoutCapture.Stream(), Stderr: stderrCapture.Stream()},
 				ExitCode:  1,
 				HadOutput: stdoutWriter.started || stderrWriter.started,
-			}, err
+			}, fmt.Errorf("cannot flush command stdout: %w", err)
 		}
 	}
 	if stderrWriter != nil {
@@ -701,7 +710,7 @@ func executeNonInteractiveCommand(
 				Output:    commandExecution{Stdout: stdoutCapture.Stream(), Stderr: stderrCapture.Stream()},
 				ExitCode:  1,
 				HadOutput: stdoutWriter.started || stderrWriter.started,
-			}, err
+			}, fmt.Errorf("cannot flush command stderr: %w", err)
 		}
 	}
 	if request.DirectStream {
@@ -710,7 +719,7 @@ func executeNonInteractiveCommand(
 				return commandRunResult{
 					Output:   commandExecution{Stdout: stdoutCapture.Stream(), Stderr: stderrCapture.Stream()},
 					ExitCode: 1,
-				}, err
+				}, fmt.Errorf("cannot flush direct command stdout: %w", err)
 			}
 		}
 		if flusher, ok := stderrStream.(*directShellWriter); ok {
@@ -718,7 +727,7 @@ func executeNonInteractiveCommand(
 				return commandRunResult{
 					Output:   commandExecution{Stdout: stdoutCapture.Stream(), Stderr: stderrCapture.Stream()},
 					ExitCode: 1,
-				}, err
+				}, fmt.Errorf("cannot flush direct command stderr: %w", err)
 			}
 		}
 	}
@@ -746,7 +755,7 @@ func executeNonInteractiveCommand(
 
 	if ctx.Err() == context.DeadlineExceeded {
 		result.ExitCode = 124
-		return result, &commandRunError{Command: command, ExitCode: 124, TimedOut: true}
+		return result, &commandRunError{Command: command, ExitCode: 124, TimedOut: true, Err: ctx.Err()}
 	}
 	if request.ParentContext.Err() != nil {
 		// Parent context cancelled (Ctrl+C): propagate directly so callers can
@@ -760,7 +769,7 @@ func executeNonInteractiveCommand(
 			code = exitErr.ExitCode()
 		}
 		result.ExitCode = code
-		return result, &commandRunError{Command: command, ExitCode: code}
+		return result, &commandRunError{Command: command, ExitCode: code, Err: waitErr}
 	}
 
 	return result, nil
@@ -802,7 +811,7 @@ func executeInteractiveCommand(ctx context.Context, deps runtimeDeps, ui bool, c
 	defer restoreBlocking()
 
 	if _, err := fmt.Fprintln(deps.Stdout); err != nil {
-		return commandExecution{}, 1, false, err
+		return commandExecution{}, 1, false, fmt.Errorf("cannot prepare interactive command output: %w", err)
 	}
 
 	_ = pty.InheritSize(deps.Stdin, ptmx)
@@ -857,7 +866,7 @@ done:
 	output = commandExecution{Stdout: stdoutCapture.Stream()}
 
 	if ctx.Err() == context.DeadlineExceeded {
-		return output, 124, hadOutput, &commandRunError{Command: command, ExitCode: 124, TimedOut: true}
+		return output, 124, hadOutput, &commandRunError{Command: command, ExitCode: 124, TimedOut: true, Err: ctx.Err()}
 	}
 	if ctx.Err() != nil {
 		return output, 0, hadOutput, ctx.Err()
@@ -868,7 +877,7 @@ done:
 		if errors.As(waitErr, &exitErr) {
 			code = exitErr.ExitCode()
 		}
-		return output, code, hadOutput, &commandRunError{Command: command, ExitCode: code}
+		return output, code, hadOutput, &commandRunError{Command: command, ExitCode: code, Err: waitErr}
 	}
 
 	return output, 0, hadOutput, nil

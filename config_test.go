@@ -416,10 +416,10 @@ func TestParseArgsRequiresAPIKeyForRemoteEndpoints(t *testing.T) {
 		"run git status",
 	})
 	if err == nil {
-		t.Fatalf("parseArgs() error = nil, want missing API key")
+		t.Fatalf("parseArgs() error = nil, want missing api key")
 	}
-	if !strings.Contains(err.Error(), "missing API key") {
-		t.Fatalf("parseArgs() error = %q, want missing API key", err.Error())
+	if !strings.Contains(err.Error(), "missing api key") {
+		t.Fatalf("parseArgs() error = %q, want missing api key", err.Error())
 	}
 }
 

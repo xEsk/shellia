@@ -90,6 +90,32 @@ type llmResponse struct {
 	InputReason         string       `json:"input_reason"`
 }
 
+// llmHTTPStatusError carries a non-successful provider status and a compact body preview.
+type llmHTTPStatusError struct {
+	StatusCode int
+	Body       string
+	Err        error
+}
+
+// Error returns the provider status failure without exposing an error chain.
+func (err *llmHTTPStatusError) Error() string {
+	if err == nil {
+		return ""
+	}
+	if strings.TrimSpace(err.Body) == "" {
+		return fmt.Sprintf("llm request failed with status %d", err.StatusCode)
+	}
+	return fmt.Sprintf("llm request failed with status %d: %s", err.StatusCode, err.Body)
+}
+
+// Unwrap returns the lower-level read error, if the response body could not be read.
+func (err *llmHTTPStatusError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.Err
+}
+
 // isRetryable reports whether an HTTP status code is worth retrying.
 func isRetryable(statusCode int) bool {
 	return statusCode == 429 || (statusCode >= 500 && statusCode <= 504)
@@ -100,7 +126,7 @@ func isRetryable(statusCode int) bool {
 func doLLMRequest(ctx context.Context, client *http.Client, cfg config, req chatCompletionRequest) (string, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
-		return "", fmt.Errorf("cannot encode LLM request: %w", err)
+		return "", fmt.Errorf("cannot encode llm request: %w", err)
 	}
 	if client == nil {
 		client = http.DefaultClient
@@ -126,13 +152,13 @@ func doLLMRequest(ctx context.Context, client *http.Client, cfg config, req chat
 
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
-			return "", fmt.Errorf("cannot create LLM request: %w", err)
+			return "", fmt.Errorf("cannot create llm request: %w", err)
 		}
 		applyLLMRequestHeaders(httpReq, cfg)
 
 		resp, err := client.Do(httpReq)
 		if err != nil {
-			lastErr = fmt.Errorf("LLM request failed: %w", err)
+			lastErr = fmt.Errorf("llm request failed: %w", err)
 			continue
 		}
 
@@ -141,11 +167,11 @@ func doLLMRequest(ctx context.Context, client *http.Client, cfg config, req chat
 		statusCode = resp.StatusCode
 
 		if err != nil {
-			lastErr = fmt.Errorf("cannot read LLM response: %w", err)
+			lastErr = fmt.Errorf("cannot read llm response: %w", err)
 			continue
 		}
 		if isRetryable(statusCode) {
-			lastErr = fmt.Errorf("LLM request failed with status %d: %s", statusCode, strings.TrimSpace(string(responseBody)))
+			lastErr = newLLMHTTPStatusError(statusCode, string(responseBody), nil)
 			continue
 		}
 
@@ -157,15 +183,15 @@ func doLLMRequest(ctx context.Context, client *http.Client, cfg config, req chat
 		return "", lastErr
 	}
 	if statusCode < 200 || statusCode >= 300 {
-		return "", fmt.Errorf("LLM request failed with status %d: %s", statusCode, strings.TrimSpace(string(responseBody)))
+		return "", newLLMHTTPStatusError(statusCode, string(responseBody), nil)
 	}
 
 	var envelope chatCompletionEnvelope
 	if err := json.Unmarshal(responseBody, &envelope); err != nil {
-		return "", fmt.Errorf("invalid LLM envelope: %w", err)
+		return "", fmt.Errorf("invalid llm envelope: %w", err)
 	}
 	if len(envelope.Choices) == 0 || strings.TrimSpace(envelope.Choices[0].Message.Content) == "" {
-		return "", fmt.Errorf("invalid LLM response: missing message content")
+		return "", fmt.Errorf("invalid llm response: missing message content")
 	}
 
 	return envelope.Choices[0].Message.Content, nil
@@ -178,7 +204,7 @@ func doLLMStream(ctx context.Context, client *http.Client, cfg config, req chatC
 	req.Stream = true
 	body, err := json.Marshal(req)
 	if err != nil {
-		return "", fmt.Errorf("cannot encode LLM request: %w", err)
+		return "", fmt.Errorf("cannot encode llm request: %w", err)
 	}
 	if client == nil {
 		client = http.DefaultClient
@@ -201,25 +227,25 @@ func doLLMStream(ctx context.Context, client *http.Client, cfg config, req chatC
 
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
-			return "", fmt.Errorf("cannot create LLM request: %w", err)
+			return "", fmt.Errorf("cannot create llm request: %w", err)
 		}
 		applyLLMRequestHeaders(httpReq, cfg)
 
 		resp, err = client.Do(httpReq)
 		if err != nil {
-			lastErr = fmt.Errorf("LLM stream request failed: %w", err)
+			lastErr = fmt.Errorf("llm stream request failed: %w", err)
 			continue
 		}
 		if isRetryable(resp.StatusCode) {
-			errorBody := readHTTPErrorBody(resp.Body)
+			errorBody, readErr := readHTTPErrorBody(resp.Body)
 			resp.Body.Close()
-			lastErr = fmt.Errorf("LLM request failed with status %d: %s", resp.StatusCode, errorBody)
+			lastErr = newLLMHTTPStatusError(resp.StatusCode, errorBody, readErr)
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			errorBody := readHTTPErrorBody(resp.Body)
+			errorBody, readErr := readHTTPErrorBody(resp.Body)
 			resp.Body.Close()
-			return "", fmt.Errorf("LLM request failed with status %d: %s", resp.StatusCode, errorBody)
+			return "", newLLMHTTPStatusError(resp.StatusCode, errorBody, readErr)
 		}
 		lastErr = nil
 		break
@@ -244,7 +270,7 @@ func doLLMStream(ctx context.Context, client *http.Client, cfg config, req chatC
 
 		var chunk streamChunk
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			return full.String(), fmt.Errorf("invalid LLM stream chunk: %w: %s", err, trimForSummary(payload, streamChunkErrorPreviewChars, truncationStart))
+			return full.String(), fmt.Errorf("invalid llm stream chunk: %w: %s", err, trimForSummary(payload, streamChunkErrorPreviewChars, truncationStart))
 		}
 		if len(chunk.Choices) == 0 {
 			continue
@@ -275,17 +301,27 @@ func applyLLMRequestHeaders(req *http.Request, cfg config) {
 }
 
 // readHTTPErrorBody returns a compact diagnostic for failed HTTP responses.
-func readHTTPErrorBody(body io.Reader) string {
+func readHTTPErrorBody(body io.Reader) (string, error) {
 	data, err := io.ReadAll(body)
 	if err != nil {
-		return fmt.Sprintf("cannot read error response body: %v", err)
+		wrapped := fmt.Errorf("cannot read error response body: %w", err)
+		return wrapped.Error(), wrapped
 	}
 
 	text := trimForSummary(string(data), httpErrorBodyPreviewChars, truncationStart)
 	if text == "" {
-		return "(empty error response body)"
+		return "(empty error response body)", nil
 	}
-	return text
+	return text, nil
+}
+
+// newLLMHTTPStatusError builds a compact, typed provider status error.
+func newLLMHTTPStatusError(statusCode int, body string, err error) error {
+	return &llmHTTPStatusError{
+		StatusCode: statusCode,
+		Body:       trimForSummary(body, httpErrorBodyPreviewChars, truncationStart),
+		Err:        err,
+	}
 }
 
 // callLLM sends the instruction and context to the model to obtain an execution plan.
@@ -399,26 +435,26 @@ func streamSummarizeExecutions(ctx context.Context, client *http.Client, cfg con
 func parseResponse(raw string) (llmResponse, error) {
 	jsonObject, ok := firstJSONObject(raw)
 	if !ok {
-		return llmResponse{}, fmt.Errorf("invalid LLM response: no JSON object found")
+		return llmResponse{}, fmt.Errorf("invalid llm response: no json object found")
 	}
 
 	var parsed llmResponse
 	if err := json.Unmarshal([]byte(jsonObject), &parsed); err != nil {
-		return llmResponse{}, fmt.Errorf("invalid LLM response: %w", err)
+		return llmResponse{}, fmt.Errorf("invalid llm response: %w", err)
 	}
 	if strings.TrimSpace(parsed.Summary) == "" {
-		return llmResponse{}, fmt.Errorf("invalid LLM response: missing summary")
+		return llmResponse{}, fmt.Errorf("invalid llm response: missing summary")
 	}
 	for _, cmd := range parsed.Commands {
 		if strings.TrimSpace(cmd.Command) == "" {
-			return llmResponse{}, fmt.Errorf("invalid LLM response: empty command")
+			return llmResponse{}, fmt.Errorf("invalid llm response: empty command")
 		}
 		if strings.TrimSpace(cmd.Purpose) == "" {
-			return llmResponse{}, fmt.Errorf("invalid LLM response: missing purpose")
+			return llmResponse{}, fmt.Errorf("invalid llm response: missing purpose")
 		}
 	}
 	if parsed.RequiresInput && len(parsed.Commands) > 0 {
-		return llmResponse{}, fmt.Errorf("invalid LLM response: requires_input with commands")
+		return llmResponse{}, fmt.Errorf("invalid llm response: requires_input with commands")
 	}
 
 	return parsed, nil

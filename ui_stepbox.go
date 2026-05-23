@@ -126,7 +126,7 @@ func (box *stepBox) EditCommand(reader *bufio.Reader, stdin *os.File, initial st
 		fmt.Fprint(box.target, "\r\n")
 		line, err := reader.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
-			return "", err
+			return "", fmt.Errorf("cannot read edited command: %w", err)
 		}
 		edited := strings.TrimSpace(line)
 		if edited == "" {
@@ -148,7 +148,7 @@ func (box *stepBox) EditCommand(reader *bufio.Reader, stdin *os.File, initial st
 		_, err := stdin.Read(single)
 		if err != nil {
 			fmt.Fprint(box.target, "\r\n")
-			return "", err
+			return "", fmt.Errorf("cannot read command editor input: %w", err)
 		}
 
 		switch single[0] {
@@ -161,7 +161,7 @@ func (box *stepBox) EditCommand(reader *bufio.Reader, stdin *os.File, initial st
 		case 27:
 			if err := applyEscapeSequenceFrom(stdin, &buffer, &cursor, 0, nil); err != nil {
 				fmt.Fprint(box.target, "\r\n")
-				return "", err
+				return "", fmt.Errorf("cannot apply command editor escape sequence: %w", err)
 			}
 		case 127, 8:
 			if cursor == 0 || len(buffer) == 0 {
@@ -176,7 +176,7 @@ func (box *stepBox) EditCommand(reader *bufio.Reader, stdin *os.File, initial st
 					continue
 				}
 				fmt.Fprint(box.target, "\r\n")
-				return "", err
+				return "", fmt.Errorf("cannot decode command editor input: %w", err)
 			}
 			buffer = append(buffer[:cursor], append([]rune{r}, buffer[cursor:]...)...)
 			cursor++

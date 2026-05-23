@@ -690,7 +690,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout
 	for {
 		_, err := stdin.Read(single)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("cannot read interactive prompt input: %w", err)
 		}
 
 		switch single[0] {
@@ -717,7 +717,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout
 		case 27:
 			exitPrompt, err := applyEscapeSequenceOrExit(stdin, fd, &buffer, &cursor, contentWidth, &affinity)
 			if err != nil {
-				return "", err
+				return "", fmt.Errorf("cannot apply prompt escape sequence: %w", err)
 			}
 			if exitPrompt {
 				clearEditablePromptTo(stdout, renderState)
@@ -744,7 +744,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout
 				if errors.Is(err, errDiscardRune) {
 					continue
 				}
-				return "", err
+				return "", fmt.Errorf("cannot decode prompt input: %w", err)
 			}
 			buffer = append(buffer[:cursor], append([]rune{r}, buffer[cursor:]...)...)
 			cursor++
@@ -765,7 +765,7 @@ func readFallbackPromptLine(reader *bufio.Reader) (string, error) {
 		return strings.TrimSpace(line), nil
 	}
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("cannot read prompt line: %w", err)
 	}
 	return strings.TrimSpace(line), nil
 }
@@ -878,7 +878,7 @@ func promptConfirmation(box *stepBox, reader *bufio.Reader, stdin *os.File, prom
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
-			return confirmDecisionCancel, "", err
+			return confirmDecisionCancel, "", fmt.Errorf("cannot read confirmation answer: %w", err)
 		}
 
 		answer := strings.ToLower(strings.TrimSpace(line))
@@ -996,7 +996,7 @@ func readSingleConfirmationKey(stdin *os.File) (byte, bool, error) {
 	buffer := []byte{0}
 	_, err = stdin.Read(buffer)
 	if err != nil {
-		return 0, false, err
+		return 0, false, fmt.Errorf("cannot read confirmation key: %w", err)
 	}
 
 	return buffer[0], true, nil
@@ -1027,7 +1027,7 @@ func readInputRuneFrom(reader io.Reader, first byte) (rune, error) {
 	buf[0] = first
 	for index := 1; index < size; index++ {
 		if _, err := reader.Read(buf[index : index+1]); err != nil {
-			return 0, err
+			return 0, fmt.Errorf("cannot read utf-8 continuation byte: %w", err)
 		}
 	}
 
@@ -1187,13 +1187,13 @@ func applyEscapeSequence(buffer *[]rune, cursor *int, contentWidth int, affinity
 func applyEscapeSequenceFrom(reader io.Reader, buffer *[]rune, cursor *int, contentWidth int, affinity *cursorAffinity) error {
 	sequence := []byte{0, 0}
 	if _, err := reader.Read(sequence[:1]); err != nil {
-		return err
+		return fmt.Errorf("cannot read escape sequence prefix: %w", err)
 	}
 	if sequence[0] != '[' {
 		return nil
 	}
 	if _, err := reader.Read(sequence[1:2]); err != nil {
-		return err
+		return fmt.Errorf("cannot read escape sequence command: %w", err)
 	}
 
 	switch sequence[1] {
@@ -1248,7 +1248,7 @@ func applyEscapeSequenceFrom(reader io.Reader, buffer *[]rune, cursor *int, cont
 	case '3':
 		tilde := []byte{0}
 		if _, err := reader.Read(tilde); err != nil {
-			return err
+			return fmt.Errorf("cannot read delete escape terminator: %w", err)
 		}
 		if tilde[0] == '~' && *cursor < len(*buffer) {
 			*buffer = append((*buffer)[:*cursor], (*buffer)[*cursor+1:]...)
@@ -1265,7 +1265,7 @@ func applyEscapeSequenceFrom(reader io.Reader, buffer *[]rune, cursor *int, cont
 func applyEscapeSequenceOrExit(reader io.Reader, fd int, buffer *[]rune, cursor *int, contentWidth int, affinity *cursorAffinity) (bool, error) {
 	ready, err := isInputReady(fd)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("cannot inspect pending terminal input: %w", err)
 	}
 	if !ready {
 		return true, nil

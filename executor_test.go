@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -144,6 +147,20 @@ func TestShouldRetryAfterExecutionErrorForInteractivePrompt(t *testing.T) {
 	}
 	if shouldRetryAfterExecutionError(err, maxPlanRounds-1) {
 		t.Fatalf("shouldRetryAfterExecutionError() = true on final round, want false")
+	}
+}
+
+// TestCommandRunErrorUnwrapsCause checks callers can inspect the underlying failure.
+func TestCommandRunErrorUnwrapsCause(t *testing.T) {
+	runErr := &commandRunError{Command: "false", ExitCode: 1, Err: exec.ErrNotFound}
+
+	if !errors.Is(runErr, exec.ErrNotFound) {
+		t.Fatalf("errors.Is(commandRunError, exec.ErrNotFound) = false, want true")
+	}
+
+	timeoutErr := &commandRunError{Command: "sleep 10", ExitCode: 124, TimedOut: true, Err: context.DeadlineExceeded}
+	if !errors.Is(timeoutErr, context.DeadlineExceeded) {
+		t.Fatalf("errors.Is(commandRunError, context.DeadlineExceeded) = false, want true")
 	}
 }
 

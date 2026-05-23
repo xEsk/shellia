@@ -960,7 +960,7 @@ func TestDoLLMStreamReturnsMalformedChunkError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("doLLMStream() error = nil, want malformed chunk error")
 	}
-	if !strings.Contains(err.Error(), "invalid LLM stream chunk") {
+	if !strings.Contains(err.Error(), "invalid llm stream chunk") {
 		t.Fatalf("doLLMStream() error = %q, want invalid chunk message", err.Error())
 	}
 	if result != "" || output.String() != "" {
@@ -979,10 +979,14 @@ func TestDoLLMStreamReportsErrorBodyReadFailure(t *testing.T) {
 	}
 
 	message := err.Error()
-	if !strings.Contains(message, "LLM request failed with status 400") {
+	if !strings.Contains(message, "llm request failed with status 400") {
 		t.Fatalf("doLLMStream() error = %q, want status", message)
 	}
 	if !strings.Contains(message, "cannot read error response body") || !strings.Contains(message, "broken error body") {
 		t.Fatalf("doLLMStream() error = %q, want body read failure", message)
+	}
+	var statusErr *llmHTTPStatusError
+	if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusBadRequest {
+		t.Fatalf("doLLMStream() error = %T %[1]v, want llmHTTPStatusError status 400", err)
 	}
 }

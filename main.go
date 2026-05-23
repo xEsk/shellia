@@ -203,7 +203,7 @@ func parseArgs(args []string) (config, error) {
 			fs.Usage()
 			return config{}, errHelp
 		}
-		return config{}, fmt.Errorf("invalid arguments")
+		return config{}, fmt.Errorf("invalid arguments: %w", err)
 	}
 
 	return finalizeConfig(fs, cfg, *timeoutSecs, *reqTimeoutSecs)
@@ -228,7 +228,7 @@ func parseConfigSubcommand(args []string) (string, bool, error) {
 		return "", false, nil
 	}
 	if len(args) != 2 {
-		return "", true, fmt.Errorf("invalid config command. Use: shellia config init|path")
+		return "", true, fmt.Errorf("invalid config command: use shellia config init|path")
 	}
 	switch args[1] {
 	case "init":
@@ -236,7 +236,7 @@ func parseConfigSubcommand(args []string) (string, bool, error) {
 	case "path":
 		return "config-path", true, nil
 	}
-	return "", true, fmt.Errorf("invalid config command %q. Use: shellia config init|path", args[1])
+	return "", true, fmt.Errorf("invalid config command %q: use shellia config init|path", args[1])
 }
 
 // buildFlagSet registers all CLI flags and returns the set plus timeout int pointers.
@@ -328,7 +328,7 @@ func finalizeConfig(fs *flag.FlagSet, cfg config, timeoutSecs, reqTimeoutSecs in
 		cfg.Model = strings.TrimSpace(flagModel)
 	}
 	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.Model) == "" {
-		return config{}, fmt.Errorf("missing model configuration. Configure [[models]] or pass --base-url and --model")
+		return config{}, fmt.Errorf("missing model configuration: configure [[models]] or pass --base-url and --model")
 	}
 
 	remaining := fs.Args()
@@ -461,7 +461,7 @@ func allowsEmptyAPIKey(cfg config) bool {
 
 // missingAPIKeyError returns the shared user-facing API key validation error.
 func missingAPIKeyError() error {
-	return fmt.Errorf("missing API key. Use --api-key or set SHELLIA_API_KEY")
+	return fmt.Errorf("missing api key: use --api-key or set SHELLIA_API_KEY")
 }
 
 // usageFunc builds the Usage closure for the flag set.
