@@ -26,17 +26,16 @@ type interactiveCommandSpec struct {
 }
 
 var interactiveSlashCommands = []interactiveCommandSpec{
+	{Input: "/ai", Command: interactiveCommandAI, Description: "return to prompt mode"},
 	{Input: "/shell", Command: interactiveCommandShell, Description: "enter direct shell mode"},
 	{Input: "/plan", Command: interactiveCommandPlan, Description: "show a plan without running commands"},
-	{Input: "/retry", Command: interactiveCommandRetry, Description: "retry the last cancelled or failed request"},
 	{Input: "/new", Command: interactiveCommandNew, Description: "start a fresh context"},
-	{Input: "/ai", Command: interactiveCommandAI, Description: "return to prompt mode"},
+	{Input: "/retry", Command: interactiveCommandRetry, Description: "retry the last cancelled or failed request"},
+	{Input: "/context", Command: interactiveCommandContext, Description: "show current local context"},
 	{Input: "/mode", Command: interactiveCommandMode, Description: "show current mode"},
 	{Input: "/model", Command: interactiveCommandModel, Description: "switch configured model profile"},
-	{Input: "/context", Command: interactiveCommandContext, Description: "show current local context"},
 	{Input: "/clear", Command: interactiveCommandClear, Description: "clear the terminal"},
 	{Input: "/exit", Command: interactiveCommandExit, Description: "close the session"},
-	{Input: "/quit", Command: interactiveCommandExit, Description: "close the session"},
 }
 
 // parsePlanInstruction extracts the instruction from a one-shot /plan prompt.

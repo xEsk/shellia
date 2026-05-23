@@ -21,7 +21,7 @@ func TestSessionBannerLinesPlain(t *testing.T) {
 	want := []string{
 		"shellia session · v9.9.9",
 		"  model · test-model",
-		"  !<cmd>  /shell  /ai  /model  /mode  exit  /quit  /clear  /context",
+		"  !<cmd>  /shell  /ai  /model  /mode  exit  /clear  /context",
 	}
 
 	if !reflect.DeepEqual(got, want) {

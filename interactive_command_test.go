@@ -21,7 +21,6 @@ func TestParseInteractiveCommandSlashCommands(t *testing.T) {
 		{name: "context", input: "/context", want: interactiveCommandContext},
 		{name: "clear", input: "/clear", want: interactiveCommandClear},
 		{name: "exit slash", input: "/exit", want: interactiveCommandExit},
-		{name: "quit slash", input: "/quit", want: interactiveCommandExit},
 		{name: "exit bare", input: "exit", want: interactiveCommandExit},
 	}
 
