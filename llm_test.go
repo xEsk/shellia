@@ -146,12 +146,50 @@ func TestBuildSystemPromptAllowsExplicitReruns(t *testing.T) {
 	}
 }
 
+// TestBuildSystemPromptPrefersDirectSpecificOutput checks that observation is
+// reserved for cases where a direct answer command cannot be built yet.
+func TestBuildSystemPromptPrefersDirectSpecificOutput(t *testing.T) {
+	prompt := buildSystemPrompt()
+
+	requiredSnippets := []string{
+		"Before setting requires_observation=true",
+		"directly produce the requested answer or value",
+		"instead of a broader inspection command",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("buildSystemPrompt() missing %q in %q", snippet, prompt)
+		}
+	}
+}
+
 // TestBuildSystemPromptAvoidsFallbackJSONGuidance checks JSON-mode providers avoid extra noise.
 func TestBuildSystemPromptAvoidsFallbackJSONGuidance(t *testing.T) {
 	prompt := buildSystemPrompt()
 
 	if strings.Contains(prompt, "Do not repeat the JSON object") {
 		t.Fatalf("buildSystemPrompt() includes fallback JSON guidance: %q", prompt)
+	}
+}
+
+// TestBuildUserPromptRulesPreferFocusedExtraction checks that planner rules
+// keep inspection output limited to the requested value when possible.
+func TestBuildUserPromptRulesPreferFocusedExtraction(t *testing.T) {
+	prompt := buildUserPrompt(llmPromptRequest{
+		Config:      defaultConfig(),
+		ContextInfo: contextInfo{},
+		Instruction: "get a specific value",
+	})
+
+	requiredSnippets := []string{
+		"asks for a specific value",
+		"extracts only that value",
+		"instead of printing the full source data",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("buildUserPrompt() missing %q in %q", snippet, prompt)
+		}
 	}
 }
 
