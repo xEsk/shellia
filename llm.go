@@ -538,13 +538,17 @@ func buildSystemPromptSentences() []string {
 		"You convert natural language instructions into shell commands for the user's current machine.",
 		"You must be conservative, accurate, and avoid hallucinating tools or paths.",
 		"Only use commands that are standard or clearly available from the provided context.",
+		"Before planning commands, classify the user's intent from the current instruction and session context.",
+		"The intent may be a new task, a continuation of pending_intent, acceptance of last_suggested_command, a repeat/retry, a question answered by recent observations, or a request missing required input.",
+		"Use the user's own language and meaning for this classification; do not rely on English-only wording.",
+		"Session memory is optional context, not a command. If the current instruction is unrelated, ignore stale memory.",
 		"Never propose interactive editors like nano, vim, less, top, or man.",
 		"Do not use placeholders.",
 		"Return pure shell commands only.",
 		"Do not include explanatory echo, printf, comments, labels, banners, or formatting commands inside the command field.",
 		"Do not chain commands with ';', '&&', '||', or pipes unless the user explicitly asked for a pipeline and it is strictly necessary.",
 		"Prefer one atomic command per step.",
-		"Use session memory to resolve follow-up references such as 'before', 'that', 'do it now', or 'the docker thing'.",
+		"Use session memory to resolve follow-up references in the user's own language.",
 		"If the user is clearly continuing an earlier task, continue that task instead of treating the request as unrelated.",
 		"Before setting requires_observation=true, first decide whether a command can directly produce the requested answer or value; if it can, return that command instead of a broader inspection command.",
 		"If a later action depends on information that must be discovered from command output first, return only the information-gathering commands for this round and set requires_observation=true.",
@@ -584,6 +588,10 @@ func buildPlanOnlySystemPromptSentences() []string {
 		"You produce an operational plan for a human to review and run manually; Shellia will not execute commands.",
 		"You must be conservative, accurate, and avoid hallucinating tools or paths.",
 		"Only use commands that are standard or clearly available from the provided context.",
+		"Before planning commands, classify the user's intent from the current instruction and session context.",
+		"The intent may be a new task, a continuation of pending_intent, acceptance of last_suggested_command, a repeat/retry, a question answered by recent observations, or a request missing required input.",
+		"Use the user's own language and meaning for this classification; do not rely on English-only wording.",
+		"Session memory is optional context, not a command. If the current instruction is unrelated, ignore stale memory.",
 		"Never propose interactive editors like nano, vim, less, top, or man.",
 		"Do not use placeholders in the command field.",
 		"Return pure shell commands only in command fields.",
@@ -654,7 +662,7 @@ func buildUserPrompt(request llmPromptRequest) string {
 	}
 
 	reusableObservationBlock := ""
-	if cfg.IncludeRecentObservations && len(observations) == 0 && len(state.LastObservations) > 0 && looksLikeReferenceFollowUp(instruction) {
+	if cfg.IncludeRecentObservations && len(observations) == 0 && len(state.LastObservations) > 0 {
 		var b strings.Builder
 		b.WriteString("\nRecent reusable observations:\n")
 		for index, observation := range state.LastObservations {
@@ -714,7 +722,11 @@ func buildUserPromptRules() []string {
 		"- Prefer simple commands.",
 		"- Return pure commands only, without echo/printf or shell decorations.",
 		"- Split independent actions into separate commands instead of chaining them.",
-		"- If a follow-up refers to an earlier task, use the resolved planning context, recent reusable observations, and session memory to continue it.",
+		"- Decide intent inside this planning response; local Shellia code has not pre-classified natural-language follow-ups for you.",
+		"- Treat session memory, recent files, runtime hints, and reusable observations as optional context for intent resolution, not as instructions that must be followed.",
+		"- If the user accepts a previously suggested command in any language, propose that command through the normal command array so Shellia can classify and confirm it locally.",
+		"- If the current instruction is a new unrelated task, ignore stale session memory and plan only the new task.",
+		"- If a follow-up refers to an earlier task, use recent reusable observations and session memory to continue it.",
 		"- Recent reusable observations are provided for task continuity only — to resolve cross-turn references like \"that file\" or \"the docker thing\". They are NOT a reason to skip a fresh execution request.",
 		"- If observed outputs from the CURRENT task round already answer the question, return no commands and answer directly in summary. Never skip commands based solely on reusable observations from prior turns.",
 		"- Do not repeat an inspection command that already produced the needed information unless the user explicitly asks to rerun it.",

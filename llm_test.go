@@ -507,13 +507,18 @@ func TestBuildUserPromptMakesReusableObservationsNonBlocking(t *testing.T) {
 	prompt := buildUserPrompt(llmPromptRequest{
 		Config:              cfg,
 		ContextInfo:         ctxInfo,
-		Instruction:         "run it again",
-		ResolvedInstruction: "run it again",
+		Instruction:         "zeige mir den status",
+		ResolvedInstruction: "zeige mir den status",
 		State:               state,
 	})
 
 	requiredSnippets := []string{
 		"Recent reusable observations:",
+		"git status --short",
+		"Decide intent inside this planning response",
+		"local Shellia code has not pre-classified natural-language follow-ups",
+		"optional context for intent resolution",
+		"If the current instruction is a new unrelated task, ignore stale session memory",
 		"task continuity only",
 		"NOT a reason to skip a fresh execution request",
 		"Never skip commands based solely on reusable observations from prior turns",

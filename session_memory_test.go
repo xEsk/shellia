@@ -102,64 +102,6 @@ func TestNormalizeForMemory(t *testing.T) {
 	}
 }
 
-func TestLooksPreparatory(t *testing.T) {
-	preparatory := []string{
-		"show the files",
-		"list all dirs",
-		"cat the config",
-		"create a test file",
-		"check the logs",
-	}
-	for _, s := range preparatory {
-		if !looksPreparatory(s) {
-			t.Errorf("expected looksPreparatory(%q) = true", s)
-		}
-	}
-
-	notPreparatory := []string{
-		"deploy the app",
-		"run the build",
-		"install dependencies",
-	}
-	for _, s := range notPreparatory {
-		if looksPreparatory(s) {
-			t.Errorf("expected looksPreparatory(%q) = false", s)
-		}
-	}
-}
-
-func TestLooksLikeAffirmativeFollowUp(t *testing.T) {
-	affirmatives := []string{"ok", "yes", "si", "do it", "vale", "fesho", "llista"}
-	for _, s := range affirmatives {
-		if !looksLikeAffirmativeFollowUp(s) {
-			t.Errorf("expected looksLikeAffirmativeFollowUp(%q) = true", s)
-		}
-	}
-
-	not := []string{"", "not now", "stop", "cancel"}
-	for _, s := range not {
-		if looksLikeAffirmativeFollowUp(s) {
-			t.Errorf("expected looksLikeAffirmativeFollowUp(%q) = false", s)
-		}
-	}
-}
-
-func TestLooksLikeReferenceFollowUp(t *testing.T) {
-	refs := []string{"do it now", "before we start", "yes ok", "continue"}
-	for _, s := range refs {
-		if !looksLikeReferenceFollowUp(s) {
-			t.Errorf("expected looksLikeReferenceFollowUp(%q) = true", s)
-		}
-	}
-
-	not := []string{"deploy to production", "run the tests", "build the binary"}
-	for _, s := range not {
-		if looksLikeReferenceFollowUp(s) {
-			t.Errorf("expected looksLikeReferenceFollowUp(%q) = false", s)
-		}
-	}
-}
-
 func TestShouldPromotePendingIntent(t *testing.T) {
 	t.Run("empty instruction returns false", func(t *testing.T) {
 		if shouldPromotePendingIntent("", turnResult{}) {
@@ -167,23 +109,16 @@ func TestShouldPromotePendingIntent(t *testing.T) {
 		}
 	})
 
-	t.Run("no plans always promotes", func(t *testing.T) {
+	t.Run("no plans promotes non-empty instruction", func(t *testing.T) {
 		if !shouldPromotePendingIntent("deploy the app", turnResult{}) {
-			t.Error("expected true when no plans")
+			t.Error("expected true for non-empty instruction")
 		}
 	})
 
-	t.Run("with plans: non-preparatory promotes", func(t *testing.T) {
+	t.Run("with plans promotes non-empty instruction", func(t *testing.T) {
 		turn := turnResult{Plans: []commandPlan{{Command: "make build"}}}
-		if !shouldPromotePendingIntent("deploy to production", turn) {
-			t.Error("expected true for non-preparatory instruction")
-		}
-	})
-
-	t.Run("with plans: preparatory does not promote", func(t *testing.T) {
-		turn := turnResult{Plans: []commandPlan{{Command: "ls"}}}
-		if shouldPromotePendingIntent("list the files", turn) {
-			t.Error("expected false for preparatory instruction")
+		if !shouldPromotePendingIntent("zeige den status", turn) {
+			t.Error("expected true for non-empty instruction in any language")
 		}
 	})
 }
@@ -315,19 +250,19 @@ func TestResolveInstructionForPlanning(t *testing.T) {
 		}
 	})
 
-	t.Run("expands affirmative follow-up to suggested command", func(t *testing.T) {
+	t.Run("does not expand affirmative follow-up locally", func(t *testing.T) {
 		state := sessionState{LastSuggestedCommand: "git push origin main"}
-		got := resolveInstructionForPlanning("ok", state)
-		if !strings.Contains(got, "git push origin main") {
-			t.Errorf("expected suggested command in result, got %q", got)
+		got := resolveInstructionForPlanning("mach es", state)
+		if got != "mach es" {
+			t.Errorf("got %q", got)
 		}
 	})
 
-	t.Run("expands reference follow-up to pending intent", func(t *testing.T) {
+	t.Run("does not expand reference follow-up locally", func(t *testing.T) {
 		state := sessionState{PendingIntent: "deploy the app to production"}
-		got := resolveInstructionForPlanning("yes do it", state)
-		if !strings.Contains(got, "deploy the app to production") {
-			t.Errorf("expected pending intent in result, got %q", got)
+		got := resolveInstructionForPlanning("weiter damit", state)
+		if got != "weiter damit" {
+			t.Errorf("got %q", got)
 		}
 	})
 

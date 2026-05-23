@@ -91,85 +91,20 @@ func rememberInstructionContext(state *sessionState, instruction string) {
 	}
 }
 
-// resolveInstructionForPlanning expands follow-up references using session memory.
-func resolveInstructionForPlanning(instruction string, state sessionState) string {
+// resolveInstructionForPlanning preserves the user's text; the planning model
+// resolves intent and follow-up references from the session memory in the prompt.
+func resolveInstructionForPlanning(instruction string, _ sessionState) string {
 	instruction = strings.TrimSpace(instruction)
 	if instruction == "" {
 		return instruction
 	}
-	if looksLikeAffirmativeFollowUp(instruction) && strings.TrimSpace(state.LastSuggestedCommand) != "" {
-		return "The user is accepting this previously suggested command: " + state.LastSuggestedCommand + ". Follow-up from user: " + instruction
-	}
-	if !looksLikeReferenceFollowUp(instruction) || strings.TrimSpace(state.PendingIntent) == "" {
-		return instruction
-	}
-	return "Continue this pending task: " + state.PendingIntent + ". Follow-up from user: " + instruction
+	return instruction
 }
 
-// shouldPromotePendingIntent decides whether the current instruction should become the active task.
-func shouldPromotePendingIntent(instruction string, turn turnResult) bool {
-	if strings.TrimSpace(instruction) == "" {
-		return false
-	}
-	if len(turn.Plans) == 0 {
-		return true
-	}
-	return !looksPreparatory(instruction)
-}
-
-// looksLikeReferenceFollowUp detects references such as "before", "do it", or "the docker thing".
-func looksLikeReferenceFollowUp(input string) bool {
-	normalized := normalizeForMemory(input)
-	referenceSnippets := []string{
-		"abans", "aixo", "això", "allo", "allò", "fesho", "fes ho", "fes ho", "fes ho ara",
-		"do it", "do that", "that thing", "before", "earlier", "previous",
-		"lo del", "el del", "the docker thing", "continue", "ara fes", "si", "yes",
-		"ok", "okay", "vale", "d acord", "dacord", "llista", "lista",
-		"again", "retry", "repeat", "rerun", "torna", "de nou",
-	}
-	for _, snippet := range referenceSnippets {
-		if strings.Contains(normalized, snippet) {
-			return true
-		}
-	}
-	return false
-}
-
-// looksLikeAffirmativeFollowUp detects short confirmations that usually accept
-// a previously suggested command.
-func looksLikeAffirmativeFollowUp(input string) bool {
-	normalized := normalizeForMemory(input)
-	if normalized == "" {
-		return false
-	}
-
-	affirmatives := []string{
-		"ok", "okay", "vale", "si", "yes", "d acord", "dacord",
-		"fesho", "fes ho", "fes ho ara", "do it", "go ahead",
-		"llista", "lista", "endavant",
-	}
-	for _, snippet := range affirmatives {
-		if normalized == snippet || strings.HasPrefix(normalized, snippet+" ") {
-			return true
-		}
-	}
-	return false
-}
-
-// looksPreparatory reports whether the instruction is likely a small supporting action.
-func looksPreparatory(input string) bool {
-	normalized := normalizeForMemory(input)
-	prepPrefixes := []string{
-		"crea ", "create ", "make ", "touch ", "mira ", "mostra ", "llista ",
-		"show ", "list ", "cat ", "open ", "obre ", "inspect ", "check ",
-		"create a test file", "crea un petit fitxer", "crea un fitxer",
-	}
-	for _, prefix := range prepPrefixes {
-		if strings.HasPrefix(normalized, prefix) {
-			return true
-		}
-	}
-	return false
+// shouldPromotePendingIntent keeps the latest meaningful instruction available
+// for the planning model, which decides later whether it is still relevant.
+func shouldPromotePendingIntent(instruction string, _ turnResult) bool {
+	return strings.TrimSpace(instruction) != ""
 }
 
 // detectRuntimeHint stores the latest runtime/container context when present.
