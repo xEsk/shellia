@@ -1011,7 +1011,7 @@ func TestRunInteractiveNewCommandClearsPromptContext(t *testing.T) {
 			t.Fatalf("second request body contains cleared context %q: %q", snippet, bodies[1])
 		}
 	}
-	if !strings.Contains(output, "new session") || !strings.Contains(output, "Context cleared") {
+	if !strings.Contains(output, "─ new session · context cleared ") {
 		t.Fatalf("output = %q, want new session separator", output)
 	}
 }

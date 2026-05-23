@@ -129,11 +129,23 @@ func TestPrintNewSessionSeparatorShowsContextBoundary(t *testing.T) {
 	if !strings.Contains(output, "new session") {
 		t.Fatalf("printNewSessionSeparatorTo() = %q, want new session title", output)
 	}
-	if !strings.Contains(output, "Context cleared. Previous turns will not be used.") {
-		t.Fatalf("printNewSessionSeparatorTo() = %q, want context-cleared message", output)
+	if !strings.Contains(output, "context cleared") {
+		t.Fatalf("printNewSessionSeparatorTo() = %q, want context-cleared label", output)
 	}
-	if strings.Count(output, strings.Repeat("─", boxWidthFor(&buffer))) < 2 {
-		t.Fatalf("printNewSessionSeparatorTo() = %q, want separator boundary", output)
+	if visibleWidth(strings.TrimSpace(output)) != boxWidthFor(&buffer) {
+		t.Fatalf("printNewSessionSeparatorTo() width = %d, want %d: %q", visibleWidth(strings.TrimSpace(output)), boxWidthFor(&buffer), output)
+	}
+	if !strings.Contains(output, "─ new session · context cleared ") {
+		t.Fatalf("printNewSessionSeparatorTo() = %q, want centered separator label", output)
+	}
+}
+
+// TestCenteredSeparatorTextCentersLabel checks the text separator keeps a stable width.
+func TestCenteredSeparatorTextCentersLabel(t *testing.T) {
+	got := centeredSeparatorText("new session", 20)
+	want := "─── new session ────"
+	if got != want {
+		t.Fatalf("centeredSeparatorText() = %q, want %q", got, want)
 	}
 }
 

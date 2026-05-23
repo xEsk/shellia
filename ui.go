@@ -443,11 +443,27 @@ func printModeStatusTo(target io.Writer, ui bool, message string) {
 // printNewSessionSeparatorTo marks a fresh context boundary without clearing the terminal.
 func printNewSessionSeparatorTo(target io.Writer, ui bool) {
 	fmt.Fprintln(target)
-	printSeparator(target, ui)
-	renderPanel(target, ui, "new session", colorCyan, []string{
-		style(ui, colorWhite+colorBold, "Context cleared. Previous turns will not be used."),
-	})
-	printSeparator(target, ui)
+	fmt.Fprintln(target)
+	fmt.Fprintln(target, style(ui, colorDim, centeredSeparatorText("new session · context cleared", boxWidthFor(target))))
+	fmt.Fprintln(target)
+}
+
+// centeredSeparatorText renders a separator with a centered label.
+func centeredSeparatorText(label string, width int) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return strings.Repeat("─", width)
+	}
+
+	text := " " + label + " "
+	if width <= visibleWidth(text) {
+		return text
+	}
+
+	remaining := width - visibleWidth(text)
+	left := remaining / 2
+	right := remaining - left
+	return strings.Repeat("─", left) + text + strings.Repeat("─", right)
 }
 
 // printModelSwitchTo shows the active model profile after a /model change.
