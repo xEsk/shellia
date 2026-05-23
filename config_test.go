@@ -51,9 +51,8 @@ func TestApplyFileConfigCanDisableContextFields(t *testing.T) {
 // TestApplyFileConfigCanDisableSystemOutput checks the UI output visibility config flag.
 func TestApplyFileConfigCanDisableSystemOutput(t *testing.T) {
 	cfg := defaultConfig()
-	show := false
 	fileCfg := fileConfig{}
-	fileCfg.UI.ShowSystemOutput = &show
+	fileCfg.UI.ShowSystemOutput = new(false)
 
 	applyFileConfig(&cfg, fileCfg)
 
@@ -65,9 +64,8 @@ func TestApplyFileConfigCanDisableSystemOutput(t *testing.T) {
 // TestApplyFileConfigCanHideCommandPopup checks the command popup visibility config flag.
 func TestApplyFileConfigCanHideCommandPopup(t *testing.T) {
 	cfg := defaultConfig()
-	show := false
 	fileCfg := fileConfig{}
-	fileCfg.UI.ShowCommandPopup = &show
+	fileCfg.UI.ShowCommandPopup = new(false)
 
 	applyFileConfig(&cfg, fileCfg)
 
