@@ -148,7 +148,10 @@ func main() {
 
 // parseArgs processes CLI config and validates the minimum required values.
 func parseArgs(args []string) (config, error) {
-	if kind, ok := parseConfigSubcommand(args); ok {
+	if kind, ok, err := parseConfigSubcommand(args); ok || err != nil {
+		if err != nil {
+			return config{}, err
+		}
 		cfg := defaultConfig()
 		applyEnvConfig(&cfg)
 		cfg.CommandKind = kind
@@ -192,17 +195,20 @@ func loadBaseConfig() (config, error) {
 }
 
 // parseConfigSubcommand detects `shellia config init|path` and returns the command kind.
-func parseConfigSubcommand(args []string) (string, bool) {
-	if len(args) < 2 || args[0] != "config" {
-		return "", false
+func parseConfigSubcommand(args []string) (string, bool, error) {
+	if len(args) == 0 || args[0] != "config" {
+		return "", false, nil
+	}
+	if len(args) != 2 {
+		return "", true, fmt.Errorf("invalid config command. Use: shellia config init|path")
 	}
 	switch args[1] {
 	case "init":
-		return "config-init", true
+		return "config-init", true, nil
 	case "path":
-		return "config-path", true
+		return "config-path", true, nil
 	}
-	return "", false
+	return "", true, fmt.Errorf("invalid config command %q. Use: shellia config init|path", args[1])
 }
 
 // buildFlagSet registers all CLI flags and returns the set plus timeout int pointers.
@@ -258,15 +264,22 @@ func finalizeConfig(fs *flag.FlagSet, cfg config, timeoutSecs, reqTimeoutSecs in
 	flagAPIKeySet := flagWasSet(fs, "api-key")
 	flagModelSet := flagWasSet(fs, "model")
 
+	if timeoutSecs <= 0 {
+		return config{}, fmt.Errorf("timeout must be greater than 0")
+	}
+	if reqTimeoutSecs <= 0 {
+		return config{}, fmt.Errorf("request-timeout must be greater than 0")
+	}
+	if timeoutSecs > int(maxCommandTimeout/time.Second) {
+		return config{}, fmt.Errorf("timeout_seconds too large (max %v)", maxCommandTimeout)
+	}
+	if reqTimeoutSecs > int(maxRequestTimeout/time.Second) {
+		return config{}, fmt.Errorf("request_timeout_seconds too large (max %v)", maxRequestTimeout)
+	}
+
 	cfg.CommandTimeout = time.Duration(timeoutSecs) * time.Second
 	cfg.RequestTimeout = time.Duration(reqTimeoutSecs) * time.Second
 
-	if cfg.CommandTimeout > maxCommandTimeout {
-		return config{}, fmt.Errorf("timeout_seconds too large (max %v)", maxCommandTimeout)
-	}
-	if cfg.RequestTimeout > maxRequestTimeout {
-		return config{}, fmt.Errorf("request_timeout_seconds too large (max %v)", maxRequestTimeout)
-	}
 	if cfg.CaptureStdoutBytes > maxCaptureBytes || cfg.CaptureStderrBytes > maxCaptureBytes {
 		return config{}, fmt.Errorf("capture byte limits cannot exceed %d bytes", maxCaptureBytes)
 	}
