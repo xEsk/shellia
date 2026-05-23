@@ -264,7 +264,7 @@ func TestSwitchInteractiveModelAppliesAndPersistsDefault(t *testing.T) {
 
 	ctxInfo := loopTestContext(t)
 	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
-		if _, err := runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "answer")); err != nil {
+		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "answer")); err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
 	})
@@ -370,7 +370,7 @@ func TestDoLLMRequestOmitsAuthorizationWhenAPIKeyEmpty(t *testing.T) {
 	cfg := loopTestConfig("http://localhost")
 	cfg.APIKey = ""
 
-	_, err := doLLMRequest(context.Background(), fake.HTTPClient(), cfg, chatCompletionRequest{
+	_, err := doLLMRequest(t.Context(), fake.HTTPClient(), cfg, chatCompletionRequest{
 		Model:       cfg.Model,
 		Temperature: 0,
 		Messages:    []chatMessage{{Role: "user", Content: "hello"}},
@@ -391,7 +391,7 @@ func TestDoLLMRequestSendsAuthorizationWhenAPIKeySet(t *testing.T) {
 	cfg := loopTestConfig(fake.URL())
 	cfg.APIKey = "test-key"
 
-	_, err := doLLMRequest(context.Background(), fake.HTTPClient(), cfg, chatCompletionRequest{
+	_, err := doLLMRequest(t.Context(), fake.HTTPClient(), cfg, chatCompletionRequest{
 		Model:       cfg.Model,
 		Temperature: 0,
 		Messages:    []chatMessage{{Role: "user", Content: "hello"}},
@@ -412,7 +412,7 @@ func TestCallPlanningPromptUsesResponseFormatForLocalNoKey(t *testing.T) {
 	cfg := loopTestConfig("http://localhost")
 	cfg.APIKey = ""
 
-	if _, err := callPlanningPrompt(context.Background(), fake.HTTPClient(), cfg, "system", "user"); err != nil {
+	if _, err := callPlanningPrompt(t.Context(), fake.HTTPClient(), cfg, "system", "user"); err != nil {
 		t.Fatalf("callPlanningPrompt() error = %v", err)
 	}
 
@@ -438,7 +438,7 @@ func TestCallPlanningPromptOmitsResponseFormatWhenUnsupported(t *testing.T) {
 	cfg := loopTestConfig("http://localhost")
 	cfg.SupportsResponseFormat = false
 
-	if _, err := callPlanningPrompt(context.Background(), fake.HTTPClient(), cfg, "system", "user"); err != nil {
+	if _, err := callPlanningPrompt(t.Context(), fake.HTTPClient(), cfg, "system", "user"); err != nil {
 		t.Fatalf("callPlanningPrompt() error = %v", err)
 	}
 
@@ -461,7 +461,7 @@ func TestCallPlanningPromptKeepsResponseFormatWithKey(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{content: "ok"})
 	cfg := loopTestConfig(fake.URL())
 
-	if _, err := callPlanningPrompt(context.Background(), fake.HTTPClient(), cfg, "system", "user"); err != nil {
+	if _, err := callPlanningPrompt(t.Context(), fake.HTTPClient(), cfg, "system", "user"); err != nil {
 		t.Fatalf("callPlanningPrompt() error = %v", err)
 	}
 
@@ -492,7 +492,7 @@ func TestRunTurnPrintsRawPrompt(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 
 	output := captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
-		if _, err := runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "answer directly")); err != nil {
+		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "answer directly")); err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
 	})
@@ -522,7 +522,7 @@ func TestRunTurnReturnsFinalAnswerWithoutCommands(t *testing.T) {
 	var result turnResult
 	output := captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
 		var err error
-		result, err = runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "answer directly"))
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "answer directly"))
 		if err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
@@ -556,7 +556,7 @@ func TestRunTurnExecutesSafePlanAndStreamsSummary(t *testing.T) {
 	var result turnResult
 	captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
 		var err error
-		result, err = runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "print marker"))
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "print marker"))
 		if err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
@@ -601,7 +601,7 @@ func TestRunTurnDeclinesPlanWithoutExecuting(t *testing.T) {
 		}
 
 		var err error
-		result, err = runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "print marker"))
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "print marker"))
 		if err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
@@ -639,7 +639,7 @@ func TestRunTurnPlanOnlyPrintsCommandsWithoutExecuting(t *testing.T) {
 		}
 
 		var err error
-		result, err = runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "create marker"))
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "create marker"))
 		if err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
@@ -689,7 +689,7 @@ func TestRunTurnPlanOnlyExecutesAcceptedPlan(t *testing.T) {
 		}
 
 		var err error
-		result, err = runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "create marker"))
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "create marker"))
 		if err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
@@ -719,7 +719,7 @@ func TestRunTurnPlanOnlyExplainsObservationDependency(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 
 	output := captureMainLoopIO(t, "no\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		if _, err := runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "install deps")); err != nil {
+		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "install deps")); err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
 	})
@@ -747,7 +747,7 @@ func TestRunTurnPlanOnlySkipsDiscoveryRepair(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 
 	output := captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
-		if _, err := runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "run php in docker")); err != nil {
+		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "run php in docker")); err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
 	})
@@ -763,6 +763,58 @@ func TestRunTurnPlanOnlySkipsDiscoveryRepair(t *testing.T) {
 	}
 }
 
+// TestRunTurnUsesDiscoveryRepairForRecoverableEmptyPlan checks empty input responses get one discovery retry.
+func TestRunTurnUsesDiscoveryRepairForRecoverableEmptyPlan(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{
+			content: `{"summary":"Need the installed tool.","requires_input":true,"input_reason":"The install source is unknown.","commands":[]}`,
+		},
+		loopLLMResponse{
+			content: `{"summary":"Checking the local tool path.","requires_observation":false,"observation_reason":"","commands":[{"command":"command -v shellia","purpose":"Find shellia binary","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+		},
+		loopLLMResponse{content: "Found the shellia binary.", stream: true},
+	)
+	cfg := loopTestConfig(fake.URL())
+	ctxInfo := loopTestContext(t)
+
+	var gotPlans []commandPlan
+	var result turnResult
+	output := captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) ([]commandExecution, error) {
+			gotPlans = append([]commandPlan{}, plans...)
+			return []commandExecution{{
+				Command:  plans[0].Command,
+				Purpose:  plans[0].Purpose,
+				ExitCode: 0,
+				Stdout:   capturedStream{Text: "/usr/local/bin/shellia"},
+			}}, nil
+		}
+
+		var err error
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "update shellia"))
+		if err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	if len(gotPlans) != 1 || gotPlans[0].Command != "command -v shellia" {
+		t.Fatalf("ExecuteCommands plans = %#v, want discovery command", gotPlans)
+	}
+	if !result.Actionable || len(result.Executions) != 1 {
+		t.Fatalf("runTurn() result = %#v, want executed discovery plan", result)
+	}
+	if fake.requestCount() != 3 {
+		t.Fatalf("LLM requests = %d, want initial, repair, and summary requests", fake.requestCount())
+	}
+	bodies := fake.requestBodies()
+	if len(bodies) < 2 || !strings.Contains(bodies[1], "Discovery repair mode") {
+		t.Fatalf("repair request body = %#v, want discovery repair prompt", bodies)
+	}
+	if !strings.Contains(output, "Found the shellia binary.") {
+		t.Fatalf("runTurn() output missing final summary: %q", output)
+	}
+}
+
 // TestRunTurnPlanOnlyUsesDedicatedSystemPrompt checks /plan sends the plan-only prompt contract.
 func TestRunTurnPlanOnlyUsesDedicatedSystemPrompt(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{
@@ -773,7 +825,7 @@ func TestRunTurnPlanOnlyUsesDedicatedSystemPrompt(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 
 	captureMainLoopIO(t, "no\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		if _, err := runTurn(context.Background(), deps, false, loopTurnRequest(cfg, &ctxInfo, "create marker")); err != nil {
+		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "create marker")); err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
 	})
@@ -796,7 +848,7 @@ func TestRunInteractiveProcessesPromptThenExit(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 
 	output := captureMainLoopIO(t, "answer something\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		runInteractive(context.Background(), deps, false, cfg, &ctxInfo)
+		runInteractive(t.Context(), deps, false, cfg, &ctxInfo)
 	})
 
 	if fake.requestCount() != 1 {
@@ -827,7 +879,7 @@ func TestRunInteractiveModelCommandSwitchesWithoutLLM(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 
 	output := captureMainLoopIO(t, "/model mlx\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		runInteractive(context.Background(), deps, false, cfg, &ctxInfo)
+		runInteractive(t.Context(), deps, false, cfg, &ctxInfo)
 	})
 
 	if fake.requestCount() != 0 {
@@ -865,7 +917,7 @@ func TestRunInteractivePlanCommandPlansWithoutExecuting(t *testing.T) {
 			executed = true
 			return nil, nil
 		}
-		runInteractive(context.Background(), deps, false, cfg, &ctxInfo)
+		runInteractive(t.Context(), deps, false, cfg, &ctxInfo)
 	})
 
 	if executed {
@@ -886,7 +938,7 @@ func TestRunInteractiveIgnoresEmptyPrompt(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 
 	captureMainLoopIO(t, "\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		runInteractive(context.Background(), deps, false, cfg, &ctxInfo)
+		runInteractive(t.Context(), deps, false, cfg, &ctxInfo)
 	})
 
 	if fake.requestCount() != 0 {
@@ -904,7 +956,7 @@ func TestDoLLMStreamReturnsMalformedChunkError(t *testing.T) {
 	cfg := loopTestConfig(fake.URL())
 
 	var output strings.Builder
-	result, err := doLLMStream(context.Background(), fake.HTTPClient(), cfg, chatCompletionRequest{Model: cfg.Model}, &output)
+	result, err := doLLMStream(t.Context(), fake.HTTPClient(), cfg, chatCompletionRequest{Model: cfg.Model}, &output)
 	if err == nil {
 		t.Fatalf("doLLMStream() error = nil, want malformed chunk error")
 	}
@@ -921,7 +973,7 @@ func TestDoLLMStreamReportsErrorBodyReadFailure(t *testing.T) {
 	cfg := loopTestConfig("http://shellia.test")
 	var output strings.Builder
 	client := &http.Client{Transport: errorBodyTransport{}}
-	_, err := doLLMStream(context.Background(), client, cfg, chatCompletionRequest{Model: cfg.Model}, &output)
+	_, err := doLLMStream(t.Context(), client, cfg, chatCompletionRequest{Model: cfg.Model}, &output)
 	if err == nil {
 		t.Fatalf("doLLMStream() error = nil, want HTTP error")
 	}

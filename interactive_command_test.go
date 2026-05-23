@@ -4,25 +4,31 @@ import "testing"
 
 // TestParseInteractiveCommandSlashCommands checks the supported interactive slash commands.
 func TestParseInteractiveCommandSlashCommands(t *testing.T) {
-	tests := map[string]interactiveCommand{
-		"/shell":     interactiveCommandShell,
-		" /SHELL  ":  interactiveCommandShell,
-		"/plan":      interactiveCommandPlan,
-		"/ai":        interactiveCommandAI,
-		"/mode":      interactiveCommandMode,
-		"/model":     interactiveCommandModel,
-		"/model mlx": interactiveCommandModel,
-		"/context":   interactiveCommandContext,
-		"/clear":     interactiveCommandClear,
-		"/exit":      interactiveCommandExit,
-		"/quit":      interactiveCommandExit,
-		"exit":       interactiveCommandExit,
+	tests := []struct {
+		name  string
+		input string
+		want  interactiveCommand
+	}{
+		{name: "shell", input: "/shell", want: interactiveCommandShell},
+		{name: "shell uppercase spaced", input: " /SHELL  ", want: interactiveCommandShell},
+		{name: "plan", input: "/plan", want: interactiveCommandPlan},
+		{name: "ai", input: "/ai", want: interactiveCommandAI},
+		{name: "mode", input: "/mode", want: interactiveCommandMode},
+		{name: "model", input: "/model", want: interactiveCommandModel},
+		{name: "model argument", input: "/model mlx", want: interactiveCommandModel},
+		{name: "context", input: "/context", want: interactiveCommandContext},
+		{name: "clear", input: "/clear", want: interactiveCommandClear},
+		{name: "exit slash", input: "/exit", want: interactiveCommandExit},
+		{name: "quit slash", input: "/quit", want: interactiveCommandExit},
+		{name: "exit bare", input: "exit", want: interactiveCommandExit},
 	}
 
-	for input, want := range tests {
-		if got := parseInteractiveCommand(input); got != want {
-			t.Fatalf("parseInteractiveCommand(%q) = %q, want %q", input, got, want)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseInteractiveCommand(tt.input); got != tt.want {
+				t.Fatalf("parseInteractiveCommand(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -47,10 +53,24 @@ func TestParsePlanInstructionIgnoresOtherSlashCommands(t *testing.T) {
 
 // TestParseInteractiveCommandRejectsLegacyColonCommands checks that old colon commands are no longer control commands.
 func TestParseInteractiveCommandRejectsLegacyColonCommands(t *testing.T) {
-	for _, input := range []string{":shell", ":ai", ":mode", "clear", "context", "quit"} {
-		if got := parseInteractiveCommand(input); got != interactiveCommandNone {
-			t.Fatalf("parseInteractiveCommand(%q) = %q, want no command", input, got)
-		}
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{name: "colon shell", input: ":shell"},
+		{name: "colon ai", input: ":ai"},
+		{name: "colon mode", input: ":mode"},
+		{name: "clear bare", input: "clear"},
+		{name: "context bare", input: "context"},
+		{name: "quit bare", input: "quit"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseInteractiveCommand(tt.input); got != interactiveCommandNone {
+				t.Fatalf("parseInteractiveCommand(%q) = %q, want no command", tt.input, got)
+			}
+		})
 	}
 }
 
@@ -63,10 +83,20 @@ func TestParseInteractiveCommandUnknownSlash(t *testing.T) {
 
 // TestParseInteractiveCommandAllowsAbsolutePaths checks shell paths can still be executed.
 func TestParseInteractiveCommandAllowsAbsolutePaths(t *testing.T) {
-	for _, input := range []string{"/usr/bin/env", "/Users/me/script.sh --flag"} {
-		if got := parseInteractiveCommand(input); got != interactiveCommandNone {
-			t.Fatalf("parseInteractiveCommand(%q) = %q, want no command", input, got)
-		}
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{name: "binary path", input: "/usr/bin/env"},
+		{name: "script path with flag", input: "/Users/me/script.sh --flag"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseInteractiveCommand(tt.input); got != interactiveCommandNone {
+				t.Fatalf("parseInteractiveCommand(%q) = %q, want no command", tt.input, got)
+			}
+		})
 	}
 }
 
@@ -85,10 +115,22 @@ func TestMatchingInteractiveSlashCommandsFiltersByPrefix(t *testing.T) {
 
 // TestMatchingInteractiveSlashCommandsIgnoresNonControlPaths avoids noisy menus for absolute paths.
 func TestMatchingInteractiveSlashCommandsIgnoresNonControlPaths(t *testing.T) {
-	for _, input := range []string{"/usr/bin/env", "/Users/me/script.sh", " /shell", "/shell now"} {
-		if got := matchingInteractiveSlashCommands(input); len(got) != 0 {
-			t.Fatalf("matchingInteractiveSlashCommands(%q) = %#v, want no suggestions", input, got)
-		}
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{name: "binary path", input: "/usr/bin/env"},
+		{name: "script path", input: "/Users/me/script.sh"},
+		{name: "spaced shell command", input: " /shell"},
+		{name: "shell command with argument", input: "/shell now"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := matchingInteractiveSlashCommands(tt.input); len(got) != 0 {
+				t.Fatalf("matchingInteractiveSlashCommands(%q) = %#v, want no suggestions", tt.input, got)
+			}
+		})
 	}
 }
 

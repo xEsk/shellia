@@ -162,6 +162,84 @@ func TestBuildPlanOnlySystemPromptDefinesOperationalPlan(t *testing.T) {
 	}
 }
 
+// TestBuildDiscoveryRepairLLMPromptsAddsPreviousResponse checks repair prompts include the missing-detail context.
+func TestBuildDiscoveryRepairLLMPromptsAddsPreviousResponse(t *testing.T) {
+	cfg := defaultConfig()
+	ctxInfo := contextInfo{
+		CWD:   "/tmp/project",
+		User:  "xesc",
+		OS:    "darwin/arm64",
+		Shell: "/bin/zsh",
+	}
+
+	systemPrompt, userPrompt := buildDiscoveryRepairLLMPrompts(discoveryPromptRequest{
+		Prompt: llmPromptRequest{
+			Config:      cfg,
+			ContextInfo: ctxInfo,
+			Instruction: "update the local tool",
+		},
+		Previous: llmResponse{
+			Summary:       "Need install source.",
+			RequiresInput: true,
+			InputReason:   "The install source is unknown.",
+		},
+	})
+
+	if !strings.Contains(systemPrompt, "You are a shell planning assistant.") {
+		t.Fatalf("system prompt = %q, want standard planning prompt", systemPrompt)
+	}
+	requiredSnippets := []string{
+		"Discovery repair mode",
+		"Previous empty planning response",
+		"Need install source.",
+		"The install source is unknown.",
+		"discovered locally from this machine",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(userPrompt, snippet) {
+			t.Fatalf("buildDiscoveryRepairLLMPrompts() user prompt missing %q in %q", snippet, userPrompt)
+		}
+	}
+}
+
+// TestCallDiscoveryRepairLLMSendsRepairPrompt checks the repair LLM path uses the discovery prompt.
+func TestCallDiscoveryRepairLLMSendsRepairPrompt(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{
+		content: `{"summary":"Inspect locally.","requires_observation":true,"observation_reason":"Use command output.","commands":[{"command":"command -v shellia","purpose":"Find shellia","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+	})
+	cfg := loopTestConfig(fake.URL())
+	ctxInfo := contextInfo{
+		CWD:   "/tmp/project",
+		User:  "xesc",
+		OS:    "darwin/arm64",
+		Shell: "/bin/zsh",
+	}
+
+	raw, err := callDiscoveryRepairLLM(t.Context(), fake.HTTPClient(), discoveryPromptRequest{
+		Prompt: llmPromptRequest{
+			Config:      cfg,
+			ContextInfo: ctxInfo,
+			Instruction: "update shellia",
+		},
+		Previous: llmResponse{
+			Summary:       "Need install source.",
+			RequiresInput: true,
+			InputReason:   "The install source is unknown.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("callDiscoveryRepairLLM() error = %v", err)
+	}
+	if !strings.Contains(raw, "command -v shellia") {
+		t.Fatalf("callDiscoveryRepairLLM() = %q, want fake repair response", raw)
+	}
+
+	bodies := fake.requestBodies()
+	if len(bodies) != 1 || !strings.Contains(bodies[0], "Discovery repair mode") {
+		t.Fatalf("repair request bodies = %#v, want discovery repair prompt", bodies)
+	}
+}
+
 // TestBuildUserPromptAlwaysAddsJSONGuidance checks JSON instructions do not depend on response_format.
 func TestBuildUserPromptAlwaysAddsJSONGuidance(t *testing.T) {
 	ctxInfo := contextInfo{

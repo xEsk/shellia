@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 // TestDetectInteractivePromptMatchesConfirmationPrompt checks that a trailing yes/no prompt is detected.
 func TestDetectInteractivePromptMatchesConfirmationPrompt(t *testing.T) {
@@ -15,64 +18,84 @@ func TestDetectInteractivePromptMatchesConfirmationPrompt(t *testing.T) {
 
 // TestDetectInteractivePromptMatchesLooseConfirmationVariants checks common spacing and casing variants.
 func TestDetectInteractivePromptMatchesLooseConfirmationVariants(t *testing.T) {
-	cases := []string{
-		"Are you sure? [ Y / n ] ",
-		"continue? (YES / no)",
-		"Proceed? [ n | Y ] ",
-		"Install dependencies? [y    n] ",
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{name: "spaced bracket choice", input: "Are you sure? [ Y / n ] "},
+		{name: "parenthesized yes no", input: "continue? (YES / no)"},
+		{name: "pipe separated choice", input: "Proceed? [ n | Y ] "},
+		{name: "space separated choice", input: "Install dependencies? [y    n] "},
 	}
 
-	for _, input := range cases {
-		if prompt, ok := detectInteractivePrompt(input); !ok {
-			t.Fatalf("detectInteractivePrompt(%q) = false, want true; prompt %q", input, prompt)
-		}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if prompt, ok := detectInteractivePrompt(tt.input); !ok {
+				t.Fatalf("detectInteractivePrompt(%q) = false, want true; prompt %q", tt.input, prompt)
+			}
+		})
 	}
 }
 
 // TestDetectInteractivePromptMatchesLooseCredentialPrompt checks credential prompts with unusual spacing and casing.
 func TestDetectInteractivePromptMatchesLooseCredentialPrompt(t *testing.T) {
-	cases := []string{
-		"Password:",
-		"password : ",
-		"Enter PASSPHRASE   :",
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{name: "password", input: "Password:"},
+		{name: "spaced password", input: "password : "},
+		{name: "passphrase", input: "Enter PASSPHRASE   :"},
 	}
 
-	for _, input := range cases {
-		if prompt, ok := detectInteractivePrompt(input); !ok {
-			t.Fatalf("detectInteractivePrompt(%q) = false, want true; prompt %q", input, prompt)
-		}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if prompt, ok := detectInteractivePrompt(tt.input); !ok {
+				t.Fatalf("detectInteractivePrompt(%q) = false, want true; prompt %q", tt.input, prompt)
+			}
+		})
 	}
 }
 
 // TestDetectInteractivePromptMatchesContinuePrompt checks common pause prompts.
 func TestDetectInteractivePromptMatchesContinuePrompt(t *testing.T) {
-	cases := []string{
-		"Press Enter to continue",
-		"press return to continue ",
-		"Press any key to continue...",
-		"Press a key to continue",
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{name: "enter", input: "Press Enter to continue"},
+		{name: "return", input: "press return to continue "},
+		{name: "any key", input: "Press any key to continue..."},
+		{name: "a key", input: "Press a key to continue"},
 	}
 
-	for _, input := range cases {
-		if prompt, ok := detectInteractivePrompt(input); !ok {
-			t.Fatalf("detectInteractivePrompt(%q) = false, want true; prompt %q", input, prompt)
-		}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if prompt, ok := detectInteractivePrompt(tt.input); !ok {
+				t.Fatalf("detectInteractivePrompt(%q) = false, want true; prompt %q", tt.input, prompt)
+			}
+		})
 	}
 }
 
 // TestDetectInteractivePromptMatchesTextConfirmationPrompt checks typed confirmation prompts.
 func TestDetectInteractivePromptMatchesTextConfirmationPrompt(t *testing.T) {
-	cases := []string{
-		`Type DELETE to confirm`,
-		`type "yes" to continue`,
-		`Type 'destroy' to proceed`,
-		`Please type repo-name to delete`,
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{name: "delete token", input: `Type DELETE to confirm`},
+		{name: "quoted yes", input: `type "yes" to continue`},
+		{name: "quoted destroy", input: `Type 'destroy' to proceed`},
+		{name: "repo token", input: `Please type repo-name to delete`},
 	}
 
-	for _, input := range cases {
-		if prompt, ok := detectInteractivePrompt(input); !ok {
-			t.Fatalf("detectInteractivePrompt(%q) = false, want true; prompt %q", input, prompt)
-		}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if prompt, ok := detectInteractivePrompt(tt.input); !ok {
+				t.Fatalf("detectInteractivePrompt(%q) = false, want true; prompt %q", tt.input, prompt)
+			}
+		})
 	}
 }
 
@@ -121,5 +144,145 @@ func TestShouldRetryAfterExecutionErrorForInteractivePrompt(t *testing.T) {
 	}
 	if shouldRetryAfterExecutionError(err, maxPlanRounds-1) {
 		t.Fatalf("shouldRetryAfterExecutionError() = true on final round, want false")
+	}
+}
+
+// TestParseSimpleCDTarget checks accepted and rejected standalone cd forms.
+func TestParseSimpleCDTarget(t *testing.T) {
+	cases := []struct {
+		name       string
+		command    string
+		wantTarget string
+		wantOK     bool
+	}{
+		{name: "bare cd", command: "cd", wantOK: true},
+		{name: "relative path", command: "cd docs", wantTarget: "docs", wantOK: true},
+		{name: "double quoted path", command: `cd "docs old"`, wantTarget: "docs old", wantOK: true},
+		{name: "single quoted path", command: `cd 'docs old'`, wantTarget: "docs old", wantOK: true},
+		{name: "escaped space", command: `cd docs\ old`, wantTarget: "docs old", wantOK: true},
+		{name: "missing cd boundary", command: "cdrom", wantOK: false},
+		{name: "multiple arguments", command: "cd docs old", wantOK: false},
+		{name: "malformed quote", command: `cd "docs`, wantOK: false},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			gotTarget, gotOK := parseSimpleCDTarget(tt.command)
+			if gotOK != tt.wantOK || gotTarget != tt.wantTarget {
+				t.Fatalf("parseSimpleCDTarget(%q) = %q, %t; want %q, %t", tt.command, gotTarget, gotOK, tt.wantTarget, tt.wantOK)
+			}
+		})
+	}
+}
+
+// TestResolveDirectoryChange checks session directory transitions without running a shell.
+func TestResolveDirectoryChange(t *testing.T) {
+	currentCWD := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cases := []struct {
+		name    string
+		command string
+		want    string
+		wantOK  bool
+	}{
+		{name: "relative cd", command: "cd docs", want: filepath.Join(currentCWD, "docs"), wantOK: true},
+		{name: "escaped space cd", command: `cd docs\ old`, want: filepath.Join(currentCWD, "docs old"), wantOK: true},
+		{name: "single quoted cd", command: `cd 'docs old'`, want: filepath.Join(currentCWD, "docs old"), wantOK: true},
+		{name: "absolute cd", command: "cd /tmp", want: "/tmp", wantOK: true},
+		{name: "home cd", command: "cd", want: home, wantOK: true},
+		{name: "home child", command: "cd ~/project", want: filepath.Join(home, "project"), wantOK: true},
+		{name: "previous directory unsupported", command: "cd -", wantOK: false},
+		{name: "compound command ignored", command: "cd docs && pwd", wantOK: false},
+		{name: "non cd command ignored", command: "pwd", wantOK: false},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, gotOK := resolveDirectoryChange(currentCWD, tt.command)
+			if gotOK != tt.wantOK {
+				t.Fatalf("resolveDirectoryChange(%q) ok = %t, want %t", tt.command, gotOK, tt.wantOK)
+			}
+			if gotOK && got != tt.want {
+				t.Fatalf("resolveDirectoryChange(%q) = %q, want %q", tt.command, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestApplySessionStateUpdatesCWDOnSuccessfulCD checks successful cd commands update session state.
+func TestApplySessionStateUpdatesCWDOnSuccessfulCD(t *testing.T) {
+	currentCWD := t.TempDir()
+	nextDir := filepath.Join(currentCWD, "docs")
+	ctxInfo := &contextInfo{
+		CWD: currentCWD,
+		Git: gitContext{IsRepo: true, Branch: "main"},
+	}
+	cfg := config{IncludeGit: false}
+
+	applySessionState(ctxInfo, cfg, "cd docs", 0)
+
+	if ctxInfo.CWD != nextDir {
+		t.Fatalf("ctxInfo.CWD = %q, want %q", ctxInfo.CWD, nextDir)
+	}
+	if ctxInfo.Git != (gitContext{}) {
+		t.Fatalf("ctxInfo.Git = %#v, want cleared git context", ctxInfo.Git)
+	}
+}
+
+// TestApplySessionStateIgnoresFailedCommand checks failed commands do not mutate session state.
+func TestApplySessionStateIgnoresFailedCommand(t *testing.T) {
+	ctxInfo := &contextInfo{CWD: t.TempDir()}
+	before := *ctxInfo
+
+	applySessionState(ctxInfo, config{}, "cd docs", 1)
+
+	if *ctxInfo != before {
+		t.Fatalf("ctxInfo = %#v, want unchanged %#v", *ctxInfo, before)
+	}
+}
+
+// TestStaticFallbackAnswer checks summarization fallback output from command executions.
+func TestStaticFallbackAnswer(t *testing.T) {
+	cases := []struct {
+		name       string
+		summary    string
+		executions []commandExecution
+		want       string
+	}{
+		{name: "no executions", summary: "Nothing to run.", want: "Nothing to run."},
+		{
+			name:       "successful stdout",
+			summary:    "Listed files.",
+			executions: []commandExecution{{Command: "pwd", Purpose: "Print cwd", ExitCode: 0, Stdout: capturedStream{Text: "/tmp/project"}}},
+			want:       "/tmp/project",
+		},
+		{
+			name:       "successful no output",
+			summary:    "Created marker.",
+			executions: []commandExecution{{Command: "touch marker", Purpose: "Create marker", ExitCode: 0}},
+			want:       "Create marker done.",
+		},
+		{
+			name:       "failed with output",
+			summary:    "Command failed.",
+			executions: []commandExecution{{Command: "ls missing", Purpose: "List file", ExitCode: 2, Stderr: capturedStream{Text: "No such file"}}},
+			want:       "No such file",
+		},
+		{
+			name:       "failed without output",
+			summary:    "Command failed.",
+			executions: []commandExecution{{Command: "false", Purpose: "Fail", ExitCode: 1}},
+			want:       "The command `false` failed with exit code 1.",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := staticFallbackAnswer(tt.summary, tt.executions); got != tt.want {
+				t.Fatalf("staticFallbackAnswer() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

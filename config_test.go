@@ -91,19 +91,25 @@ func TestApplyFileConfigCanSetConfirmationDefault(t *testing.T) {
 
 // TestNormalizeConfirmationDefaultAcceptsShortAliases checks common shorthand values.
 func TestNormalizeConfirmationDefaultAcceptsShortAliases(t *testing.T) {
-	tests := map[string]confirmationDefault{
-		"y":           confirmationDefaultYes,
-		"n":           confirmationDefaultNo,
-		"e":           confirmationDefaultEdit,
-		"i":           confirmationDefaultInteractive,
-		"null":        confirmationDefaultNone,
-		"unsupported": confirmationDefaultNo,
+	tests := []struct {
+		name  string
+		input string
+		want  confirmationDefault
+	}{
+		{name: "yes alias", input: "y", want: confirmationDefaultYes},
+		{name: "no alias", input: "n", want: confirmationDefaultNo},
+		{name: "edit alias", input: "e", want: confirmationDefaultEdit},
+		{name: "interactive alias", input: "i", want: confirmationDefaultInteractive},
+		{name: "null alias", input: "null", want: confirmationDefaultNone},
+		{name: "unsupported fallback", input: "unsupported", want: confirmationDefaultNo},
 	}
 
-	for input, want := range tests {
-		if got := normalizeConfirmationDefault(input, confirmationDefaultNo); got != want {
-			t.Fatalf("normalizeConfirmationDefault(%q) = %q, want %q", input, got, want)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeConfirmationDefault(tt.input, confirmationDefaultNo); got != tt.want {
+				t.Fatalf("normalizeConfirmationDefault(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 

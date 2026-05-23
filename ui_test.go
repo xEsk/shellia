@@ -121,10 +121,21 @@ func TestPrintSeparatorUsesStandardLine(t *testing.T) {
 
 // TestPromptHasTextIgnoresWhitespace checks that Enter on an empty prompt is ignored.
 func TestPromptHasTextIgnoresWhitespace(t *testing.T) {
-	for _, input := range []string{"", "   ", "\t"} {
-		if promptHasText([]rune(input)) {
-			t.Fatalf("promptHasText(%q) = true, want false", input)
-		}
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{name: "empty", input: ""},
+		{name: "spaces", input: "   "},
+		{name: "tab", input: "\t"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if promptHasText([]rune(tt.input)) {
+				t.Fatalf("promptHasText(%q) = true, want false", tt.input)
+			}
+		})
 	}
 
 	if !promptHasText([]rune("actualitza el claude-code")) {
@@ -156,26 +167,30 @@ func TestReadFallbackPromptLineReturnsPartialLineOnEOF(t *testing.T) {
 
 // TestParseConfirmationChoiceAcceptsSupportedAnswers checks the shared parser for all accepted inputs.
 func TestParseConfirmationChoiceAcceptsSupportedAnswers(t *testing.T) {
-	tests := map[string]struct {
+	tests := []struct {
+		name   string
+		input  string
 		choice confirmationDefault
 		ok     bool
 	}{
-		"y":           {choice: confirmationDefaultYes, ok: true},
-		"yes":         {choice: confirmationDefaultYes, ok: true},
-		"n":           {choice: confirmationDefaultNo, ok: true},
-		"no":          {choice: confirmationDefaultNo, ok: true},
-		"e":           {choice: confirmationDefaultEdit, ok: true},
-		"edit":        {choice: confirmationDefaultEdit, ok: true},
-		"i":           {choice: confirmationDefaultInteractive, ok: true},
-		"interactive": {choice: confirmationDefaultInteractive, ok: true},
-		"unknown":     {choice: confirmationDefaultNone, ok: false},
+		{name: "yes short", input: "y", choice: confirmationDefaultYes, ok: true},
+		{name: "yes long", input: "yes", choice: confirmationDefaultYes, ok: true},
+		{name: "no short", input: "n", choice: confirmationDefaultNo, ok: true},
+		{name: "no long", input: "no", choice: confirmationDefaultNo, ok: true},
+		{name: "edit short", input: "e", choice: confirmationDefaultEdit, ok: true},
+		{name: "edit long", input: "edit", choice: confirmationDefaultEdit, ok: true},
+		{name: "interactive short", input: "i", choice: confirmationDefaultInteractive, ok: true},
+		{name: "interactive long", input: "interactive", choice: confirmationDefaultInteractive, ok: true},
+		{name: "unknown", input: "unknown", choice: confirmationDefaultNone, ok: false},
 	}
 
-	for input, want := range tests {
-		gotChoice, gotOK := parseConfirmationChoice(input)
-		if gotChoice != want.choice || gotOK != want.ok {
-			t.Fatalf("parseConfirmationChoice(%q) = (%v, %t), want (%v, %t)", input, gotChoice, gotOK, want.choice, want.ok)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotChoice, gotOK := parseConfirmationChoice(tt.input)
+			if gotChoice != tt.choice || gotOK != tt.ok {
+				t.Fatalf("parseConfirmationChoice(%q) = (%v, %t), want (%v, %t)", tt.input, gotChoice, gotOK, tt.choice, tt.ok)
+			}
+		})
 	}
 }
 

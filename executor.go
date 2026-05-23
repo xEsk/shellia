@@ -961,25 +961,45 @@ func parseSimpleCDTarget(command string) (string, bool) {
 		return "", true
 	}
 
-	if len(rest) >= 2 {
-		if (rest[0] == '"' && rest[len(rest)-1] == '"') || (rest[0] == '\'' && rest[len(rest)-1] == '\'') {
+	if rest[0] == '"' || rest[0] == '\'' {
+		if len(rest) < 2 || rest[len(rest)-1] != rest[0] {
+			return "", false
+		}
+		if rest[0] == '"' {
 			unquoted, err := strconv.Unquote(rest)
 			if err != nil {
 				return "", false
 			}
 			return unquoted, true
 		}
+		return rest[1 : len(rest)-1], true
 	}
 
-	if strings.Contains(rest, "\\ ") {
-		rest = strings.ReplaceAll(rest, "\\ ", " ")
-	}
-
-	if strings.ContainsAny(rest, " \t") {
+	if hasUnescapedWhitespace(rest) {
 		return "", false
 	}
 
+	rest = strings.ReplaceAll(rest, "\\ ", " ")
 	return rest, true
+}
+
+// hasUnescapedWhitespace reports whether a shell token contains plain whitespace.
+func hasUnescapedWhitespace(value string) bool {
+	escaped := false
+	for _, r := range value {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		if r == ' ' || r == '\t' {
+			return true
+		}
+	}
+	return false
 }
 
 // staticFallbackAnswer returns a plain-text answer when the streaming summarizer is unavailable.
