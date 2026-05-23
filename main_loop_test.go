@@ -35,6 +35,8 @@ type loopLLMClient struct {
 
 type errorBodyTransport struct{}
 
+type contextErrorTransport struct{}
+
 type errorReadCloser struct {
 	err error
 }
@@ -118,6 +120,12 @@ func (transport errorBodyTransport) RoundTrip(r *http.Request) (*http.Response, 
 		Body:       errorReadCloser{err: errors.New("broken error body")},
 		Request:    r,
 	}, nil
+}
+
+// RoundTrip waits for request cancellation and returns the context cause.
+func (transport contextErrorTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	<-r.Context().Done()
+	return nil, r.Context().Err()
 }
 
 // Read always fails to simulate a provider/socket error while reading the error body.
@@ -403,6 +411,22 @@ func TestDoLLMRequestSendsAuthorizationWhenAPIKeySet(t *testing.T) {
 	headers := fake.requestAuthorizations()
 	if len(headers) != 1 || headers[0] != "Bearer test-key" {
 		t.Fatalf("Authorization headers = %#v, want bearer token", headers)
+	}
+}
+
+// TestDoLLMRequestPropagatesContextCancellation checks LLM calls preserve cancellation identity.
+func TestDoLLMRequestPropagatesContextCancellation(t *testing.T) {
+	cfg := loopTestConfig("http://shellia.test")
+	client := &http.Client{Transport: contextErrorTransport{}}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := doLLMRequest(ctx, client, cfg, chatCompletionRequest{
+		Model:    cfg.Model,
+		Messages: []chatMessage{{Role: "user", Content: "hello"}},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("doLLMRequest() error = %v, want context.Canceled", err)
 	}
 }
 
@@ -965,6 +989,23 @@ func TestDoLLMStreamReturnsMalformedChunkError(t *testing.T) {
 	}
 	if result != "" || output.String() != "" {
 		t.Fatalf("doLLMStream() result/output = %q/%q, want both empty", result, output.String())
+	}
+}
+
+// TestDoLLMStreamPropagatesContextCancellation checks streaming calls preserve cancellation identity.
+func TestDoLLMStreamPropagatesContextCancellation(t *testing.T) {
+	cfg := loopTestConfig("http://shellia.test")
+	client := &http.Client{Transport: contextErrorTransport{}}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	var output strings.Builder
+	_, err := doLLMStream(ctx, client, cfg, chatCompletionRequest{Model: cfg.Model}, &output)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("doLLMStream() error = %v, want context.Canceled", err)
+	}
+	if output.String() != "" {
+		t.Fatalf("doLLMStream() output = %q, want empty output", output.String())
 	}
 }
 

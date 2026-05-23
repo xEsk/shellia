@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestDetectInteractivePromptMatchesConfirmationPrompt checks that a trailing yes/no prompt is detected.
@@ -161,6 +162,36 @@ func TestCommandRunErrorUnwrapsCause(t *testing.T) {
 	timeoutErr := &commandRunError{Command: "sleep 10", ExitCode: 124, TimedOut: true, Err: context.DeadlineExceeded}
 	if !errors.Is(timeoutErr, context.DeadlineExceeded) {
 		t.Fatalf("errors.Is(commandRunError, context.DeadlineExceeded) = false, want true")
+	}
+}
+
+// TestExecuteOneCommandRespectsTimeout checks command deadlines cancel subprocesses.
+func TestExecuteOneCommandRespectsTimeout(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.CommandTimeout = 10 * time.Millisecond
+	cfg.ShowSystemOutput = false
+	cfg.CaptureStdoutBytes = 1024
+	cfg.CaptureStderrBytes = 1024
+
+	result, err := executeOneCommand(t.Context(), commandRunRequest{
+		Config: cfg,
+		ContextInfo: contextInfo{
+			CWD:   t.TempDir(),
+			Shell: "/bin/sh",
+		},
+		Command: "sleep 1",
+		Timeout: cfg.CommandTimeout,
+	})
+
+	var runErr *commandRunError
+	if !errors.As(err, &runErr) {
+		t.Fatalf("executeOneCommand() error = %T %[1]v, want commandRunError", err)
+	}
+	if !runErr.TimedOut || runErr.ExitCode != 124 || result.ExitCode != 124 {
+		t.Fatalf("timeout error/result = %#v / %#v, want exit code 124 timeout", runErr, result)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("errors.Is(timeout, context.DeadlineExceeded) = false, want true")
 	}
 }
 
