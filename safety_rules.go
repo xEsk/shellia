@@ -1,7 +1,7 @@
 package main
 
 // shellOperatorRule treats any shell composition as requiring confirmation.
-func shellOperatorRule(command string, tokens []string) (commandSafety, bool) {
+func shellOperatorRule(command string, _ []string) (commandSafety, bool) {
 	if hasShellOperators(command) {
 		if hasDangerousCommandRoot(command) {
 			return dangerousSafety(), true
@@ -12,7 +12,7 @@ func shellOperatorRule(command string, tokens []string) (commandSafety, bool) {
 }
 
 // dangerousRootRule catches commands that are directly dangerous regardless of arguments.
-func dangerousRootRule(command string, tokens []string) (commandSafety, bool) {
+func dangerousRootRule(_ string, tokens []string) (commandSafety, bool) {
 	if isDangerousRoot(tokens[0]) {
 		return dangerousSafety(), true
 	}
@@ -31,7 +31,7 @@ func isDangerousRoot(root string) bool {
 }
 
 // gitRule allows only known read-only git subcommands to skip confirmation.
-func gitRule(command string, tokens []string) (commandSafety, bool) {
+func gitRule(_ string, tokens []string) (commandSafety, bool) {
 	if len(tokens) < 2 || tokens[0] != "git" {
 		return commandSafety{}, false
 	}
@@ -47,7 +47,7 @@ func gitRule(command string, tokens []string) (commandSafety, bool) {
 }
 
 // dockerRule allows read-only Docker inspection commands to skip confirmation.
-func dockerRule(command string, tokens []string) (commandSafety, bool) {
+func dockerRule(_ string, tokens []string) (commandSafety, bool) {
 	if len(tokens) < 2 || tokens[0] != "docker" {
 		return commandSafety{}, false
 	}
@@ -58,7 +58,7 @@ func dockerRule(command string, tokens []string) (commandSafety, bool) {
 }
 
 // filesystemModificationRule catches commands that usually modify local files.
-func filesystemModificationRule(command string, tokens []string) (commandSafety, bool) {
+func filesystemModificationRule(_ string, tokens []string) (commandSafety, bool) {
 	if isFilesystemModification(tokens) {
 		return riskySafety(), true
 	}
@@ -66,7 +66,7 @@ func filesystemModificationRule(command string, tokens []string) (commandSafety,
 }
 
 // systemModificationRule catches commands that usually modify system, package, or service state.
-func systemModificationRule(command string, tokens []string) (commandSafety, bool) {
+func systemModificationRule(_ string, tokens []string) (commandSafety, bool) {
 	if isUserOrSystemModification(tokens) {
 		return riskySafety(), true
 	}
@@ -74,7 +74,7 @@ func systemModificationRule(command string, tokens []string) (commandSafety, boo
 }
 
 // findRule allows read-only find usage while requiring confirmation for mutating actions.
-func findRule(command string, tokens []string) (commandSafety, bool) {
+func findRule(_ string, tokens []string) (commandSafety, bool) {
 	if len(tokens) == 0 || tokens[0] != "find" {
 		return commandSafety{}, false
 	}
@@ -85,7 +85,7 @@ func findRule(command string, tokens []string) (commandSafety, bool) {
 }
 
 // safeRootRule allows simple read-only commands to skip confirmation.
-func safeRootRule(command string, tokens []string) (commandSafety, bool) {
+func safeRootRule(_ string, tokens []string) (commandSafety, bool) {
 	safeRoots := map[string]bool{
 		"ls": true, "pwd": true, "cat": true, "echo": true, "whoami": true, "id": true,
 		"uname": true, "date": true, "grep": true, "rg": true, "which": true,

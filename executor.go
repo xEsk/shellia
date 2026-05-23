@@ -123,7 +123,7 @@ const (
 
 var (
 	credentialPromptPattern       = regexp.MustCompile(`(?i)\b(pass(?:word|phrase))\s*:\s*$`)
-	yesNoPromptPattern            = regexp.MustCompile(`(?i)([\[\(]\s*(?:y(?:es)?\s*[/,| ]+\s*n(?:o)?|n(?:o)?\s*[/,| ]+\s*y(?:es)?|y\s*n|n\s*y)\s*[\]\)])`)
+	yesNoPromptPattern            = regexp.MustCompile(`(?i)([\[(]\s*(?:y(?:es)?\s*[/,| ]+\s*no?|no?\s*[/,| ]+\s*y(?:es)?|y\s*n|n\s*y)\s*[])])`)
 	continuePromptPattern         = regexp.MustCompile(`(?i)\bpress\s+(?:enter|return|any\s+key|a\s+key)\s+to\s+continue\b`)
 	textConfirmationPromptPattern = regexp.MustCompile(`(?i)\btype\s+['"]?[a-z0-9_-]{2,}['"]?\s+to\s+(?:confirm|continue|proceed|delete|destroy)\b`)
 )
@@ -293,7 +293,7 @@ func (stream capturedStream) RenderForPrompt(label string, limit int, strategy t
 
 	var body strings.Builder
 	if stream.Truncated {
-		fmt.Fprintf(&body, "[%s truncated locally: kept %d of %d bytes]\n", label, stream.KeptBytes, stream.TotalBytes)
+		_, _ = fmt.Fprintf(&body, "[%s truncated locally: kept %d of %d bytes]\n", label, stream.KeptBytes, stream.TotalBytes)
 	}
 	body.WriteString(trimForSummary(stream.Text, limit, strategy))
 
@@ -561,6 +561,8 @@ func executeManualCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg co
 		box.Command(command)
 	case manualRenderInteractive:
 		printInteractiveCommandStartTo(deps.Stdout, ui)
+	case manualRenderDirect, manualRenderShellInteractive:
+		// These modes render command output directly, so there is no inline preface.
 	}
 
 	result, err := executeOneCommand(ctx, commandRunRequest{
@@ -620,7 +622,6 @@ func showCompletedMarker(box *stepBox, hadOutput bool) {
 // executeOneCommand launches a command via the current shell with real-time output streaming.
 func executeOneCommand(ctx context.Context, request commandRunRequest) (commandRunResult, error) {
 	deps := request.Deps.withDefaults()
-	ui := request.UI
 	cfg := request.Config
 	ctxInfo := request.ContextInfo
 	box := request.Box
@@ -647,7 +648,7 @@ func executeOneCommand(ctx context.Context, request commandRunRequest) (commandR
 			box.Text("Shellia will resume when the command exits.", colorDim)
 			box.Close()
 		}
-		output, exitCode, hadOutput, err := executeInteractiveCommand(cmdCtx, deps, ui, cfg, ctxInfo, shellPath, command)
+		output, exitCode, hadOutput, err := executeInteractiveCommand(cmdCtx, deps, cfg, ctxInfo, shellPath, command)
 		return commandRunResult{
 			Output:    output,
 			ExitCode:  exitCode,
@@ -719,7 +720,7 @@ func executeNonInteractiveCommand(
 			return commandRunResult{
 				Output:    commandExecution{Stdout: stdoutCapture.Stream(), Stderr: stderrCapture.Stream()},
 				ExitCode:  1,
-				HadOutput: stdoutWriter.started || stderrWriter.started,
+				HadOutput: prefixedWritersHadOutput(stdoutWriter, stderrWriter),
 			}, fmt.Errorf("cannot flush command stderr: %w", err)
 		}
 	}
@@ -745,7 +746,7 @@ func executeNonInteractiveCommand(
 	if request.DirectStream {
 		hadOutput = stdoutCapture.totalBytes > 0 || stderrCapture.totalBytes > 0
 	} else {
-		hadOutput = stdoutWriter.started || stderrWriter.started
+		hadOutput = prefixedWritersHadOutput(stdoutWriter, stderrWriter)
 	}
 	output := commandExecution{Stdout: stdoutCapture.Stream(), Stderr: stderrCapture.Stream()}
 	result := commandRunResult{
@@ -785,9 +786,19 @@ func executeNonInteractiveCommand(
 	return result, nil
 }
 
+// prefixedWritersHadOutput reports whether any prefixed stream rendered output.
+func prefixedWritersHadOutput(writers ...*prefixedWriter) bool {
+	for _, writer := range writers {
+		if writer != nil && writer.started {
+			return true
+		}
+	}
+	return false
+}
+
 // executeInteractiveCommand temporarily hands over the terminal to a process that
 // needs a real interactive session and captures part of its output.
-func executeInteractiveCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo contextInfo, shellPath string, command string) (output commandExecution, exitCode int, hadOutput bool, err error) {
+func executeInteractiveCommand(ctx context.Context, deps runtimeDeps, cfg config, ctxInfo contextInfo, shellPath string, command string) (output commandExecution, exitCode int, hadOutput bool, err error) {
 	deps = deps.withDefaults()
 	cmd := exec.CommandContext(ctx, shellPath, "-c", command)
 	cmd.Dir = ctxInfo.CWD
@@ -796,7 +807,9 @@ func executeInteractiveCommand(ctx context.Context, deps runtimeDeps, ui bool, c
 	if err != nil {
 		return commandExecution{}, 1, false, fmt.Errorf("cannot start interactive command %q: %w", command, err)
 	}
-	defer ptmx.Close() //nolint:errcheck // best-effort PTY cleanup after command execution.
+	defer func() {
+		_ = ptmx.Close()
+	}()
 
 	stdoutCapture := &limitedCaptureWriter{limit: cfg.CaptureStdoutBytes}
 	stream := io.MultiWriter(deps.Stdout, stdoutCapture)
@@ -808,13 +821,13 @@ func executeInteractiveCommand(ctx context.Context, deps runtimeDeps, ui bool, c
 		state, rawErr := term.MakeRaw(fd)
 		if rawErr == nil {
 			restoreTerminal = func() {
-				term.Restore(fd, state) //nolint:errcheck // best-effort terminal restore during cleanup.
+				_ = term.Restore(fd, state)
 			}
 		}
 	}
 	if blockErr := unix.SetNonblock(fd, true); blockErr == nil {
 		restoreBlocking = func() {
-			unix.SetNonblock(fd, false) //nolint:errcheck // best-effort stdin mode restore during cleanup.
+			_ = unix.SetNonblock(fd, false)
 		}
 	}
 	defer restoreTerminal()

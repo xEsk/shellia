@@ -17,8 +17,6 @@ import (
 )
 
 const (
-	defaultBaseURL    = "https://api.openai.com/v1"
-	defaultModel      = "gpt-5.4-mini"
 	defaultTimeout    = 120 * time.Second
 	maxHistoryEntries = 8
 	maxPlanRounds     = 4

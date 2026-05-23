@@ -382,11 +382,6 @@ func legacySettingsPath() (string, error) {
 	return filepath.Join(home, ".shellia", "config.toml"), nil
 }
 
-// initConfigFile creates the preferred config file with an initial readable template.
-func initConfigFile(ui bool) error {
-	return initConfigFileTo(os.Stdout, ui)
-}
-
 // initConfigFileTo creates the preferred config file and reports the result on the provided target.
 func initConfigFileTo(target io.Writer, ui bool) error {
 	path, err := settingsPath()
@@ -410,7 +405,9 @@ func initConfigFileTo(target io.Writer, ui bool) error {
 		}
 		return fmt.Errorf("cannot create config file: %w", err)
 	}
-	defer f.Close() //nolint:errcheck // best-effort cleanup after write errors are handled explicitly.
+	defer func() {
+		_ = f.Close()
+	}()
 
 	if _, err := f.WriteString(defaultConfigTemplate()); err != nil {
 		return fmt.Errorf("cannot write config file: %w", err)
