@@ -119,6 +119,24 @@ func TestPrintSeparatorUsesStandardLine(t *testing.T) {
 	}
 }
 
+// TestPrintNewSessionSeparatorShowsContextBoundary checks /new has a visible marker.
+func TestPrintNewSessionSeparatorShowsContextBoundary(t *testing.T) {
+	var buffer bytes.Buffer
+
+	printNewSessionSeparatorTo(&buffer, false)
+
+	output := buffer.String()
+	if !strings.Contains(output, "new session") {
+		t.Fatalf("printNewSessionSeparatorTo() = %q, want new session title", output)
+	}
+	if !strings.Contains(output, "Context cleared. Previous turns will not be used.") {
+		t.Fatalf("printNewSessionSeparatorTo() = %q, want context-cleared message", output)
+	}
+	if strings.Count(output, strings.Repeat("─", boxWidthFor(&buffer))) < 2 {
+		t.Fatalf("printNewSessionSeparatorTo() = %q, want separator boundary", output)
+	}
+}
+
 // TestPromptHasTextIgnoresWhitespace checks that Enter on an empty prompt is ignored.
 func TestPromptHasTextIgnoresWhitespace(t *testing.T) {
 	cases := []struct {

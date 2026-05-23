@@ -548,6 +548,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 		}
 
 		trimmed := strings.TrimSpace(input)
+		forcePromptMode := false
 		planOnly, plannedInstruction := parsePlanInstruction(input)
 		if planOnly {
 			if strings.TrimSpace(plannedInstruction) == "" {
@@ -631,6 +632,20 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			case interactiveCommandPlan:
 				printWarningTo(deps.Stderr, ui, "Missing plan instruction.")
 				continue
+			case interactiveCommandRetry:
+				if strings.TrimSpace(state.LastRetryInstruction) == "" {
+					printWarningTo(deps.Stderr, ui, "No failed or cancelled request to retry.")
+					continue
+				}
+				trimmed = state.LastRetryInstruction
+				input = state.LastRetryInstruction
+				forcePromptMode = true
+				printInfoTo(deps.Stdout, ui, fmt.Sprintf("Retrying: %s", input))
+			case interactiveCommandNew:
+				history = make([]historyEntry, 0, maxHistoryEntries)
+				state = sessionState{}
+				printNewSessionSeparatorTo(deps.Stdout, ui)
+				continue
 			}
 		}
 
@@ -638,7 +653,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			continue
 		}
 
-		if mode == interactiveModeShell || strings.HasPrefix(trimmed, "!") {
+		if !forcePromptMode && (mode == interactiveModeShell || strings.HasPrefix(trimmed, "!")) {
 			command := trimmed
 			renderMode := renderModeForShellSession(cfg)
 			if mode != interactiveModeShell {
@@ -668,10 +683,6 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 		}
 
 		instruction := input
-		if isRetryInstruction(input) && strings.TrimSpace(state.LastRetryInstruction) != "" {
-			instruction = state.LastRetryInstruction
-			printInfoTo(deps.Stdout, ui, fmt.Sprintf("Retrying: %s", instruction))
-		}
 
 		// Per-turn signal context: Ctrl+C cancels only this turn, not the whole session.
 		turnCtx, stop := signal.NotifyContext(ctx, os.Interrupt)

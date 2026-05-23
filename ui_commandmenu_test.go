@@ -19,6 +19,28 @@ func TestCommandMenuLinesPlain(t *testing.T) {
 	}
 }
 
+// TestCommandMenuLinesShowsRetry checks the explicit retry command is suggested.
+func TestCommandMenuLinesShowsRetry(t *testing.T) {
+	got := commandMenuLines(false, "/re", defaultConfig())
+	if len(got) != 3 {
+		t.Fatalf("commandMenuLines(/re) returned %d lines, want 3", len(got))
+	}
+	if !strings.Contains(got[1], "/retry") || !strings.Contains(got[1], "retry the last cancelled or failed request") {
+		t.Fatalf("commandMenuLines(/re) = %#v, want retry suggestion", got)
+	}
+}
+
+// TestCommandMenuLinesShowsNew checks the fresh-session command is suggested.
+func TestCommandMenuLinesShowsNew(t *testing.T) {
+	got := commandMenuLines(false, "/ne", defaultConfig())
+	if len(got) != 3 {
+		t.Fatalf("commandMenuLines(/ne) returned %d lines, want 3", len(got))
+	}
+	if !strings.Contains(got[1], "/new") || !strings.Contains(got[1], "start a fresh context") {
+		t.Fatalf("commandMenuLines(/ne) = %#v, want new-session suggestion", got)
+	}
+}
+
 // TestCommandMenuLinesKeepBoxWidth checks every rendered row has the same width.
 func TestCommandMenuLinesKeepBoxWidth(t *testing.T) {
 	got := commandMenuLines(false, "/", defaultConfig())

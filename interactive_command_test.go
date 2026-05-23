@@ -12,6 +12,8 @@ func TestParseInteractiveCommandSlashCommands(t *testing.T) {
 		{name: "shell", input: "/shell", want: interactiveCommandShell},
 		{name: "shell uppercase spaced", input: " /SHELL  ", want: interactiveCommandShell},
 		{name: "plan", input: "/plan", want: interactiveCommandPlan},
+		{name: "retry", input: "/retry", want: interactiveCommandRetry},
+		{name: "new", input: "/new", want: interactiveCommandNew},
 		{name: "ai", input: "/ai", want: interactiveCommandAI},
 		{name: "mode", input: "/mode", want: interactiveCommandMode},
 		{name: "model", input: "/model", want: interactiveCommandModel},

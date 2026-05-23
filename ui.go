@@ -440,6 +440,16 @@ func printModeStatusTo(target io.Writer, ui bool, message string) {
 	})
 }
 
+// printNewSessionSeparatorTo marks a fresh context boundary without clearing the terminal.
+func printNewSessionSeparatorTo(target io.Writer, ui bool) {
+	fmt.Fprintln(target)
+	printSeparator(target, ui)
+	renderPanel(target, ui, "new session", colorCyan, []string{
+		style(ui, colorWhite+colorBold, "Context cleared. Previous turns will not be used."),
+	})
+	printSeparator(target, ui)
+}
+
 // printModelSwitchTo shows the active model profile after a /model change.
 func printModelSwitchTo(target io.Writer, ui bool, cfg config) {
 	detail := ""
@@ -1584,17 +1594,6 @@ func indentLines(text string, prefix string) string {
 		lines[index] = prefix + line
 	}
 	return strings.Join(lines, "\n")
-}
-
-// isRetryInstruction detects when the user wants to repeat the last unfinished attempt.
-func isRetryInstruction(input string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(input))
-	switch normalized {
-	case "again", "retry", "try again", "do it again", "torna-ho a provar", "torna ho a provar", "fes-ho de nou", "fes ho de nou":
-		return true
-	default:
-		return false
-	}
 }
 
 // trimTrailingBlankLines removes extra trailing blank lines from a block.

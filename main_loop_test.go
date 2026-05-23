@@ -954,6 +954,68 @@ func TestRunInteractivePlanCommandPlansWithoutExecuting(t *testing.T) {
 	}
 }
 
+// TestRunInteractiveRetryCommandRepeatsLastFailedInstruction checks /retry is a local command.
+func TestRunInteractiveRetryCommandRepeatsLastFailedInstruction(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `not json`},
+		loopLLMResponse{content: `{"summary":"No command needed.","commands":[]}`},
+	)
+	cfg := loopTestConfig(fake.URL())
+	ctxInfo := loopTestContext(t)
+
+	output := captureMainLoopIO(t, "build it\n/retry\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		runInteractive(t.Context(), deps, false, cfg, &ctxInfo)
+	})
+
+	if fake.requestCount() != 2 {
+		t.Fatalf("LLM requests = %d, want 2", fake.requestCount())
+	}
+	for index, body := range fake.requestBodies() {
+		if !strings.Contains(body, "User instruction:\\nbuild it") {
+			t.Fatalf("request %d body = %q, want retried instruction", index+1, body)
+		}
+		if strings.Contains(body, "User instruction:\\n/retry") {
+			t.Fatalf("request %d body = %q, want no /retry natural-language prompt", index+1, body)
+		}
+	}
+	if !strings.Contains(output, "Retrying: build it") {
+		t.Fatalf("output = %q, want retry status", output)
+	}
+}
+
+// TestRunInteractiveNewCommandClearsPromptContext checks /new resets conversational memory.
+func TestRunInteractiveNewCommandClearsPromptContext(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"summary":"First answer.","commands":[]}`},
+		loopLLMResponse{content: `{"summary":"Second answer.","commands":[]}`},
+	)
+	cfg := loopTestConfig(fake.URL())
+	ctxInfo := loopTestContext(t)
+
+	output := captureMainLoopIO(t, "first task\n/new\nsecond task\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		runInteractive(t.Context(), deps, false, cfg, &ctxInfo)
+	})
+
+	bodies := fake.requestBodies()
+	if len(bodies) != 2 {
+		t.Fatalf("LLM requests = %d, want 2", len(bodies))
+	}
+	if !strings.Contains(bodies[0], "User instruction:\\nfirst task") {
+		t.Fatalf("first request body = %q, want first task", bodies[0])
+	}
+	if !strings.Contains(bodies[1], "User instruction:\\nsecond task") {
+		t.Fatalf("second request body = %q, want second task", bodies[1])
+	}
+	for _, snippet := range []string{"Recent session context:", "Session memory:", "first task", "First answer."} {
+		if strings.Contains(bodies[1], snippet) {
+			t.Fatalf("second request body contains cleared context %q: %q", snippet, bodies[1])
+		}
+	}
+	if !strings.Contains(output, "new session") || !strings.Contains(output, "Context cleared") {
+		t.Fatalf("output = %q, want new session separator", output)
+	}
+}
+
 // TestRunInteractiveIgnoresEmptyPrompt checks Enter on an empty prompt does not start a turn.
 func TestRunInteractiveIgnoresEmptyPrompt(t *testing.T) {
 	fake := newLoopLLMClient(t)

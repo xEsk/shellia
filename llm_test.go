@@ -395,6 +395,7 @@ func TestBuildUserPromptOmitsSessionMemoryWhenDisabled(t *testing.T) {
 	history := []historyEntry{{Instruction: "previous task", Result: "previous result"}}
 	state := sessionState{
 		PendingIntent:        "continue deployment",
+		LastRetryInstruction: "run build",
 		LastSuggestedCommand: "git push origin main",
 		LastRuntimeHint:      "docker",
 		LastCreatedFiles:     []string{"release.txt"},
@@ -410,7 +411,7 @@ func TestBuildUserPromptOmitsSessionMemoryWhenDisabled(t *testing.T) {
 		State:               state,
 	})
 
-	for _, snippet := range []string{"Recent session context:", "Session memory:", "Resolved planning context:", "previous task", "last_suggested_command"} {
+	for _, snippet := range []string{"Recent session context:", "Session memory:", "Resolved planning context:", "previous task", "run build", "git push origin main"} {
 		if strings.Contains(prompt, snippet) {
 			t.Fatalf("buildUserPrompt() includes disabled session memory %q in %q", snippet, prompt)
 		}
@@ -495,6 +496,7 @@ func TestBuildUserPromptMakesReusableObservationsNonBlocking(t *testing.T) {
 		Shell: "/bin/zsh",
 	}
 	state := sessionState{
+		LastRetryInstruction: "run failing build",
 		LastObservations: []observationMemory{
 			{
 				Purpose:    "Check status",
@@ -514,10 +516,12 @@ func TestBuildUserPromptMakesReusableObservationsNonBlocking(t *testing.T) {
 
 	requiredSnippets := []string{
 		"Recent reusable observations:",
+		"last_retry_instruction: run failing build",
 		"git status --short",
 		"Decide intent inside this planning response",
 		"local Shellia code has not pre-classified natural-language follow-ups",
 		"optional context for intent resolution",
+		"retry in any language",
 		"If the current instruction is a new unrelated task, ignore stale session memory",
 		"task continuity only",
 		"NOT a reason to skip a fresh execution request",
