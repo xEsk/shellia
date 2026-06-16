@@ -59,6 +59,7 @@ type config struct {
 	ConfirmationDefault confirmationDefault
 	AskConfirmPlan      bool
 	AskConfirmPlanOnly  bool
+	PlanningMaxRounds   int
 	ShellMode           commandEngineMode
 	CommandMode         commandEngineMode
 
@@ -122,6 +123,7 @@ type fileConfig struct {
 		ContinueOnError       *bool  `toml:"continue_on_error"`
 		AskConfirmPlan        *bool  `toml:"ask_confirm_plan"`
 		AskConfirmPlanOnly    *bool  `toml:"ask_confirm_plan_only"`
+		PlanningMaxRounds     int    `toml:"planning_max_rounds"`
 		ConfirmationDefault   string `toml:"confirmation_default"`
 		ShellMode             string `toml:"shell_mode"`
 		CommandMode           string `toml:"command_mode"`
@@ -170,6 +172,7 @@ func defaultConfig() config {
 		ConfirmationDefault: confirmationDefaultNone,
 		AskConfirmPlan:      true,
 		AskConfirmPlanOnly:  true,
+		PlanningMaxRounds:   defaultPlanningMaxRounds,
 		ShellMode:           commandEngineInteractive,
 		CommandMode:         commandEnginePlain,
 
@@ -220,6 +223,9 @@ func applyFileConfig(cfg *config, fileCfg fileConfig) {
 	}
 	if fileCfg.Execution.AskConfirmPlanOnly != nil {
 		cfg.AskConfirmPlanOnly = *fileCfg.Execution.AskConfirmPlanOnly
+	}
+	if fileCfg.Execution.PlanningMaxRounds > 0 {
+		cfg.PlanningMaxRounds = fileCfg.Execution.PlanningMaxRounds
 	}
 	if strings.TrimSpace(fileCfg.Execution.ConfirmationDefault) != "" {
 		cfg.ConfirmationDefault = normalizeConfirmationDefault(fileCfg.Execution.ConfirmationDefault, cfg.ConfirmationDefault)
@@ -293,6 +299,7 @@ func applyEnvConfig(cfg *config) {
 	}
 	cfg.ShellMode = normalizeCommandEngineMode(getenvFallback(string(cfg.ShellMode), "SHELLIA_SHELL_MODE"), cfg.ShellMode)
 	cfg.CommandMode = normalizeCommandEngineMode(getenvFallback(string(cfg.CommandMode), "SHELLIA_COMMAND_MODE"), cfg.CommandMode)
+	cfg.PlanningMaxRounds = getenvPositiveInt(cfg.PlanningMaxRounds, "SHELLIA_PLANNING_MAX_ROUNDS")
 }
 
 // applyModelEnvOverrides applies one-shot model endpoint overrides from the environment.
@@ -533,6 +540,10 @@ ask_confirm_plan = true
 # Ask for confirmation after showing the plan when running in plan-only mode (--plan flag).
 ask_confirm_plan_only = true
 
+# Maximum number of planning follow-up rounds before Shellia asks whether to continue.
+# You can override it for one run with SHELLIA_PLANNING_MAX_ROUNDS.
+planning_max_rounds = 4
+
 # What pressing Enter means in a confirmation prompt.
 # none        — must type y or n explicitly (safest)
 # yes         — Enter accepts the step
@@ -614,6 +625,19 @@ func getenvFallback(fallback string, keys ...string) string {
 		}
 	}
 	return fallback
+}
+
+// getenvPositiveInt returns an environment override only when it is a positive integer.
+func getenvPositiveInt(fallback int, key string) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }
 
 // normalizeTruncationStrategy validates the output truncation strategy.

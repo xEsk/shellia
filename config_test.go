@@ -18,6 +18,9 @@ func TestDefaultConfigShowsSystemOutput(t *testing.T) {
 	if defaultConfig().ConfirmationDefault != confirmationDefaultNone {
 		t.Fatalf("defaultConfig().ConfirmationDefault = %q, want %q", defaultConfig().ConfirmationDefault, confirmationDefaultNone)
 	}
+	if defaultConfig().PlanningMaxRounds != defaultPlanningMaxRounds {
+		t.Fatalf("defaultConfig().PlanningMaxRounds = %d, want %d", defaultConfig().PlanningMaxRounds, defaultPlanningMaxRounds)
+	}
 }
 
 // TestDefaultConfigIncludesLocalContext checks context sharing defaults preserve current behaviour.
@@ -84,6 +87,31 @@ func TestApplyFileConfigCanSetConfirmationDefault(t *testing.T) {
 
 	if cfg.ConfirmationDefault != confirmationDefaultYes {
 		t.Fatalf("ConfirmationDefault = %q, want %q", cfg.ConfirmationDefault, confirmationDefaultYes)
+	}
+}
+
+// TestApplyFileConfigCanSetPlanningMaxRounds checks the planning round cap is configurable.
+func TestApplyFileConfigCanSetPlanningMaxRounds(t *testing.T) {
+	cfg := defaultConfig()
+	fileCfg := fileConfig{}
+	fileCfg.Execution.PlanningMaxRounds = 7
+
+	applyFileConfig(&cfg, fileCfg)
+
+	if cfg.PlanningMaxRounds != 7 {
+		t.Fatalf("PlanningMaxRounds = %d, want 7", cfg.PlanningMaxRounds)
+	}
+}
+
+// TestApplyEnvConfigCanOverridePlanningMaxRounds checks one-shot planning cap overrides.
+func TestApplyEnvConfigCanOverridePlanningMaxRounds(t *testing.T) {
+	t.Setenv("SHELLIA_PLANNING_MAX_ROUNDS", "9")
+	cfg := defaultConfig()
+
+	applyEnvConfig(&cfg)
+
+	if cfg.PlanningMaxRounds != 9 {
+		t.Fatalf("PlanningMaxRounds = %d, want 9", cfg.PlanningMaxRounds)
 	}
 }
 
