@@ -41,3 +41,8 @@ Pull requests should explain the user-visible change, note any risk in command e
 ## Contributor Notes
 
 Prefer straightforward solutions, avoid re-implementing existing logic, and ask before making risky or unclear changes. Keep contributor changes aligned with the current CLI-first architecture.
+
+## Project Memory MCP
+
+- Canonical project key: `shellia`
+- Always use this value as `project` in `mcp__project_memory` tool calls.
