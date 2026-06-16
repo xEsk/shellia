@@ -348,6 +348,7 @@ Supported environment variables:
 - `SHELLIA_API_KEY`
 - `SHELLIA_SHELL_MODE`
 - `SHELLIA_COMMAND_MODE`
+- `SHELLIA_PLANNING_MAX_ROUNDS`
 
 Compatibility fallback variables:
 
@@ -382,6 +383,12 @@ These settings control that behavior:
   - how much captured output is sent to the model for the final answer
 
 If output is truncated, Shellia marks it explicitly instead of pretending it captured everything.
+
+### Planning controls
+
+- `planning_max_rounds`
+  - maximum number of planning follow-up rounds before Shellia asks whether to continue
+  - can be overridden for one run with `SHELLIA_PLANNING_MAX_ROUNDS`
 
 ### Command engine modes
 
