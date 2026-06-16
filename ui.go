@@ -343,6 +343,67 @@ func renderPlanExecutionOptions(ui bool) string {
 	return "[" + style(ui, colorWhite, "y") + "/" + style(ui, colorWhite, "n") + "]"
 }
 
+// promptPlanningLimitContinuation asks whether Shellia should keep planning after the current round limit.
+func promptPlanningLimitContinuation(target io.Writer, ui bool, stdin *os.File, limit int) (bool, error) {
+	printWarningTo(target, ui, planningRoundLimitMessage(limit))
+
+	box := newStepBox(target, ui, "confirm")
+	box.Spacer()
+	renderPlanningLimitPrompt(box, limit)
+	defer box.Close()
+
+	key, ok, err := readSingleConfirmationKey(stdin)
+	if err == nil && ok {
+		if choice, found := parseConfirmationChoice(string(key)); found {
+			run := choice == confirmationDefaultYes
+			logPlanningLimitChoice(box, limit, run)
+			return run, nil
+		}
+	}
+
+	reader := bufio.NewReader(stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+
+	choice, ok := parseConfirmationChoice(answer)
+	run := ok && choice == confirmationDefaultYes
+	logPlanningLimitChoice(box, limit, run)
+	return run, nil
+}
+
+// planningRoundLimitMessage explains the current planning limit and how to raise it.
+func planningRoundLimitMessage(limit int) string {
+	return fmt.Sprintf(
+		"planning reached the current follow-up round limit (%d). Increase [execution] planning_max_rounds in config.toml or set SHELLIA_PLANNING_MAX_ROUNDS to allow more automatic rounds.",
+		limit,
+	)
+}
+
+// renderPlanningLimitPrompt prints the planning-limit continuation question.
+func renderPlanningLimitPrompt(box *stepBox, limit int) {
+	if box == nil {
+		return
+	}
+	question := fmt.Sprintf("Reached planning round limit %d. Continue planning?", limit)
+	box.writeRow(buildConfirmRow(box.ui, question, renderPlanExecutionOptions(box.ui), ""))
+}
+
+// logPlanningLimitChoice records the planning-limit continuation decision.
+func logPlanningLimitChoice(box *stepBox, limit int, run bool) {
+	if box == nil {
+		return
+	}
+	choice := "no"
+	if run {
+		choice = "yes"
+	}
+	question := fmt.Sprintf("Reached planning round limit %d. Continue planning?", limit)
+	box.ReplaceLastRenderedRow(buildConfirmRow(box.ui, question, renderPlanExecutionOptions(box.ui), choice))
+}
+
 // planOnlyResult returns the session result text recorded for a non-executing plan turn.
 func planOnlyResult(summary string, response llmResponse) string {
 	switch {

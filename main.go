@@ -17,14 +17,15 @@ import (
 )
 
 const (
-	defaultTimeout    = 120 * time.Second
-	maxHistoryEntries = 8
-	maxPlanRounds     = 4
+	defaultTimeout           = 120 * time.Second
+	maxHistoryEntries        = 8
+	defaultPlanningMaxRounds = 4
 
 	maxCommandTimeout = 24 * time.Hour
 	maxRequestTimeout = 10 * time.Minute
 	maxCaptureBytes   = 512 * 1024 * 1024 // 512 MB
 	maxOutputChars    = 100_000
+	maxPlanningRounds = 100
 )
 
 // version is set at build time via -ldflags "-X main.version=vX.Y.Z".
@@ -313,6 +314,12 @@ func finalizeConfig(fs *flag.FlagSet, cfg config, timeoutSecs, reqTimeoutSecs in
 	}
 	if cfg.ObservationOutputChars > maxOutputChars || cfg.SummaryOutputChars > maxOutputChars {
 		return config{}, fmt.Errorf("output char limits cannot exceed %d", maxOutputChars)
+	}
+	if cfg.PlanningMaxRounds <= 0 {
+		return config{}, fmt.Errorf("planning_max_rounds must be greater than 0")
+	}
+	if cfg.PlanningMaxRounds > maxPlanningRounds {
+		return config{}, fmt.Errorf("planning_max_rounds cannot exceed %d", maxPlanningRounds)
 	}
 	if err := applySelectedModel(&cfg); err != nil {
 		return config{}, err
@@ -802,8 +809,9 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 	allExecutions := make([]commandExecution, 0, 4)
 	lastSummary := ""
 	lastPlans := []commandPlan(nil)
+	planningRoundLimit := cfg.PlanningMaxRounds
 
-	for round := range maxPlanRounds {
+	for round := 0; ; round++ {
 		promptRequest := llmPromptRequest{
 			Config:       cfg,
 			ContextInfo:  *ctxInfo,
@@ -876,12 +884,20 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 				return turnResult{}, err
 			}
 			allExecutions = append(allExecutions, executions...)
-			if shouldRetryAfterExecutionError(err, round) {
+			if shouldRetryAfterExecutionError(err, round, planningRoundLimit) {
 				continue
 			}
 			if parsed.RequiresObservation {
-				if round == maxPlanRounds-1 {
-					return turnResult{}, fmt.Errorf("planning needs more follow-up rounds than allowed")
+				if round >= planningRoundLimit-1 {
+					keepGoing, promptErr := promptPlanningLimitContinuation(deps.Stdout, ui, deps.Stdin, planningRoundLimit)
+					if promptErr != nil {
+						return turnResult{}, promptErr
+					}
+					if keepGoing {
+						planningRoundLimit += cfg.PlanningMaxRounds
+						continue
+					}
+					break
 				}
 				continue
 			}
@@ -893,8 +909,16 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			break
 		}
 
-		if round == maxPlanRounds-1 {
-			return turnResult{}, fmt.Errorf("planning needs more follow-up rounds than allowed")
+		if round >= planningRoundLimit-1 {
+			keepGoing, err := promptPlanningLimitContinuation(deps.Stdout, ui, deps.Stdin, planningRoundLimit)
+			if err != nil {
+				return turnResult{}, err
+			}
+			if keepGoing {
+				planningRoundLimit += cfg.PlanningMaxRounds
+				continue
+			}
+			break
 		}
 	}
 
@@ -1019,8 +1043,8 @@ func runDiscoveryRepair(
 }
 
 // shouldRetryAfterExecutionError reports whether an execution failure should become a new planning observation.
-func shouldRetryAfterExecutionError(err error, round int) bool {
-	if round >= maxPlanRounds-1 {
+func shouldRetryAfterExecutionError(err error, round int, maxRounds int) bool {
+	if round >= maxRounds-1 {
 		return false
 	}
 

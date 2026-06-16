@@ -171,10 +171,10 @@ func TestLimitedCaptureWriterStreamReplacesInvalidUTF8(t *testing.T) {
 func TestShouldRetryAfterExecutionErrorForInteractivePrompt(t *testing.T) {
 	err := &interactivePromptError{Command: "docker image prune -a", Prompt: "Are you sure? [y/N]"}
 
-	if !shouldRetryAfterExecutionError(err, 0) {
+	if !shouldRetryAfterExecutionError(err, 0, defaultPlanningMaxRounds) {
 		t.Fatalf("shouldRetryAfterExecutionError() = false, want true")
 	}
-	if shouldRetryAfterExecutionError(err, maxPlanRounds-1) {
+	if shouldRetryAfterExecutionError(err, defaultPlanningMaxRounds-1, defaultPlanningMaxRounds) {
 		t.Fatalf("shouldRetryAfterExecutionError() = true on final round, want false")
 	}
 }

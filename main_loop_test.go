@@ -838,6 +838,106 @@ func TestRunTurnUsesDiscoveryRepairForRecoverableEmptyPlan(t *testing.T) {
 	}
 }
 
+// TestRunTurnCanContinueAfterPlanningRoundLimit checks users can approve extra planning rounds.
+func TestRunTurnCanContinueAfterPlanningRoundLimit(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{
+			content: `{"summary":"Inspect the first fact.","requires_observation":true,"commands":[{"command":"echo first","purpose":"Inspect first fact","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+		},
+		loopLLMResponse{
+			content: `{"summary":"Inspect the second fact.","requires_observation":true,"commands":[{"command":"echo second","purpose":"Inspect second fact","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+		},
+		loopLLMResponse{
+			content: `{"summary":"Done after extra planning.","commands":[]}`,
+		},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	cfg.PlanningMaxRounds = 2
+	ctxInfo := loopTestContext(t)
+	var executed []string
+
+	var result turnResult
+	output := captureMainLoopIO(t, "y\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) ([]commandExecution, error) {
+			executed = append(executed, plans[0].Command)
+			return []commandExecution{{
+				Command:  plans[0].Command,
+				Purpose:  plans[0].Purpose,
+				ExitCode: 0,
+				Stdout:   capturedStream{Text: strings.TrimPrefix(plans[0].Command, "echo ")},
+			}}, nil
+		}
+
+		var err error
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "inspect twice"))
+		if err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	if got := strings.Join(executed, ","); got != "echo first,echo second" {
+		t.Fatalf("executed commands = %q, want both discovery commands", got)
+	}
+	if result.Result != "Done after extra planning." {
+		t.Fatalf("result = %q, want final extra-round answer", result.Result)
+	}
+	if fake.requestCount() != 3 {
+		t.Fatalf("LLM requests = %d, want 3", fake.requestCount())
+	}
+	if !strings.Contains(output, "planning reached the current follow-up round limit (2)") {
+		t.Fatalf("output missing planning limit warning: %q", output)
+	}
+	if !strings.Contains(output, "Continue planning? [y/n]: yes") {
+		t.Fatalf("output missing continuation confirmation: %q", output)
+	}
+}
+
+// TestRunTurnSummarizesWhenPlanningRoundLimitIsDeclined checks declining continuation ends cleanly.
+func TestRunTurnSummarizesWhenPlanningRoundLimitIsDeclined(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{
+			content: `{"summary":"Inspect one fact.","requires_observation":true,"commands":[{"command":"echo first","purpose":"Inspect first fact","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+		},
+		loopLLMResponse{content: "Stopped after the observed fact.", stream: true},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	cfg.PlanningMaxRounds = 1
+	ctxInfo := loopTestContext(t)
+
+	var result turnResult
+	output := captureMainLoopIO(t, "n\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) ([]commandExecution, error) {
+			return []commandExecution{{
+				Command:  plans[0].Command,
+				Purpose:  plans[0].Purpose,
+				ExitCode: 0,
+				Stdout:   capturedStream{Text: "first"},
+			}}, nil
+		}
+
+		var err error
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "inspect once"))
+		if err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	if result.Result != "Stopped after the observed fact." {
+		t.Fatalf("result = %q, want streamed summary", result.Result)
+	}
+	if fake.requestCount() != 2 {
+		t.Fatalf("LLM requests = %d, want planning and summary", fake.requestCount())
+	}
+	if !strings.Contains(output, "SHELLIA_PLANNING_MAX_ROUNDS") {
+		t.Fatalf("output missing env override guidance: %q", output)
+	}
+	if !strings.Contains(output, "Continue planning? [y/n]: no") {
+		t.Fatalf("output missing declined continuation: %q", output)
+	}
+}
+
 // TestRunTurnPlanOnlyUsesDedicatedSystemPrompt checks /plan sends the plan-only prompt contract.
 func TestRunTurnPlanOnlyUsesDedicatedSystemPrompt(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{
