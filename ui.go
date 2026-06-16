@@ -697,7 +697,7 @@ func layoutAnswerLines(message string, width int) []string {
 
 // renderAnswerBlock renders the Shellia answer with consistent left padding and word wrapping.
 func renderAnswerBlock(target io.Writer, ui bool, message string, state *answerRenderState) error {
-	lines := layoutAnswerLines(message, answerContentWidth(ui))
+	lines := renderAnswerMarkdown(message, answerContentWidth(ui), ui)
 	clearRenderedAnswer(target, state)
 	if len(lines) == 0 {
 		return nil
@@ -710,7 +710,7 @@ func renderAnswerBlock(target io.Writer, ui bool, message string, state *answerR
 				return err
 			}
 		}
-		if _, err := fmt.Fprint(target, prefix, style(ui, colorWhite+colorBold, line)); err != nil {
+		if _, err := fmt.Fprint(target, prefix, line); err != nil {
 			return err
 		}
 	}

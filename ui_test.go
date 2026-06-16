@@ -392,3 +392,78 @@ func TestLayoutAnswerLinesPreservesExplicitBlankLines(t *testing.T) {
 		t.Fatalf("layoutAnswerLines() = %#v, want %#v", got, want)
 	}
 }
+
+// TestRenderAnswerMarkdownRemovesStrongMarkers checks Markdown markers do not affect visible width.
+func TestRenderAnswerMarkdownRemovesStrongMarkers(t *testing.T) {
+	lines := renderAnswerMarkdown("El consum és a **/var**.", 80, false)
+	if len(lines) != 1 {
+		t.Fatalf("renderAnswerMarkdown() lines = %#v, want one line", lines)
+	}
+
+	line := stripANSISequences(lines[0])
+	if strings.Contains(line, "**") {
+		t.Fatalf("renderAnswerMarkdown() kept strong markers: %q", line)
+	}
+	if !strings.Contains(line, "/var") {
+		t.Fatalf("renderAnswerMarkdown() missing strong content: %q", line)
+	}
+	if got := visibleWidth(line); got != len([]rune(line)) {
+		t.Fatalf("visible rendered width = %d, want plain rune width %d", got, len([]rune(line)))
+	}
+}
+
+// TestRenderAnswerMarkdownWrapsAfterRendering checks removed Markdown markers do not cause short wraps.
+func TestRenderAnswerMarkdownWrapsAfterRendering(t *testing.T) {
+	message := "**/var** ocupa **9,7G**"
+
+	lines := renderAnswerMarkdown(message, 16, false)
+	want := []string{"/var ocupa 9,7G"}
+
+	if !reflect.DeepEqual(lines, want) {
+		t.Fatalf("renderAnswerMarkdown() = %#v, want %#v", lines, want)
+	}
+}
+
+// TestRenderAnswerMarkdownKeepsInlineCodeWidth checks inline code renders within the requested width.
+func TestRenderAnswerMarkdownKeepsInlineCodeWidth(t *testing.T) {
+	lines := renderAnswerMarkdown("Executa `du -sh /var` ara.", 24, true)
+	if len(lines) == 0 {
+		t.Fatal("renderAnswerMarkdown() returned no lines")
+	}
+
+	for _, line := range lines {
+		if strings.Contains(stripANSISequences(line), "`") {
+			t.Fatalf("renderAnswerMarkdown() kept inline code markers: %q", line)
+		}
+		if width := visibleWidth(line); width > 24 {
+			t.Fatalf("renderAnswerMarkdown() line width = %d, want <= 24: %q", width, line)
+		}
+	}
+}
+
+// TestRenderAnswerMarkdownNoColorOmitsANSI checks plain output never emits terminal escapes.
+func TestRenderAnswerMarkdownNoColorOmitsANSI(t *testing.T) {
+	lines := renderAnswerMarkdown("Text amb **negreta** i `codi`.", 80, false)
+	joined := strings.Join(lines, "\n")
+
+	if strings.Contains(joined, "\033[") {
+		t.Fatalf("renderAnswerMarkdown(false) emitted ANSI: %q", joined)
+	}
+	if strings.Contains(joined, "**") || strings.Contains(joined, "`") {
+		t.Fatalf("renderAnswerMarkdown(false) kept Markdown markers: %q", joined)
+	}
+}
+
+// TestRenderAnswerMarkdownMalformedInputFits checks malformed Markdown does not break layout.
+func TestRenderAnswerMarkdownMalformedInputFits(t *testing.T) {
+	lines := renderAnswerMarkdown("Aquest **markdown queda obert i s'ha de poder mostrar.", 18, true)
+	if len(lines) == 0 {
+		t.Fatal("renderAnswerMarkdown() returned no lines")
+	}
+
+	for _, line := range lines {
+		if width := visibleWidth(line); width > 18 {
+			t.Fatalf("renderAnswerMarkdown() line width = %d, want <= 18: %q", width, line)
+		}
+	}
+}
