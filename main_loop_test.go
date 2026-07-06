@@ -590,7 +590,8 @@ func TestRunTurnPrintsRawPrompt(t *testing.T) {
 	required := []string{
 		"Raw LLM prompt",
 		"system:",
-		"You are a shell planning assistant.",
+		"You are Shellia's planning layer.",
+		"Decision process:",
 		"user:",
 		"User instruction:\nanswer directly",
 	}

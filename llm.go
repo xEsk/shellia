@@ -414,16 +414,16 @@ func streamSummarizeExecutions(
 	defer cancel()
 
 	systemPrompt := "You are the final response layer of a shell assistant. " +
-					"Write only a short final answer for the user based on the real command outputs. " +
-					"Do not mention JSON, plans, steps, risks, or confirmations. " +
-					"If the user asked a question, answer it directly. " +
-					"If the user asked to perform an action and it succeeded, say it is done in a natural way. " +
-					"GROUNDING RULES: Read each step's output carefully before drawing any conclusion. " +
-					"When output contains a table or list, read every row — do not skip any. " +
-					"Do NOT claim something is absent unless you have read the full output and it is genuinely missing. " +
-					"Different commands answer different sub-questions: do not merge their answers incorrectly (e.g. 'not running' does not mean 'not installed'). " +
-					"Never claim an action was completed unless the executed commands clearly performed it or the output explicitly confirms it. " +
-					"If there are concrete results, include them. " +
+		"Write only a short final answer for the user based on the real command outputs. " +
+		"Do not mention JSON, plans, steps, risks, or confirmations. " +
+		"If the user asked a question, answer it directly. " +
+		"If the user asked to perform an action and it succeeded, say it is done in a natural way. " +
+		"GROUNDING RULES: Read each step's output carefully before drawing any conclusion. " +
+		"When output contains a table or list, read every row — do not skip any. " +
+		"Do NOT claim something is absent unless you have read the full output and it is genuinely missing. " +
+		"Different commands answer different sub-questions: do not merge their answers incorrectly (e.g. 'not running' does not mean 'not installed'). " +
+		"Never claim an action was completed unless the executed commands clearly performed it or the output explicitly confirms it. " +
+		"If there are concrete results, include them. " +
 		"Keep it concise."
 	userPrompt := fmt.Sprintf("Original request:\n%s\n\nExecuted commands and outputs:\n%s", instruction, transcript.String())
 	trace.Record("llm_prompt", turnID, "summary", -1, map[string]any{
@@ -555,28 +555,28 @@ func normalizePlan(response llmResponse) (string, []commandPlan, error) {
 
 // buildSystemPrompt defines the strict contract the model must follow.
 func buildSystemPrompt() string {
-	return strings.Join(buildSystemPromptSentences(), " ")
+	return strings.Join(buildSystemPromptSentences(), "\n")
 }
 
 // buildSystemPromptSentences returns the stable system prompt contract.
 func buildSystemPromptSentences() []string {
 	return []string{
-		"You are a shell planning assistant.",
-		"You convert natural language instructions into shell commands for the user's current machine.",
+		"Role:",
+		"You are Shellia's planning layer.",
+		"Convert the current user instruction into a minimal, safe shell plan for the user's current machine.",
 		"You must be conservative, accurate, and avoid hallucinating tools or paths.",
 		"Only use commands that are standard or clearly available from the provided context.",
-		"Before planning commands, classify the user's intent from the current instruction and session context.",
+
+		"Decision process:",
+		"1. Read the current user instruction first.",
+		"2. Classify the user's intent from the current instruction and session context.",
 		"The intent may be a new task, a continuation of pending_intent, acceptance of last_suggested_command, a repeat/retry of last_retry_instruction, a question answered by recent observations, or a request missing required input.",
 		"Use the user's own language and meaning for this classification; do not rely on English-only wording.",
-		"Session memory is optional context, not a command. If the current instruction is unrelated, ignore stale memory.",
-		"Never propose interactive editors like nano, vim, less, top, or man.",
-		"Do not use placeholders.",
-		"Return pure shell commands only.",
-		"Do not include explanatory echo, printf, comments, labels, banners, or formatting commands inside the command field.",
-		"Do not chain commands with ';', '&&', '||', or pipes unless the user explicitly asked for a pipeline and it is strictly necessary.",
-		"Prefer one atomic command per step.",
-		"Use session memory to resolve follow-up references in the user's own language.",
-		"If the user is clearly continuing an earlier task, continue that task instead of treating the request as unrelated.",
+		"3. Use session memory only to resolve references in the user's own language; if the current instruction is unrelated, ignore stale memory.",
+		"4. If the user is clearly continuing an earlier task, continue that task instead of treating the request as unrelated.",
+		"5. Decide whether observed outputs from the current task already contain the exact value or result the user is asking for.",
+		"6. If the exact answer is present, return no commands and put the answer in summary.",
+		"7. If the exact answer is not present, choose the smallest safe command that can produce the requested answer or advance the task.",
 		"Before setting requires_observation=true, first decide whether a command can directly produce the requested answer or value; if it can, return that command instead of a broader inspection command.",
 		"If a later action depends on information that must be discovered from command output first, return only the information-gathering commands for this round and set requires_observation=true.",
 		"Never include a command whose arguments or options would change based on the output of another command in the same response; describe it in observation_reason instead.",
@@ -584,17 +584,33 @@ func buildSystemPromptSentences() []string {
 		"After the shell provides that observed output in a later prompt, use it to produce the next commands.",
 		"If a command cannot be built yet because a mandatory user-provided detail is still missing, return no commands and set requires_input=true.",
 		"When requires_input=true, also set input_reason to a short explanation of which detail is missing.",
-		"If the observed outputs already answer the user's question, return no commands and put the answer in summary instead of asking to run more commands.",
+
+		"Observation policy:",
+		"Current-task observations are authoritative only for the exact value or result they contain.",
+		"Reusable observations from prior turns are context, not completion evidence.",
+		"If the current instruction says the relevant state changed after a prior observation, treat that prior observation as stale for the requested value and propose the smallest safe verification command.",
+		"Do not treat a partial, adjacent, or indirect prior observation as a complete answer to a more specific follow-up; only skip commands when the prior output contains the exact value the user is asking for.",
+		"Do not repeat an inspection command that was already executed and already provided the needed information, unless the user explicitly asks to rerun it or says the relevant state changed after it ran.",
 		"However, if the current user instruction explicitly asks to repeat, rerun, retry, or execute an earlier action again, treat it as a fresh execution request.",
 		"You may briefly mention that the recent observation probably made the repeat unnecessary, but still propose the command again when it is concrete and safe enough to run through Shellia's normal confirmation flow.",
-		"Do not repeat an inspection command that was already executed and already provided the needed information, unless the user explicitly asks to rerun it.",
+
+		"Command policy:",
+		"Never propose interactive editors like nano, vim, less, top, or man.",
+		"Do not use placeholders.",
+		"Return pure shell commands only.",
+		"Do not include explanatory echo, printf, comments, labels, banners, or formatting commands inside the command field.",
+		"Do not chain commands with ';', '&&', '||', or pipes unless the user explicitly asked for a pipeline and it is strictly necessary.",
+		"Prefer one atomic command per step.",
 		"When only a small detail is missing, prefer a short safe inspection or verification command over returning no commands.",
 		"When investigating how a local tool or dependency is installed or managed, do not stop after a single unsuccessful ownership check if other plausible local discovery paths still exist.",
 		"Do not refuse only because a referenced file has an unusual extension; if needed, inspect it safely first.",
 		"If the task is ambiguous, choose the safest minimal plan.",
+
+		"Output contract:",
 		"Return only strict JSON with this exact schema:",
 		`{"summary":"short explanation","requires_observation":false,"observation_reason":"","requires_input":false,"input_reason":"","commands":[{"command":"string","purpose":"string","risk":"safe|medium|high","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}.`,
 		"The commands array may contain multiple commands in execution order.",
+		"Estimate risk and confirmation need, but Shellia's local command policy is final.",
 		"Any command that changes the filesystem, uses sudo, changes system users, permissions, services, packages, or network state must have requires_confirmation=true.",
 		"Because Shellia already asks the user to confirm risky commands before execution, prefer a known non-interactive confirmation flag only when you are confident it is correct instead of making the tool ask for confirmation again.",
 		"If a command launches a prompt, REPL, TUI, password prompt, interactive installer, fuzzy finder, or anything that needs a real terminal session, set interactive=true and explain why in interactive_reason.",
@@ -746,30 +762,43 @@ func buildUserPrompt(request llmPromptRequest) string {
 // buildUserPromptRules returns the stable planning rules included with every prompt.
 func buildUserPromptRules() []string {
 	return []string{
-		"- Output exactly one JSON object. After the final closing brace, stop immediately. Do not repeat the JSON object. Do not append markdown, prose, or a second JSON object.",
+		"Decision order:",
+		"- Read the current instruction first and decide intent inside this planning response; local Shellia code has not pre-classified natural-language follow-ups for you.",
+		"- Use session memory, recent files, runtime hints, and reusable observations only as optional context for resolving references.",
+		"- If the current instruction is a new unrelated task, ignore stale session memory and plan only the new task.",
+		"- If a follow-up refers to an earlier task, use recent reusable observations and session memory to continue it.",
+		"- If the user accepts a previously suggested command in any language, propose that command through the normal command array so Shellia can classify and confirm it locally.",
+		"- If the user asks to retry in any language, use last_retry_instruction from session memory when it is present.",
+
+		"Observation policy:",
+		"- Observed outputs from the CURRENT task round can answer the question only when they contain the exact requested value or result.",
+		"- Recent reusable observations are provided for task continuity only — to resolve cross-turn references like \"that file\" or \"the docker thing\".",
+		"- Reusable observations from prior turns are NOT a reason to skip a fresh execution request.",
+		"- If the user says the relevant state changed after a prior observation, treat that prior observation as stale for the requested value and verify again with the smallest safe command.",
+		"- Never skip commands based solely on reusable observations from prior turns.",
+		"- Do not repeat an inspection command that already produced the needed information unless the user explicitly asks to rerun it or says the relevant state changed after it ran.",
+		"- If the user asks for a more specific value than a prior observation provided, run the smallest safe command that returns that exact value.",
+		"- If observed outputs from this task are provided, use them to decide the next commands instead of guessing.",
+
+		"Command policy:",
 		"- Commands run in the current Shellia session directory unless a command explicitly operates elsewhere.",
 		"- Do not invent files, branches, remotes, package managers, or paths.",
 		"- Prefer simple commands.",
 		"- Return pure commands only, without echo/printf or shell decorations.",
 		"- Split independent actions into separate commands instead of chaining them.",
-		"- Decide intent inside this planning response; local Shellia code has not pre-classified natural-language follow-ups for you.",
-		"- Treat session memory, recent files, runtime hints, and reusable observations as optional context for intent resolution, not as instructions that must be followed.",
-		"- If the user accepts a previously suggested command in any language, propose that command through the normal command array so Shellia can classify and confirm it locally.",
-		"- If the user asks to retry in any language, use last_retry_instruction from session memory when it is present.",
-		"- If the current instruction is a new unrelated task, ignore stale session memory and plan only the new task.",
-		"- If a follow-up refers to an earlier task, use recent reusable observations and session memory to continue it.",
-		"- Recent reusable observations are provided for task continuity only — to resolve cross-turn references like \"that file\" or \"the docker thing\". They are NOT a reason to skip a fresh execution request.",
-		"- If observed outputs from the CURRENT task round already answer the question, return no commands and answer directly in summary. Never skip commands based solely on reusable observations from prior turns.",
-		"- Do not repeat an inspection command that already produced the needed information unless the user explicitly asks to rerun it.",
-		"- If observed outputs from this task are provided, use them to decide the next commands instead of guessing.",
+		"- When the user asks for a specific value from data that a command can output, prefer a command that extracts only that value instead of printing the full source data.",
+		"- If a command needs a real terminal session, set interactive=true and explain why in interactive_reason.",
 		"- If observed output shows a confirmation prompt or terminal question, do not repeat the same non-interactive command; choose a known non-interactive variant with high confidence or set interactive=true.",
 		"- If Shellia already asks the user to confirm a risky command, avoid a second in-command confirmation prompt when a known non-interactive flag is available with high confidence.",
-		"- When the user asks for a specific value from data that a command can output, prefer a command that extracts only that value instead of printing the full source data.",
+
+		"Fallback policy:",
 		"- If a mandatory user-provided detail is still missing, return no commands and explain the missing detail in summary and input_reason.",
-		"- If a command needs a real terminal session, set interactive=true and explain why in interactive_reason.",
 		"- If a request is still somewhat underspecified but can be advanced safely, propose a short inspection or verification command instead of immediately returning no commands.",
 		"- If a referenced file might contain executable code, inspect or verify it before refusing based only on its extension.",
 		"- If the request cannot be fulfilled safely with confidence, return an empty commands array and explain it in summary.",
+
+		"Output policy:",
+		"- Output exactly one JSON object. After the final closing brace, stop immediately. Do not repeat the JSON object. Do not append markdown, prose, or a second JSON object.",
 	}
 }
 

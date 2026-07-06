@@ -163,6 +163,40 @@ func TestBuildSystemPromptPrefersDirectSpecificOutput(t *testing.T) {
 	}
 }
 
+// TestBuildSystemPromptRejectsPartialObservationAsExactAnswer checks follow-ups
+// do not get satisfied by broader prior observations.
+func TestBuildSystemPromptRejectsPartialObservationAsExactAnswer(t *testing.T) {
+	prompt := buildSystemPrompt()
+
+	requiredSnippets := []string{
+		"partial, adjacent, or indirect prior observation",
+		"more specific follow-up",
+		"contains the exact value the user is asking for",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("buildSystemPrompt() missing %q in %q", snippet, prompt)
+		}
+	}
+}
+
+// TestBuildSystemPromptTreatsChangedStateAsStale checks prior observations do
+// not block verification when the user says the underlying state changed.
+func TestBuildSystemPromptTreatsChangedStateAsStale(t *testing.T) {
+	prompt := buildSystemPrompt()
+
+	requiredSnippets := []string{
+		"relevant state changed after a prior observation",
+		"treat that prior observation as stale",
+		"smallest safe verification command",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("buildSystemPrompt() missing %q in %q", snippet, prompt)
+		}
+	}
+}
+
 // TestBuildSystemPromptAvoidsFallbackJSONGuidance checks JSON-mode providers avoid extra noise.
 func TestBuildSystemPromptAvoidsFallbackJSONGuidance(t *testing.T) {
 	prompt := buildSystemPrompt()
@@ -185,6 +219,66 @@ func TestBuildUserPromptRulesPreferFocusedExtraction(t *testing.T) {
 		"asks for a specific value",
 		"extracts only that value",
 		"instead of printing the full source data",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("buildUserPrompt() missing %q in %q", snippet, prompt)
+		}
+	}
+}
+
+// TestBuildUserPromptRulesRequireExactFollowUpValues checks old observations
+// cannot block a narrower follow-up question that needs a precise value.
+func TestBuildUserPromptRulesRequireExactFollowUpValues(t *testing.T) {
+	prompt := buildUserPrompt(llmPromptRequest{
+		Config:      defaultConfig(),
+		ContextInfo: contextInfo{},
+		Instruction: "what exact package version is installed?",
+		State: sessionState{
+			LastObservations: []observationMemory{
+				{
+					Purpose:    "Check whether the package exists",
+					Command:    "command -v example-tool",
+					Transcript: "/usr/local/bin/example-tool",
+				},
+			},
+		},
+	})
+
+	requiredSnippets := []string{
+		"more specific value",
+		"prior observation",
+		"smallest safe command that returns that exact value",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("buildUserPrompt() missing %q in %q", snippet, prompt)
+		}
+	}
+}
+
+// TestBuildUserPromptRulesRecheckAfterReportedStateChange checks follow-ups can
+// invalidate reusable observations when the user reports a later change.
+func TestBuildUserPromptRulesRecheckAfterReportedStateChange(t *testing.T) {
+	prompt := buildUserPrompt(llmPromptRequest{
+		Config:      defaultConfig(),
+		ContextInfo: contextInfo{},
+		Instruction: "please verify it again; I changed it after your check",
+		State: sessionState{
+			LastObservations: []observationMemory{
+				{
+					Purpose:    "Check current state",
+					Command:    "example-tool --version",
+					Transcript: "example-tool 1.0.0",
+				},
+			},
+		},
+	})
+
+	requiredSnippets := []string{
+		"relevant state changed after a prior observation",
+		"treat that prior observation as stale",
+		"verify again with the smallest safe command",
 	}
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(prompt, snippet) {
@@ -233,7 +327,7 @@ func TestBuildDiscoveryRepairLLMPromptsAddsPreviousResponse(t *testing.T) {
 		},
 	})
 
-	if !strings.Contains(systemPrompt, "You are a shell planning assistant.") {
+	if !strings.Contains(systemPrompt, "You are Shellia's planning layer.") {
 		t.Fatalf("system prompt = %q, want standard planning prompt", systemPrompt)
 	}
 	requiredSnippets := []string{
@@ -518,11 +612,13 @@ func TestBuildUserPromptMakesReusableObservationsNonBlocking(t *testing.T) {
 		"Recent reusable observations:",
 		"last_retry_instruction: run failing build",
 		"git status --short",
-		"Decide intent inside this planning response",
+		"Decision order:",
+		"decide intent inside this planning response",
 		"local Shellia code has not pre-classified natural-language follow-ups",
-		"optional context for intent resolution",
+		"optional context for resolving references",
 		"retry in any language",
 		"If the current instruction is a new unrelated task, ignore stale session memory",
+		"Observation policy:",
 		"task continuity only",
 		"NOT a reason to skip a fresh execution request",
 		"Never skip commands based solely on reusable observations from prior turns",
