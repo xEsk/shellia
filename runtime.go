@@ -20,6 +20,7 @@ type runtimeDeps struct {
 	HTTPClient           *http.Client
 	ExecuteCommands      commandRunner
 	ExecuteManualCommand manualCommandRunner
+	Trace                *traceLogger
 }
 
 // defaultRuntimeDeps returns the production dependencies for Shellia.

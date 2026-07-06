@@ -235,6 +235,8 @@ Flags:
   -raw-response: print the raw model response
   -request-timeout: HTTP request timeout in seconds
   -timeout: per-command timeout in seconds
+  -trace: write a JSONL diagnostic trace for this session
+  -trace-dir: directory for JSONL diagnostic trace files
   -verbose: show full plan and technical detail
   -yes-safe: auto-execute safe commands without confirmation
 
@@ -316,6 +318,10 @@ verbose            = false
 no_color           = false
 show_system_output = true
 show_command_popup = true
+
+[trace]
+enabled = false
+dir     = ""
 ```
 
 ### Model profiles
@@ -383,6 +389,32 @@ These settings control that behavior:
   - how much captured output is sent to the model for the final answer
 
 If output is truncated, Shellia marks it explicitly instead of pretending it captured everything.
+
+### Session trace diagnostics
+
+Shellia can write one JSONL diagnostic file per session. This is useful when you want to inspect exactly what Shellia sent to the model, what the model returned, which internal decision Shellia made, and which commands were confirmed or executed.
+
+Enable it for one run:
+
+```bash
+./shellia --trace "show me the git status"
+```
+
+Use a custom trace directory:
+
+```bash
+./shellia --trace --trace-dir /tmp/shellia-traces "show me the git status"
+```
+
+Or enable it persistently:
+
+```toml
+[trace]
+enabled = true
+dir = ""
+```
+
+When `dir` is empty, Shellia writes traces to `$XDG_STATE_HOME/shellia/sessions` or `~/.local/state/shellia/sessions`. Trace files include prompts, raw model responses, planner decisions, command confirmations, executed commands, exit codes, and the command output that Shellia captured locally.
 
 ### Planning controls
 

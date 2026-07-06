@@ -472,6 +472,7 @@ func executeCommands(ctx context.Context, deps runtimeDeps, ui bool, cfg config,
 	deps = deps.withDefaults()
 	reader := bufio.NewReader(deps.Stdin)
 	executions := make([]commandExecution, 0, len(plans))
+	turnID := traceTurnID(ctx)
 
 	for index, plan := range plans {
 		box := printCommandExecutionTo(deps.Stdout, ui, cfg, index+1, len(plans), plan)
@@ -480,7 +481,19 @@ func executeCommands(ctx context.Context, deps runtimeDeps, ui bool, cfg config,
 
 		if !cfg.YesSafe || !plan.LocalSafe || plan.Interactive {
 			decision, editedCommand, err := promptConfirmation(box, reader, deps.Stdin, fmt.Sprintf("Run step %d/%d?", index+1, len(plans)), plan.Command, cfg.ConfirmationDefault)
+			deps.Trace.Record("command_confirmation", turnID, "", -1, map[string]any{
+				"step":           index + 1,
+				"total_steps":    len(plans),
+				"command":        plan.Command,
+				"decision":       traceConfirmationDecision(decision),
+				"edited_command": editedCommand,
+			})
 			if err != nil {
+				deps.Trace.Record("command_error", turnID, "", -1, map[string]any{
+					"step":    index + 1,
+					"command": plan.Command,
+					"error":   err.Error(),
+				})
 				box.Close()
 				return nil, fmt.Errorf("cannot read confirmation: %w", err)
 			}
@@ -494,8 +507,26 @@ func executeCommands(ctx context.Context, deps runtimeDeps, ui bool, cfg config,
 			if decision == confirmDecisionInteractive {
 				interactive = true
 			}
+		} else {
+			deps.Trace.Record("command_confirmation", turnID, "", -1, map[string]any{
+				"step":        index + 1,
+				"total_steps": len(plans),
+				"command":     plan.Command,
+				"decision":    "auto_safe",
+			})
 		}
 
+		deps.Trace.Record("command_start", turnID, "", -1, map[string]any{
+			"step":                  index + 1,
+			"total_steps":           len(plans),
+			"command":               effectiveCommand,
+			"original_command":      plan.Command,
+			"purpose":               plan.Purpose,
+			"risk":                  plan.Risk,
+			"classification":        plan.Classification,
+			"requires_confirmation": plan.RequiresConfirmation,
+			"interactive":           interactive,
+		})
 		result, err := executeOneCommand(ctx, commandRunRequest{
 			Deps:        deps,
 			UI:          ui,
@@ -513,7 +544,18 @@ func executeCommands(ctx context.Context, deps runtimeDeps, ui bool, cfg config,
 			Stderr:   result.Output.Stderr,
 			ExitCode: result.ExitCode,
 		})
+		deps.Trace.Record("command_end", turnID, "", -1, map[string]any{
+			"step":        index + 1,
+			"total_steps": len(plans),
+			"execution":   traceExecutionData(executions[len(executions)-1]),
+		})
 		if err != nil {
+			deps.Trace.Record("command_error", turnID, "", -1, map[string]any{
+				"step":      index + 1,
+				"command":   effectiveCommand,
+				"exit_code": result.ExitCode,
+				"error":     err.Error(),
+			})
 			if box != nil {
 				var runErr *commandRunError
 				var promptErr *interactivePromptError
@@ -553,6 +595,7 @@ func executeCommands(ctx context.Context, deps runtimeDeps, ui bool, cfg config,
 // executeManualCommand runs a direct shell command inside the current Shellia session.
 func executeManualCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo, command string, renderMode manualRenderMode) (commandExecution, error) {
 	deps = deps.withDefaults()
+	turnID := traceTurnID(ctx)
 	var box *stepBox
 	switch renderMode {
 	case manualRenderInline:
@@ -565,6 +608,10 @@ func executeManualCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg co
 		// These modes render command output directly, so there is no inline preface.
 	}
 
+	deps.Trace.Record("manual_command_start", turnID, "", -1, map[string]any{
+		"command":     command,
+		"render_mode": int(renderMode),
+	})
 	result, err := executeOneCommand(ctx, commandRunRequest{
 		Deps:         deps,
 		UI:           ui,
@@ -583,8 +630,14 @@ func executeManualCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg co
 		Stderr:   result.Output.Stderr,
 		ExitCode: result.ExitCode,
 	}
+	deps.Trace.Record("manual_command_end", turnID, "", -1, traceExecutionData(execution))
 
 	if err != nil {
+		deps.Trace.Record("manual_command_error", turnID, "", -1, map[string]any{
+			"command":   command,
+			"exit_code": result.ExitCode,
+			"error":     err.Error(),
+		})
 		if box != nil {
 			var runErr *commandRunError
 			var promptErr *interactivePromptError

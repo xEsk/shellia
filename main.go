@@ -90,6 +90,7 @@ type turnResult struct {
 type planningRoundRequest struct {
 	Deps   runtimeDeps
 	UI     bool
+	TurnID string
 	Round  int
 	Prompt llmPromptRequest
 }
@@ -111,14 +112,21 @@ type turnRequest struct {
 }
 
 func main() {
-	deps := defaultRuntimeDeps()
+	if code := runApp(context.Background(), os.Args[1:], defaultRuntimeDeps()); code != 0 {
+		os.Exit(code)
+	}
+}
 
-	cfg, err := parseArgs(os.Args[1:])
+func runApp(parentCtx context.Context, args []string, deps runtimeDeps) int {
+	deps = deps.withDefaults()
+
+	cfg, err := parseArgs(args)
 	if err != nil {
 		if errors.Is(err, errHelp) {
-			return
+			return 0
 		}
-		exitWithError(uiEnabled(config{}), err.Error(), 2)
+		printErrorTo(deps.Stderr, uiEnabled(config{}), err.Error())
+		return 2
 	}
 
 	ui := uiEnabled(cfg)
@@ -126,30 +134,47 @@ func main() {
 	switch cfg.CommandKind {
 	case "config-init":
 		if err := initConfigFileTo(deps.Stdout, ui); err != nil {
-			exitWithError(ui, err.Error(), 1)
+			printErrorTo(deps.Stderr, ui, err.Error())
+			return 1
 		}
-		return
+		return 0
 	case "config-path":
 		path, err := settingsPath()
 		if err != nil {
-			exitWithError(ui, err.Error(), 1)
+			printErrorTo(deps.Stderr, ui, err.Error())
+			return 1
 		}
 		renderPanel(deps.Stdout, ui, "config", colorCyan, []string{path})
-		return
+		return 0
 	}
 
 	// appCtx is cancelled on the first Ctrl+C, aborting any in-flight LLM request.
-	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	appCtx, stop := signal.NotifyContext(parentCtx, os.Interrupt)
 	defer stop()
 
 	ctxInfo, err := getContext(appCtx, cfg)
 	if err != nil {
-		exitWithError(ui, err.Error(), 1)
+		printErrorTo(deps.Stderr, ui, err.Error())
+		return 1
+	}
+
+	trace, err := openSessionTrace(cfg, ctxInfo)
+	if err != nil {
+		printErrorTo(deps.Stderr, ui, err.Error())
+		return 1
+	}
+	deps.Trace = trace
+	if trace != nil {
+		trace.Record("session_start", "", "", -1, traceSessionStartData(cfg, ctxInfo))
+		defer func() {
+			trace.Record("session_end", "", "", -1, nil)
+			_ = trace.Close()
+		}()
 	}
 
 	if cfg.Interactive {
 		runInteractive(appCtx, deps, ui, cfg, &ctxInfo)
-		return
+		return 0
 	}
 
 	_, err = runTurn(appCtx, deps, ui, turnRequest{
@@ -160,7 +185,8 @@ func main() {
 	if err != nil {
 		switch {
 		case errors.Is(err, errAborted), errors.Is(err, context.Canceled):
-			exitWithError(ui, "execution aborted", 130)
+			printErrorTo(deps.Stderr, ui, "execution aborted")
+			return 130
 		default:
 			var exitErr *exec.ExitError
 			if errors.As(err, &exitErr) {
@@ -168,11 +194,14 @@ func main() {
 				if code <= 0 {
 					code = 1
 				}
-				exitWithError(ui, err.Error(), code)
+				printErrorTo(deps.Stderr, ui, err.Error())
+				return code
 			}
-			exitWithError(ui, err.Error(), 1)
+			printErrorTo(deps.Stderr, ui, err.Error())
+			return 1
 		}
 	}
+	return 0
 }
 
 // parseArgs processes CLI config and validates the minimum required values.
@@ -266,6 +295,8 @@ func buildFlagSet(cfg *config) (*flag.FlagSet, *int, *int) {
 	fs.BoolVar(&cfg.Verbose, "verbose", cfg.Verbose, "show full plan and technical detail")
 	fs.BoolVar(&cfg.RawPrompt, "raw-prompt", cfg.RawPrompt, "print the raw model prompts")
 	fs.BoolVar(&cfg.RawResponse, "raw-response", cfg.RawResponse, "print the raw model response")
+	fs.BoolVar(&cfg.TraceEnabled, "trace", cfg.TraceEnabled, "write a JSONL diagnostic trace for this session")
+	fs.StringVar(&cfg.TraceDir, "trace-dir", cfg.TraceDir, "directory for JSONL diagnostic trace files")
 	fs.BoolVar(&cfg.NoColor, "no-color", cfg.NoColor, "disable UI colours")
 	fs.Usage = usageFunc(fs)
 
@@ -793,13 +824,32 @@ func switchInteractiveModel(cfg *config, name string) error {
 }
 
 // runTurn executes a full plan → confirm → execute → answer cycle, or stops after planning in plan-only mode.
-func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest) (turnResult, error) {
+func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest) (result turnResult, err error) {
 	deps = deps.withDefaults()
 	cfg := request.Config
 	ctxInfo := request.ContextInfo
 	instruction := request.Instruction
 	history := request.History
 	state := request.State
+	turnID := deps.Trace.StartTurn(map[string]any{
+		"instruction":   instruction,
+		"cwd":           ctxInfo.CWD,
+		"history_count": len(history),
+		"state":         state,
+	})
+	ctx = withTraceTurnID(ctx, turnID)
+	defer func() {
+		data := map[string]any{
+			"result":           result.Result,
+			"actionable":       result.Actionable,
+			"plans_count":      len(result.Plans),
+			"executions_count": len(result.Executions),
+		}
+		if err != nil {
+			data["error"] = err.Error()
+		}
+		deps.Trace.Record("turn_end", turnID, "", -1, data)
+	}()
 
 	if cfg.Debug || cfg.Verbose {
 		printContextTo(deps.Stdout, ui, cfg, *ctxInfo)
@@ -823,6 +873,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		roundResult, err := runPlanningRound(ctx, planningRoundRequest{
 			Deps:   deps,
 			UI:     ui,
+			TurnID: turnID,
 			Round:  round,
 			Prompt: promptRequest,
 		})
@@ -837,6 +888,9 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		lastPlans = plans
 
 		if len(plans) == 0 {
+			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
+				"decision": "final_answer_without_commands",
+			})
 			printFinalResultTo(deps.Stdout, ui, summary)
 			if cfg.PlanOnly {
 				printPlanOnlyGuidanceTo(deps.Stdout, ui, parsed, cfg.AskConfirmPlanOnly)
@@ -845,6 +899,9 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		}
 
 		if shouldSkipRedundantRound(plans, allExecutions) {
+			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
+				"decision": "skip_redundant_round",
+			})
 			break
 		}
 
@@ -863,6 +920,9 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			if err != nil {
 				return turnResult{}, fmt.Errorf("cannot read plan confirmation: %w", err)
 			}
+			deps.Trace.Record("plan_confirmation", turnID, "", -1, map[string]any{
+				"accepted": executePlan,
+			})
 			if !executePlan {
 				if cfg.PlanOnly {
 					return turnResult{Result: planOnlyResult(summary, parsed), Summary: summary, Actionable: len(plans) > 0, Plans: plans}, nil
@@ -893,12 +953,20 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 					if promptErr != nil {
 						return turnResult{}, promptErr
 					}
+					deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
+						"decision": "planning_limit_continuation",
+						"accepted": keepGoing,
+						"limit":    planningRoundLimit,
+					})
 					if keepGoing {
 						planningRoundLimit += cfg.PlanningMaxRounds
 						continue
 					}
 					break
 				}
+				deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
+					"decision": "continue_after_observation",
+				})
 				continue
 			}
 			break
@@ -914,24 +982,32 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			if err != nil {
 				return turnResult{}, err
 			}
+			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
+				"decision": "planning_limit_continuation",
+				"accepted": keepGoing,
+				"limit":    planningRoundLimit,
+			})
 			if keepGoing {
 				planningRoundLimit += cfg.PlanningMaxRounds
 				continue
 			}
 			break
 		}
+		deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
+			"decision": "continue_after_observation",
+		})
 	}
 
 	openResultPanelTo(deps.Stdout, ui)
 	w := &resultWriter{ui: ui, target: deps.Stdout, thinking: startThinkingIndicator(ui, deps.Stdout)}
-	result, streamErr := streamSummarizeExecutions(ctx, deps.HTTPClient, cfg, instruction, allExecutions, w)
+	answer, streamErr := streamSummarizeExecutions(ctx, deps.HTTPClient, cfg, instruction, allExecutions, w, deps.Trace, turnID)
 	w.stopThinking()
-	if streamErr != nil || strings.TrimSpace(result) == "" {
-		result = staticFallbackAnswer(lastSummary, allExecutions)
+	if streamErr != nil || strings.TrimSpace(answer) == "" {
+		answer = staticFallbackAnswer(lastSummary, allExecutions)
 		// Only print the fallback if streaming never wrote a single byte to the terminal.
 		// If it wrote partial content before erroring, don't print on top of it.
 		if !w.wroteAnything {
-			if err := renderAnswerBlock(deps.Stdout, ui, result, &w.state); err != nil {
+			if err := renderAnswerBlock(deps.Stdout, ui, answer, &w.state); err != nil {
 				return turnResult{}, err
 			}
 			w.wroteAnything = true
@@ -939,7 +1015,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 	}
 	closeResultPanelTo(deps.Stdout, ui)
 	return turnResult{
-		Result:     strings.TrimSpace(result),
+		Result:     strings.TrimSpace(answer),
 		Summary:    lastSummary,
 		Actionable: true,
 		Plans:      lastPlans,
@@ -953,19 +1029,31 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 	deps := request.Deps
 	ui := request.UI
 
+	systemPrompt, userPrompt := buildLLMPrompts(request.Prompt)
 	if cfg.RawPrompt {
-		systemPrompt, userPrompt := buildLLMPrompts(request.Prompt)
 		printRawPromptsTo(deps.Stdout, ui, "Raw LLM prompt", systemPrompt, userPrompt)
 	}
 
+	deps.Trace.Record("llm_prompt", request.TurnID, "planning", request.Round, map[string]any{
+		"model":         cfg.Model,
+		"system_prompt": systemPrompt,
+		"user_prompt":   userPrompt,
+	})
+
 	thinking := startThinkingIndicator(ui, deps.Stdout)
-	rawResponse, err := callLLM(ctx, deps.HTTPClient, request.Prompt)
+	rawResponse, err := callPlanningPrompt(ctx, deps.HTTPClient, cfg, systemPrompt, userPrompt)
 	if thinking != nil {
 		thinking.stop()
 	}
 	if err != nil {
+		deps.Trace.Record("llm_error", request.TurnID, "planning", request.Round, map[string]any{
+			"error": err.Error(),
+		})
 		return planningRoundResult{}, err
 	}
+	deps.Trace.Record("llm_response", request.TurnID, "planning", request.Round, map[string]any{
+		"raw_response": rawResponse,
+	})
 
 	if cfg.RawResponse {
 		printSectionTo(deps.Stdout, ui, "Raw LLM response", colorBlue)
@@ -975,19 +1063,42 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 
 	parsed, err := parseResponse(rawResponse)
 	if err != nil {
+		deps.Trace.Record("llm_error", request.TurnID, "planning", request.Round, map[string]any{
+			"error":        err.Error(),
+			"raw_response": rawResponse,
+		})
 		return planningRoundResult{}, err
 	}
 
 	summary, plans, err := normalizePlan(parsed)
 	if err != nil {
+		deps.Trace.Record("llm_error", request.TurnID, "planning", request.Round, map[string]any{
+			"error":  err.Error(),
+			"parsed": parsed,
+		})
 		return planningRoundResult{}, err
 	}
+	deps.Trace.Record("planner_result", request.TurnID, "planning", request.Round, map[string]any{
+		"summary":              summary,
+		"requires_input":       parsed.RequiresInput,
+		"input_reason":         parsed.InputReason,
+		"requires_observation": parsed.RequiresObservation,
+		"observation_reason":   parsed.ObservationReason,
+		"commands":             plans,
+		"commands_count":       len(plans),
+	})
 
 	if len(plans) == 0 && !cfg.PlanOnly && shouldRetryWithDiscoveryRepair(parsed, request.Round, request.Prompt.Observations) {
+		deps.Trace.Record("shellia_decision", request.TurnID, "planning", request.Round, map[string]any{
+			"decision": "discovery_repair_triggered",
+		})
 		repaired, ok := runDiscoveryRepair(ctx, request, parsed)
 		if ok {
 			return repaired, nil
 		}
+		deps.Trace.Record("shellia_decision", request.TurnID, "planning", request.Round, map[string]any{
+			"decision": "discovery_repair_failed",
+		})
 	}
 
 	return planningRoundResult{
@@ -1011,29 +1122,57 @@ func runDiscoveryRepair(
 		Previous: previous,
 	}
 
+	systemPrompt, userPrompt := buildDiscoveryRepairLLMPrompts(repairRequest)
 	if cfg.RawPrompt {
-		systemPrompt, userPrompt := buildDiscoveryRepairLLMPrompts(repairRequest)
 		printRawPromptsTo(deps.Stdout, ui, "Raw discovery repair prompt", systemPrompt, userPrompt)
 	}
+	deps.Trace.Record("llm_prompt", request.TurnID, "discovery_repair", request.Round, map[string]any{
+		"model":         cfg.Model,
+		"system_prompt": systemPrompt,
+		"user_prompt":   userPrompt,
+	})
 
 	thinking := startThinkingIndicator(ui, deps.Stdout)
-	repairedRawResponse, repairErr := callDiscoveryRepairLLM(ctx, deps.HTTPClient, repairRequest)
+	repairedRawResponse, repairErr := callPlanningPrompt(ctx, deps.HTTPClient, cfg, systemPrompt, userPrompt)
 	if thinking != nil {
 		thinking.stop()
 	}
 	if repairErr != nil {
+		deps.Trace.Record("llm_error", request.TurnID, "discovery_repair", request.Round, map[string]any{
+			"error": repairErr.Error(),
+		})
 		return planningRoundResult{}, false
 	}
+	deps.Trace.Record("llm_response", request.TurnID, "discovery_repair", request.Round, map[string]any{
+		"raw_response": repairedRawResponse,
+	})
 
 	repairedParsed, parseErr := parseResponse(repairedRawResponse)
 	if parseErr != nil {
+		deps.Trace.Record("llm_error", request.TurnID, "discovery_repair", request.Round, map[string]any{
+			"error":        parseErr.Error(),
+			"raw_response": repairedRawResponse,
+		})
 		return planningRoundResult{}, false
 	}
 
 	repairedSummary, repairedPlans, normalizeErr := normalizePlan(repairedParsed)
 	if normalizeErr != nil {
+		deps.Trace.Record("llm_error", request.TurnID, "discovery_repair", request.Round, map[string]any{
+			"error":  normalizeErr.Error(),
+			"parsed": repairedParsed,
+		})
 		return planningRoundResult{}, false
 	}
+	deps.Trace.Record("planner_result", request.TurnID, "discovery_repair", request.Round, map[string]any{
+		"summary":              repairedSummary,
+		"requires_input":       repairedParsed.RequiresInput,
+		"input_reason":         repairedParsed.InputReason,
+		"requires_observation": repairedParsed.RequiresObservation,
+		"observation_reason":   repairedParsed.ObservationReason,
+		"commands":             repairedPlans,
+		"commands_count":       len(repairedPlans),
+	})
 
 	return planningRoundResult{
 		Parsed:  repairedParsed,

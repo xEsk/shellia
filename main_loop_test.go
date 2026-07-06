@@ -235,6 +235,31 @@ func loopTurnRequest(cfg config, ctxInfo *contextInfo, instruction string) turnR
 	}
 }
 
+func openLoopTrace(t *testing.T) *traceLogger {
+	t.Helper()
+
+	cfg := defaultConfig()
+	cfg.TraceEnabled = true
+	cfg.TraceDir = t.TempDir()
+	logger, err := openSessionTrace(cfg, contextInfo{})
+	if err != nil {
+		t.Fatalf("openSessionTrace() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = logger.Close()
+	})
+	return logger
+}
+
+func closeLoopTraceAndRead(t *testing.T, logger *traceLogger) []map[string]any {
+	t.Helper()
+
+	if err := logger.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	return readTraceEvents(t, logger.Path())
+}
+
 // TestSwitchInteractiveModelAppliesAndPersistsDefault checks /model changes the runtime profile and config default.
 func TestSwitchInteractiveModelAppliesAndPersistsDefault(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
@@ -288,6 +313,48 @@ func TestSwitchInteractiveModelAppliesAndPersistsDefault(t *testing.T) {
 	}
 	if body.Model != "mlx-model" {
 		t.Fatalf("request model = %q, want mlx-model", body.Model)
+	}
+}
+
+// TestRunAppTraceWritesSingleSessionFile checks the main application flow owns trace lifecycle.
+func TestRunAppTraceWritesSingleSessionFile(t *testing.T) {
+	traceDir := t.TempDir()
+	fake := newLoopLLMClient(t, loopLLMResponse{
+		content: `{"summary":"No command needed.","commands":[]}`,
+	})
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("SHELLIA_BASE_URL", fake.URL())
+	t.Setenv("SHELLIA_MODEL", "test-model")
+	t.Setenv("SHELLIA_API_KEY", "test-key")
+
+	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+		code := runApp(t.Context(), []string{
+			"--trace",
+			"--trace-dir", traceDir,
+			"answer directly",
+		}, deps)
+		if code != 0 {
+			t.Fatalf("runApp() code = %d, want 0", code)
+		}
+	})
+
+	entries, err := os.ReadDir(traceDir)
+	if err != nil {
+		t.Fatalf("ReadDir(%q) error = %v", traceDir, err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("trace files = %d, want 1", len(entries))
+	}
+	events := readTraceEvents(t, filepath.Join(traceDir, entries[0].Name()))
+	if len(traceEventsByName(events, "session_start")) != 1 {
+		t.Fatalf("session_start events = %d, want 1", len(traceEventsByName(events, "session_start")))
+	}
+	if len(traceEventsByName(events, "session_end")) != 1 {
+		t.Fatalf("session_end events = %d, want 1", len(traceEventsByName(events, "session_end")))
+	}
+	if len(traceEventsByName(events, "turn_start")) != 1 || len(traceEventsByName(events, "turn_end")) != 1 {
+		t.Fatalf("turn events start=%d end=%d, want 1 and 1", len(traceEventsByName(events, "turn_start")), len(traceEventsByName(events, "turn_end")))
 	}
 }
 
@@ -565,6 +632,47 @@ func TestRunTurnReturnsFinalAnswerWithoutCommands(t *testing.T) {
 	}
 }
 
+// TestRunTurnTraceRecordsFinalAnswerWithoutCommands checks empty plans are diagnosable.
+func TestRunTurnTraceRecordsFinalAnswerWithoutCommands(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{
+		content: `{"summary":"No command needed.","commands":[]}`,
+	})
+	cfg := loopTestConfig(fake.URL())
+	ctxInfo := loopTestContext(t)
+	logger := openLoopTrace(t)
+
+	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.Trace = logger
+		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "answer directly")); err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	events := closeLoopTraceAndRead(t, logger)
+	if len(traceEventsByName(events, "turn_start")) != 1 {
+		t.Fatalf("turn_start events = %d, want 1", len(traceEventsByName(events, "turn_start")))
+	}
+	if len(traceEventsByName(events, "llm_prompt")) != 1 {
+		t.Fatalf("llm_prompt events = %d, want 1", len(traceEventsByName(events, "llm_prompt")))
+	}
+	plannerEvents := traceEventsByName(events, "planner_result")
+	if len(plannerEvents) != 1 {
+		t.Fatalf("planner_result events = %d, want 1", len(plannerEvents))
+	}
+	plannerData := traceEventData(t, plannerEvents[0])
+	if plannerData["commands_count"] != float64(0) {
+		t.Fatalf("commands_count = %#v, want 0", plannerData["commands_count"])
+	}
+	decisionEvents := traceEventsByName(events, "shellia_decision")
+	if len(decisionEvents) != 1 {
+		t.Fatalf("shellia_decision events = %d, want 1", len(decisionEvents))
+	}
+	decisionData := traceEventData(t, decisionEvents[0])
+	if decisionData["decision"] != "final_answer_without_commands" {
+		t.Fatalf("decision = %#v, want final_answer_without_commands", decisionData["decision"])
+	}
+}
+
 // TestRunTurnExecutesSafePlanAndStreamsSummary checks planning, execution, and final summarization.
 func TestRunTurnExecutesSafePlanAndStreamsSummary(t *testing.T) {
 	fake := newLoopLLMClient(t,
@@ -604,6 +712,56 @@ func TestRunTurnExecutesSafePlanAndStreamsSummary(t *testing.T) {
 	streams := fake.requestStreams()
 	if len(streams) != 2 || streams[0] || !streams[1] {
 		t.Fatalf("request streams = %#v, want []bool{false, true}", streams)
+	}
+}
+
+// TestRunTurnTraceRecordsSummaryPromptAndResponse checks final responses are traced.
+func TestRunTurnTraceRecordsSummaryPromptAndResponse(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{
+			content: `{"summary":"Print a marker.","commands":[{"command":"echo shellia-loop","purpose":"Print marker","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+		},
+		loopLLMResponse{content: "Printed shellia-loop.", stream: true},
+	)
+	cfg := loopTestConfig(fake.URL())
+	ctxInfo := loopTestContext(t)
+	logger := openLoopTrace(t)
+
+	captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.Trace = logger
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) ([]commandExecution, error) {
+			return []commandExecution{{
+				Command:  plans[0].Command,
+				Purpose:  plans[0].Purpose,
+				ExitCode: 0,
+				Stdout:   capturedStream{Text: "shellia-loop", TotalBytes: 12, KeptBytes: 12},
+			}}, nil
+		}
+		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "print marker")); err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	events := closeLoopTraceAndRead(t, logger)
+	var summaryPrompts int
+	var summaryResponses int
+	for _, event := range events {
+		if event["phase"] != "summary" {
+			continue
+		}
+		switch event["event"] {
+		case "llm_prompt":
+			summaryPrompts++
+		case "llm_response":
+			summaryResponses++
+			data := traceEventData(t, event)
+			if data["raw_response"] != "Printed shellia-loop." {
+				t.Fatalf("summary raw_response = %#v, want streamed answer", data["raw_response"])
+			}
+		}
+	}
+	if summaryPrompts != 1 || summaryResponses != 1 {
+		t.Fatalf("summary events = prompts %d responses %d, want 1 and 1", summaryPrompts, summaryResponses)
 	}
 }
 
@@ -835,6 +993,56 @@ func TestRunTurnUsesDiscoveryRepairForRecoverableEmptyPlan(t *testing.T) {
 	}
 	if !strings.Contains(output, "Found the shellia binary.") {
 		t.Fatalf("runTurn() output missing final summary: %q", output)
+	}
+}
+
+// TestRunTurnTraceRecordsDiscoveryRepair checks repair prompts are tagged separately.
+func TestRunTurnTraceRecordsDiscoveryRepair(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{
+			content: `{"summary":"Need the installed tool.","requires_input":true,"input_reason":"The install source is unknown.","commands":[]}`,
+		},
+		loopLLMResponse{
+			content: `{"summary":"Checking the local tool path.","commands":[{"command":"command -v shellia","purpose":"Find shellia binary","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+		},
+		loopLLMResponse{content: "Found the shellia binary.", stream: true},
+	)
+	cfg := loopTestConfig(fake.URL())
+	ctxInfo := loopTestContext(t)
+	logger := openLoopTrace(t)
+
+	captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.Trace = logger
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) ([]commandExecution, error) {
+			return []commandExecution{{
+				Command:  plans[0].Command,
+				Purpose:  plans[0].Purpose,
+				ExitCode: 0,
+				Stdout:   capturedStream{Text: "/usr/local/bin/shellia"},
+			}}, nil
+		}
+		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "update shellia")); err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	events := closeLoopTraceAndRead(t, logger)
+	var planningPrompt bool
+	var repairPrompt bool
+	var repairResponse bool
+	for _, event := range events {
+		if event["event"] == "llm_prompt" && event["phase"] == "planning" {
+			planningPrompt = true
+		}
+		if event["event"] == "llm_prompt" && event["phase"] == "discovery_repair" {
+			repairPrompt = true
+		}
+		if event["event"] == "llm_response" && event["phase"] == "discovery_repair" {
+			repairResponse = true
+		}
+	}
+	if !planningPrompt || !repairPrompt || !repairResponse {
+		t.Fatalf("trace phases planning=%t repair_prompt=%t repair_response=%t", planningPrompt, repairPrompt, repairResponse)
 	}
 }
 

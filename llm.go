@@ -391,7 +391,16 @@ func planningResponseFormat(cfg config) *responseFormat {
 
 // streamSummarizeExecutions streams a short final answer based on real command output.
 // Tokens are written to w as they arrive; the full string is returned for history.
-func streamSummarizeExecutions(ctx context.Context, client *http.Client, cfg config, instruction string, executions []commandExecution, w io.Writer) (string, error) {
+func streamSummarizeExecutions(
+	ctx context.Context,
+	client *http.Client,
+	cfg config,
+	instruction string,
+	executions []commandExecution,
+	w io.Writer,
+	trace *traceLogger,
+	turnID string,
+) (string, error) {
 	var transcript strings.Builder
 	for index, execution := range executions {
 		fmt.Fprintf(&transcript, "Step %d\n", index+1)
@@ -404,13 +413,7 @@ func streamSummarizeExecutions(ctx context.Context, client *http.Client, cfg con
 	reqCtx, cancel := context.WithTimeout(ctx, cfg.RequestTimeout)
 	defer cancel()
 
-	return doLLMStream(reqCtx, client, cfg, chatCompletionRequest{
-		Model:       cfg.Model,
-		Temperature: 0,
-		Messages: []chatMessage{
-			{
-				Role: "system",
-				Content: "You are the final response layer of a shell assistant. " +
+	systemPrompt := "You are the final response layer of a shell assistant. " +
 					"Write only a short final answer for the user based on the real command outputs. " +
 					"Do not mention JSON, plans, steps, risks, or confirmations. " +
 					"If the user asked a question, answer it directly. " +
@@ -421,14 +424,38 @@ func streamSummarizeExecutions(ctx context.Context, client *http.Client, cfg con
 					"Different commands answer different sub-questions: do not merge their answers incorrectly (e.g. 'not running' does not mean 'not installed'). " +
 					"Never claim an action was completed unless the executed commands clearly performed it or the output explicitly confirms it. " +
 					"If there are concrete results, include them. " +
-					"Keep it concise.",
+		"Keep it concise."
+	userPrompt := fmt.Sprintf("Original request:\n%s\n\nExecuted commands and outputs:\n%s", instruction, transcript.String())
+	trace.Record("llm_prompt", turnID, "summary", -1, map[string]any{
+		"model":         cfg.Model,
+		"system_prompt": systemPrompt,
+		"user_prompt":   userPrompt,
+	})
+
+	result, err := doLLMStream(reqCtx, client, cfg, chatCompletionRequest{
+		Model:       cfg.Model,
+		Temperature: 0,
+		Messages: []chatMessage{
+			{
+				Role:    "system",
+				Content: systemPrompt,
 			},
 			{
 				Role:    "user",
-				Content: fmt.Sprintf("Original request:\n%s\n\nExecuted commands and outputs:\n%s", instruction, transcript.String()),
+				Content: userPrompt,
 			},
 		},
 	}, w)
+	if err != nil {
+		trace.Record("llm_error", turnID, "summary", -1, map[string]any{
+			"error": err.Error(),
+		})
+		return result, err
+	}
+	trace.Record("llm_response", turnID, "summary", -1, map[string]any{
+		"raw_response": result,
+	})
+	return result, nil
 }
 
 // parseResponse validates the JSON response returned by the model.

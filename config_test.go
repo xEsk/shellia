@@ -21,6 +21,12 @@ func TestDefaultConfigShowsSystemOutput(t *testing.T) {
 	if defaultConfig().PlanningMaxRounds != defaultPlanningMaxRounds {
 		t.Fatalf("defaultConfig().PlanningMaxRounds = %d, want %d", defaultConfig().PlanningMaxRounds, defaultPlanningMaxRounds)
 	}
+	if defaultConfig().TraceEnabled {
+		t.Fatalf("defaultConfig().TraceEnabled = true, want false")
+	}
+	if defaultConfig().TraceDir != "" {
+		t.Fatalf("defaultConfig().TraceDir = %q, want empty", defaultConfig().TraceDir)
+	}
 }
 
 // TestDefaultConfigIncludesLocalContext checks context sharing defaults preserve current behaviour.
@@ -103,6 +109,24 @@ func TestApplyFileConfigCanSetPlanningMaxRounds(t *testing.T) {
 	}
 }
 
+// TestApplyFileConfigCanEnableTrace checks the trace config block.
+func TestApplyFileConfigCanEnableTrace(t *testing.T) {
+	cfg := defaultConfig()
+	fileCfg := fileConfig{}
+	fileCfg.Trace.Enabled = new(bool)
+	*fileCfg.Trace.Enabled = true
+	fileCfg.Trace.Dir = "/tmp/shellia-traces"
+
+	applyFileConfig(&cfg, fileCfg)
+
+	if !cfg.TraceEnabled {
+		t.Fatalf("TraceEnabled = false, want true")
+	}
+	if cfg.TraceDir != "/tmp/shellia-traces" {
+		t.Fatalf("TraceDir = %q, want /tmp/shellia-traces", cfg.TraceDir)
+	}
+}
+
 // TestApplyEnvConfigCanOverridePlanningMaxRounds checks one-shot planning cap overrides.
 func TestApplyEnvConfigCanOverridePlanningMaxRounds(t *testing.T) {
 	t.Setenv("SHELLIA_PLANNING_MAX_ROUNDS", "9")
@@ -176,6 +200,65 @@ func TestParseArgsEnablesRawPrompt(t *testing.T) {
 	}
 	if !cfg.RawPrompt {
 		t.Fatalf("RawPrompt = false, want true")
+	}
+}
+
+// TestParseArgsEnablesTrace checks the one-shot trace flag.
+func TestParseArgsEnablesTrace(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("SHELLIA_BASE_URL", "http://localhost:8080/v1")
+	t.Setenv("SHELLIA_MODEL", "test-model")
+
+	cfg, err := parseArgs([]string{"--trace", "run git status"})
+	if err != nil {
+		t.Fatalf("parseArgs() error = %v", err)
+	}
+	if !cfg.TraceEnabled {
+		t.Fatalf("TraceEnabled = false, want true")
+	}
+}
+
+// TestParseArgsCanDisableConfiguredTrace checks CLI flags override config defaults.
+func TestParseArgsCanDisableConfiguredTrace(t *testing.T) {
+	writeShelliaConfig(t, `
+[[models]]
+name = "local"
+base_url = "http://localhost:8080/v1"
+model = "local-model"
+
+[trace]
+enabled = true
+`)
+
+	cfg, err := parseArgs([]string{"--trace=false", "run git status"})
+	if err != nil {
+		t.Fatalf("parseArgs() error = %v", err)
+	}
+	if cfg.TraceEnabled {
+		t.Fatalf("TraceEnabled = true, want false")
+	}
+}
+
+// TestParseArgsTraceDirOverridesConfig checks the one-shot trace directory flag.
+func TestParseArgsTraceDirOverridesConfig(t *testing.T) {
+	writeShelliaConfig(t, `
+[[models]]
+name = "local"
+base_url = "http://localhost:8080/v1"
+model = "local-model"
+
+[trace]
+enabled = true
+dir = "/tmp/config-traces"
+`)
+
+	cfg, err := parseArgs([]string{"--trace-dir", "/tmp/flag-traces", "run git status"})
+	if err != nil {
+		t.Fatalf("parseArgs() error = %v", err)
+	}
+	if cfg.TraceDir != "/tmp/flag-traces" {
+		t.Fatalf("TraceDir = %q, want /tmp/flag-traces", cfg.TraceDir)
 	}
 }
 

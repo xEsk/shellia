@@ -362,3 +362,176 @@ func TestStaticFallbackAnswer(t *testing.T) {
 		})
 	}
 }
+
+// TestExecuteCommandsTraceRecordsCapturedOutput checks command output metadata is traceable.
+func TestExecuteCommandsTraceRecordsCapturedOutput(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.YesSafe = true
+	cfg.ShowCommandPopup = false
+	cfg.ShowSystemOutput = false
+	cfg.CaptureStdoutBytes = 3
+	cfg.CommandTimeout = 2 * time.Second
+	ctxInfo := loopTestContext(t)
+	logger := openLoopTrace(t)
+	turnID := logger.StartTurn(nil)
+
+	captureMainLoopIO(t, "", nil, func(deps runtimeDeps) {
+		deps.Trace = logger
+		plans := []commandPlan{{
+			Command:        "printf abcdef",
+			Purpose:        "Print marker",
+			Risk:           "safe",
+			Classification: classificationSafe,
+			LocalSafe:      true,
+		}}
+		executions, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans)
+		if err != nil {
+			t.Fatalf("executeCommands() error = %v", err)
+		}
+		if len(executions) != 1 {
+			t.Fatalf("executions = %d, want 1", len(executions))
+		}
+	})
+
+	events := closeLoopTraceAndRead(t, logger)
+	commandEnd := traceEventsByName(events, "command_end")
+	if len(commandEnd) != 1 {
+		t.Fatalf("command_end events = %d, want 1", len(commandEnd))
+	}
+	data := traceEventData(t, commandEnd[0])
+	execution, ok := data["execution"].(map[string]any)
+	if !ok {
+		t.Fatalf("execution = %#v, want object", data["execution"])
+	}
+	stdout, ok := execution["stdout"].(map[string]any)
+	if !ok {
+		t.Fatalf("stdout = %#v, want object", execution["stdout"])
+	}
+	if stdout["text"] != "abc" || stdout["truncated"] != true {
+		t.Fatalf("stdout trace = %#v, want truncated abc", stdout)
+	}
+	if stdout["kept_bytes"] != float64(3) || stdout["total_bytes"] != float64(6) {
+		t.Fatalf("stdout byte counts = %#v, want kept 3 total 6", stdout)
+	}
+}
+
+// TestExecuteCommandsTraceRecordsCommandErrors checks failed commands are diagnosable.
+func TestExecuteCommandsTraceRecordsCommandErrors(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.YesSafe = true
+	cfg.ShowCommandPopup = false
+	cfg.ShowSystemOutput = false
+	cfg.CommandTimeout = 2 * time.Second
+	ctxInfo := loopTestContext(t)
+	logger := openLoopTrace(t)
+	turnID := logger.StartTurn(nil)
+
+	captureMainLoopIO(t, "", nil, func(deps runtimeDeps) {
+		deps.Trace = logger
+		plans := []commandPlan{{
+			Command:        "exit 7",
+			Purpose:        "Fail with status",
+			Risk:           "safe",
+			Classification: classificationSafe,
+			LocalSafe:      true,
+		}}
+		_, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans)
+		if err == nil {
+			t.Fatalf("executeCommands() error = nil, want command failure")
+		}
+	})
+
+	events := closeLoopTraceAndRead(t, logger)
+	commandErrors := traceEventsByName(events, "command_error")
+	if len(commandErrors) != 1 {
+		t.Fatalf("command_error events = %d, want 1", len(commandErrors))
+	}
+	data := traceEventData(t, commandErrors[0])
+	if data["exit_code"] != float64(7) {
+		t.Fatalf("exit_code = %#v, want 7", data["exit_code"])
+	}
+	if data["command"] != "exit 7" {
+		t.Fatalf("command = %#v, want exit 7", data["command"])
+	}
+}
+
+// TestExecuteCommandsTraceRecordsEditedCommand checks edited commands are traceable.
+func TestExecuteCommandsTraceRecordsEditedCommand(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.YesSafe = false
+	cfg.ShowCommandPopup = false
+	cfg.ShowSystemOutput = false
+	cfg.CommandTimeout = 2 * time.Second
+	ctxInfo := loopTestContext(t)
+	logger := openLoopTrace(t)
+	turnID := logger.StartTurn(nil)
+
+	captureMainLoopIO(t, "e\nprintf edited\n", nil, func(deps runtimeDeps) {
+		deps.Trace = logger
+		plans := []commandPlan{{
+			Command:        "printf original",
+			Purpose:        "Print marker",
+			Risk:           "safe",
+			Classification: classificationSafe,
+			LocalSafe:      true,
+		}}
+		executions, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans)
+		if err != nil {
+			t.Fatalf("executeCommands() error = %v", err)
+		}
+		if len(executions) != 1 || executions[0].Command != "printf edited" {
+			t.Fatalf("executions = %#v, want edited command", executions)
+		}
+	})
+
+	events := closeLoopTraceAndRead(t, logger)
+	confirmations := traceEventsByName(events, "command_confirmation")
+	if len(confirmations) != 1 {
+		t.Fatalf("command_confirmation events = %d, want 1", len(confirmations))
+	}
+	confirmationData := traceEventData(t, confirmations[0])
+	if confirmationData["decision"] != "edit" {
+		t.Fatalf("decision = %#v, want edit", confirmationData["decision"])
+	}
+	if confirmationData["command"] != "printf original" || confirmationData["edited_command"] != "printf edited" {
+		t.Fatalf("confirmation data = %#v, want original and edited commands", confirmationData)
+	}
+
+	starts := traceEventsByName(events, "command_start")
+	if len(starts) != 1 {
+		t.Fatalf("command_start events = %d, want 1", len(starts))
+	}
+	startData := traceEventData(t, starts[0])
+	if startData["command"] != "printf edited" || startData["original_command"] != "printf original" {
+		t.Fatalf("command_start data = %#v, want effective and original commands", startData)
+	}
+}
+
+// TestExecuteManualCommandTraceRecordsCommand checks direct shell commands are traced.
+func TestExecuteManualCommandTraceRecordsCommand(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.ShowCommandPopup = false
+	cfg.ShowSystemOutput = false
+	cfg.CommandTimeout = 2 * time.Second
+	ctxInfo := loopTestContext(t)
+	logger := openLoopTrace(t)
+
+	captureMainLoopIO(t, "", nil, func(deps runtimeDeps) {
+		deps.Trace = logger
+		execution, err := executeManualCommand(t.Context(), deps, false, cfg, &ctxInfo, "printf manual", manualRenderInline)
+		if err != nil {
+			t.Fatalf("executeManualCommand() error = %v", err)
+		}
+		if execution.Stdout.Text != "manual" {
+			t.Fatalf("stdout = %q, want manual", execution.Stdout.Text)
+		}
+	})
+
+	events := closeLoopTraceAndRead(t, logger)
+	if len(traceEventsByName(events, "manual_command_start")) != 1 {
+		t.Fatalf("manual_command_start events = %d, want 1", len(traceEventsByName(events, "manual_command_start")))
+	}
+	if len(traceEventsByName(events, "manual_command_end")) != 1 {
+		t.Fatalf("manual_command_end events = %d, want 1", len(traceEventsByName(events, "manual_command_end")))
+	}
+}

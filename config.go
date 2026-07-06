@@ -89,6 +89,10 @@ type config struct {
 	IncludeCWD                bool
 	IncludeSessionMemory      bool
 	IncludeRecentObservations bool
+
+	// Trace options control persistent session diagnostics.
+	TraceEnabled bool
+	TraceDir     string
 }
 
 type modelConfig struct {
@@ -158,6 +162,12 @@ type fileConfig struct {
 		IncludeSessionMemory      *bool `toml:"include_session_memory"`
 		IncludeRecentObservations *bool `toml:"include_recent_observations"`
 	} `toml:"context"`
+
+	// [trace]
+	Trace struct {
+		Enabled *bool  `toml:"enabled"`
+		Dir     string `toml:"dir"`
+	} `toml:"trace"`
 }
 
 // defaultConfig returns the built-in baseline values for Shellia.
@@ -289,6 +299,12 @@ func applyFileConfig(cfg *config, fileCfg fileConfig) {
 	}
 	if fileCfg.Context.IncludeRecentObservations != nil {
 		cfg.IncludeRecentObservations = *fileCfg.Context.IncludeRecentObservations
+	}
+	if fileCfg.Trace.Enabled != nil {
+		cfg.TraceEnabled = *fileCfg.Trace.Enabled
+	}
+	if strings.TrimSpace(fileCfg.Trace.Dir) != "" {
+		cfg.TraceDir = strings.TrimSpace(fileCfg.Trace.Dir)
 	}
 }
 
@@ -614,6 +630,15 @@ include_shell = true
 include_cwd = true
 include_session_memory = true
 include_recent_observations = true
+
+[trace]
+# Write one JSONL diagnostic file per Shellia session with prompts, responses,
+# decisions, confirmations, commands and captured command outputs.
+enabled = false
+
+# Directory for session trace files. Empty uses $XDG_STATE_HOME/shellia/sessions
+# or ~/.local/state/shellia/sessions when XDG_STATE_HOME is unset.
+dir = ""
 `
 }
 
