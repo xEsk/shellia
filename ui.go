@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -763,6 +764,8 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout
 		return readFallbackPromptLine(reader)
 	}
 	defer term.Restore(fd, state) //nolint:errcheck // best-effort terminal restore before returning to normal input.
+	fmt.Fprint(stdout, "\x1b[?2004h")
+	defer fmt.Fprint(stdout, "\x1b[?2004l")
 
 	buffer := make([]rune, 0, 128)
 	cursor := 0
@@ -807,11 +810,11 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout
 			fmt.Fprint(stdout, "\r\n")
 			return "exit", nil
 		case 27:
-			exitPrompt, err := applyEscapeSequenceOrExit(stdin, fd, &buffer, &cursor, contentWidth, &affinity)
+			result, err := applyPromptEscapeInput(stdin, fd, &buffer, &cursor, contentWidth, &affinity)
 			if err != nil {
 				return "", fmt.Errorf("cannot apply prompt escape sequence: %w", err)
 			}
-			if exitPrompt {
+			if result.exit {
 				clearEditablePromptTo(stdout, renderState)
 				printSubmittedPromptTo(stdout, ui, prompt, buffer)
 				fmt.Fprint(stdout, "\r\n")
@@ -838,8 +841,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout
 				}
 				return "", fmt.Errorf("cannot decode prompt input: %w", err)
 			}
-			buffer = append(buffer[:cursor], append([]rune{r}, buffer[cursor:]...)...)
-			cursor++
+			insertPromptRunes(&buffer, &cursor, []rune{r})
 			affinity = cursorAffinityForward
 		}
 
@@ -1144,6 +1146,186 @@ func utf8SequenceLength(first byte) int {
 	}
 }
 
+// insertPromptRunes inserts text at the current prompt cursor and moves the
+// cursor to the end of the inserted text.
+func insertPromptRunes(buffer *[]rune, cursor *int, input []rune) {
+	if len(input) == 0 {
+		return
+	}
+	if *cursor < 0 {
+		*cursor = 0
+	}
+	if *cursor > len(*buffer) {
+		*cursor = len(*buffer)
+	}
+	*buffer = append((*buffer)[:*cursor], append(input, (*buffer)[*cursor:]...)...)
+	*cursor += len(input)
+}
+
+type promptEscapeResult struct {
+	exit bool
+}
+
+// applyPromptEscapeInput interprets Esc inside the main prompt editor.
+func applyPromptEscapeInput(reader io.Reader, fd int, buffer *[]rune, cursor *int, contentWidth int, affinity *cursorAffinity) (promptEscapeResult, error) {
+	ready, err := isInputReady(fd)
+	if err != nil {
+		return promptEscapeResult{}, fmt.Errorf("cannot inspect pending terminal input: %w", err)
+	}
+	if !ready {
+		return promptEscapeResult{exit: true}, nil
+	}
+	return applyPromptEscapeSequenceFrom(reader, buffer, cursor, contentWidth, affinity)
+}
+
+// applyPromptEscapeSequenceFrom handles the bytes following Esc in the main
+// prompt editor, including Alt+Enter and bracketed paste.
+func applyPromptEscapeSequenceFrom(reader io.Reader, buffer *[]rune, cursor *int, contentWidth int, affinity *cursorAffinity) (promptEscapeResult, error) {
+	next := []byte{0}
+	if _, err := reader.Read(next); err != nil {
+		return promptEscapeResult{}, fmt.Errorf("cannot read escape sequence byte: %w", err)
+	}
+
+	switch next[0] {
+	case '\r', '\n':
+		insertPromptRunes(buffer, cursor, []rune{'\n'})
+		if affinity != nil {
+			*affinity = cursorAffinityForward
+		}
+		return promptEscapeResult{}, nil
+	case '[':
+		return applyPromptCSISequenceFrom(reader, buffer, cursor, contentWidth, affinity)
+	default:
+		return promptEscapeResult{}, nil
+	}
+}
+
+func applyPromptCSISequenceFrom(reader io.Reader, buffer *[]rune, cursor *int, contentWidth int, affinity *cursorAffinity) (promptEscapeResult, error) {
+	command := []byte{0}
+	if _, err := reader.Read(command); err != nil {
+		return promptEscapeResult{}, fmt.Errorf("cannot read escape sequence command: %w", err)
+	}
+
+	switch command[0] {
+	case '2':
+		marker, err := readCSISequenceTail(reader)
+		if err != nil {
+			return promptEscapeResult{}, err
+		}
+		if marker == "200~" {
+			pasted, err := readBracketedPaste(reader)
+			if err != nil {
+				return promptEscapeResult{}, err
+			}
+			insertPromptRunes(buffer, cursor, pasted)
+			if affinity != nil {
+				*affinity = cursorAffinityForward
+			}
+		}
+	case '3':
+		tilde := []byte{0}
+		if _, err := reader.Read(tilde); err != nil {
+			return promptEscapeResult{}, fmt.Errorf("cannot read delete escape terminator: %w", err)
+		}
+		if tilde[0] == '~' && *cursor < len(*buffer) {
+			*buffer = append((*buffer)[:*cursor], (*buffer)[*cursor+1:]...)
+		}
+		if affinity != nil {
+			*affinity = cursorAffinityForward
+		}
+	default:
+		applyPromptSimpleCSICommand(command[0], buffer, cursor, contentWidth, affinity)
+	}
+
+	return promptEscapeResult{}, nil
+}
+
+func applyPromptSimpleCSICommand(command byte, buffer *[]rune, cursor *int, contentWidth int, affinity *cursorAffinity) {
+	switch command {
+	case 'A':
+		if contentWidth > 0 {
+			currentAffinity := cursorAffinityForward
+			if affinity != nil {
+				currentAffinity = *affinity
+			}
+			nextCursor, nextAffinity := moveCursorVertical(*buffer, *cursor, contentWidth, -1, currentAffinity)
+			*cursor = nextCursor
+			if affinity != nil {
+				*affinity = nextAffinity
+			}
+		}
+	case 'B':
+		if contentWidth > 0 {
+			currentAffinity := cursorAffinityForward
+			if affinity != nil {
+				currentAffinity = *affinity
+			}
+			nextCursor, nextAffinity := moveCursorVertical(*buffer, *cursor, contentWidth, +1, currentAffinity)
+			*cursor = nextCursor
+			if affinity != nil {
+				*affinity = nextAffinity
+			}
+		}
+	case 'C':
+		if *cursor < len(*buffer) {
+			*cursor = *cursor + 1
+		}
+		if affinity != nil {
+			*affinity = cursorAffinityForward
+		}
+	case 'D':
+		if *cursor > 0 {
+			*cursor = *cursor - 1
+		}
+		if affinity != nil {
+			*affinity = cursorAffinityForward
+		}
+	case 'H':
+		*cursor = 0
+		if affinity != nil {
+			*affinity = cursorAffinityForward
+		}
+	case 'F':
+		*cursor = len(*buffer)
+		if affinity != nil {
+			*affinity = cursorAffinityForward
+		}
+	}
+}
+
+func readCSISequenceTail(reader io.Reader) (string, error) {
+	var builder strings.Builder
+	builder.WriteByte('2')
+	buf := []byte{0}
+	for {
+		if _, err := reader.Read(buf); err != nil {
+			return "", fmt.Errorf("cannot read escape sequence marker: %w", err)
+		}
+		builder.WriteByte(buf[0])
+		if buf[0] == '~' {
+			return builder.String(), nil
+		}
+	}
+}
+
+// readBracketedPaste reads a terminal bracketed paste payload until its closing marker.
+func readBracketedPaste(reader io.Reader) ([]rune, error) {
+	terminator := []byte("\x1b[201~")
+	payload := make([]byte, 0, 128)
+	buf := []byte{0}
+
+	for {
+		if _, err := reader.Read(buf); err != nil {
+			return nil, fmt.Errorf("cannot read bracketed paste: %w", err)
+		}
+		payload = append(payload, buf[0])
+		if len(payload) >= len(terminator) && bytes.HasSuffix(payload, terminator) {
+			payload = payload[:len(payload)-len(terminator)]
+			return []rune(string(payload)), nil
+		}
+	}
+}
+
 // wrapPromptRunesWithOffsets splits the buffer using the available width and
 // also returns the starting offset of each line within the original buffer.
 // It keeps trailing spaces so rendering and the caret share the exact same visual model.
@@ -1158,12 +1340,39 @@ func wrapPromptRunesWithOffsets(buffer []rune, width int) ([]string, []int) {
 	lines := make([]string, 0, len(buffer)/width+1)
 	offsets := make([]int, 0, len(buffer)/width+1)
 	start := 0
-	for start < len(buffer) {
-		offsets = append(offsets, start)
-		remaining := len(buffer) - start
-		if remaining <= width {
-			lines = append(lines, string(buffer[start:]))
+	for start <= len(buffer) {
+		end := start
+		for end < len(buffer) && buffer[end] != '\n' {
+			end++
+		}
+
+		wrapPromptSegmentWithOffsets(buffer, start, end, width, &lines, &offsets)
+
+		if end == len(buffer) {
 			break
+		}
+		start = end + 1
+	}
+
+	if len(lines) == 0 {
+		return []string{""}, []int{0}
+	}
+	return lines, offsets
+}
+
+func wrapPromptSegmentWithOffsets(buffer []rune, start int, end int, width int, lines *[]string, offsets *[]int) {
+	if start == end {
+		*lines = append(*lines, "")
+		*offsets = append(*offsets, start)
+		return
+	}
+
+	for start < end {
+		*offsets = append(*offsets, start)
+		remaining := end - start
+		if remaining <= width {
+			*lines = append(*lines, string(buffer[start:end]))
+			return
 		}
 
 		lastSpace := -1
@@ -1178,14 +1387,9 @@ func wrapPromptRunesWithOffsets(buffer []rune, width int) ([]string, []int) {
 			chunkWidth = lastSpace + 1
 		}
 
-		lines = append(lines, string(buffer[start:start+chunkWidth]))
+		*lines = append(*lines, string(buffer[start:start+chunkWidth]))
 		start += chunkWidth
 	}
-
-	if len(lines) == 0 {
-		return []string{""}, []int{0}
-	}
-	return lines, offsets
 }
 
 // promptCursorPosition computes the caret row and column within the wrapped

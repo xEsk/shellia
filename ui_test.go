@@ -195,6 +195,64 @@ func TestReadFallbackPromptLineReturnsPartialLineOnEOF(t *testing.T) {
 	}
 }
 
+// TestApplyPromptEscapeSequenceInsertsAltEnterNewline checks Alt+Enter adds a
+// soft newline to the editable prompt instead of exiting or submitting.
+func TestApplyPromptEscapeSequenceInsertsAltEnterNewline(t *testing.T) {
+	buffer := []rune("firstsecond")
+	cursor := len([]rune("first"))
+	affinity := cursorAffinityForward
+
+	result, err := applyPromptEscapeSequenceFrom(strings.NewReader("\r"), &buffer, &cursor, 20, &affinity)
+	if err != nil {
+		t.Fatalf("applyPromptEscapeSequenceFrom() error = %v", err)
+	}
+	if result.exit {
+		t.Fatalf("applyPromptEscapeSequenceFrom() exit = true, want false")
+	}
+	if got, want := string(buffer), "first\nsecond"; got != want {
+		t.Fatalf("buffer = %q, want %q", got, want)
+	}
+	if cursor != len([]rune("first\n")) {
+		t.Fatalf("cursor = %d, want after inserted newline", cursor)
+	}
+}
+
+// TestReadBracketedPastePreservesMultilineText checks bracketed paste reads the
+// full paste payload, including internal newlines, before returning.
+func TestReadBracketedPastePreservesMultilineText(t *testing.T) {
+	got, err := readBracketedPaste(strings.NewReader("one\n two\nthree\x1b[201~"))
+	if err != nil {
+		t.Fatalf("readBracketedPaste() error = %v", err)
+	}
+	if want := []rune("one\n two\nthree"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("readBracketedPaste() = %#v, want %#v", got, want)
+	}
+}
+
+// TestApplyPromptEscapeSequenceInsertsBracketedPaste checks a multiline paste
+// is inserted into the prompt buffer without treating its newlines as submits.
+func TestApplyPromptEscapeSequenceInsertsBracketedPaste(t *testing.T) {
+	buffer := []rune("ask: ")
+	cursor := len(buffer)
+	affinity := cursorAffinityForward
+
+	result, err := applyPromptEscapeSequenceFrom(strings.NewReader("[200~one\n two\nthree\x1b[201~"), &buffer, &cursor, 20, &affinity)
+	if err != nil {
+		t.Fatalf("applyPromptEscapeSequenceFrom() error = %v", err)
+	}
+	if result.exit {
+		t.Fatalf("applyPromptEscapeSequenceFrom() exit = true, want false")
+	}
+
+	want := "ask: one\n two\nthree"
+	if got := string(buffer); got != want {
+		t.Fatalf("buffer = %q, want %q", got, want)
+	}
+	if submitted := strings.TrimSpace(string(buffer)); submitted != want {
+		t.Fatalf("submitted prompt = %q, want %q", submitted, want)
+	}
+}
+
 // TestParseConfirmationChoiceAcceptsSupportedAnswers checks the shared parser for all accepted inputs.
 func TestParseConfirmationChoiceAcceptsSupportedAnswers(t *testing.T) {
 	tests := []struct {
@@ -261,6 +319,27 @@ func TestEditablePromptLayoutUsesFullWrappedLayout(t *testing.T) {
 	promptWidth := visibleWidth(prompt)
 	if cursorCol != promptWidth+1 {
 		t.Fatalf("editablePromptLayout() cursorCol = %d, want %d", cursorCol, promptWidth+1)
+	}
+}
+
+// TestEditablePromptLayoutUsesExplicitNewlinesAsRows checks typed soft
+// newlines create real prompt rows even when no wrapping is needed.
+func TestEditablePromptLayoutUsesExplicitNewlinesAsRows(t *testing.T) {
+	prompt := "you > "
+	buffer := []rune("first\nsecond")
+
+	lines, cursorRow, cursorCol := editablePromptLayout(prompt, buffer, len(buffer), cursorAffinityForward, 40)
+
+	wantLines := []string{"first", "second"}
+	if !reflect.DeepEqual(lines, wantLines) {
+		t.Fatalf("editablePromptLayout() lines = %#v, want %#v", lines, wantLines)
+	}
+	if cursorRow != 1 {
+		t.Fatalf("editablePromptLayout() cursorRow = %d, want %d", cursorRow, 1)
+	}
+	wantCol := visibleWidth(prompt) + len([]rune("second"))
+	if cursorCol != wantCol {
+		t.Fatalf("editablePromptLayout() cursorCol = %d, want %d", cursorCol, wantCol)
 	}
 }
 
