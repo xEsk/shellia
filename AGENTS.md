@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Shellia is a small Go CLI kept mostly at the repository root. Core entry and flow live in `main.go`, runtime dependency wiring in `runtime.go`, command execution in `executor.go`, safety classification in `safety.go` plus `safety_rules.go`, model integration in `llm.go`, configuration in `config.go`, and terminal rendering in `ui.go` plus `ui_stepbox.go`. Session follow-up memory is handled in `session_memory.go`.
+Shellia is a small Go CLI structured like a standard application module. The binary entry point lives in `cmd/shellia/main.go`. Private application code lives under `internal/`: orchestration in `internal/app`, shared cross-domain types in `internal/core`, configuration in `internal/config`, command execution in `internal/executor`, safety classification in `internal/safety`, model integration in `internal/llm`, terminal rendering in `internal/ui`, session follow-up memory in `internal/session`, traces in `internal/trace`, and slash-command parsing in `internal/interactive`.
 
 Static website files for the public docs/release page live in `docs/` (`index.html`, `styles.css`, `script.js`). Release automation is defined in `.github/workflows/release.yml`.
 
@@ -10,11 +10,11 @@ IMPORTANT: When applicable, prefer using goland-index MCP tools for code navigat
 
 ## Build, Test, and Development Commands
 
-- `go build -o shellia .` builds the local CLI binary.
-- `go run .` starts Shellia in interactive mode.
-- `go run . "run git status"` runs a one-shot instruction locally.
+- `go build -o shellia ./cmd/shellia` builds the local CLI binary.
+- `go run ./cmd/shellia` starts Shellia in interactive mode.
+- `go run ./cmd/shellia "run git status"` runs a one-shot instruction locally.
 - `env GOCACHE=/tmp/go-build go test -count=1 ./...` runs the Go test suite in sandboxed environments. Add and run tests with every behavioral change.
-- `gofmt -w *.go` formats root Go files before opening a PR.
+- `gofmt -w ./cmd ./internal` formats Go source before opening a PR.
 
 If you change release behavior, also review `.goreleaser.yaml` and the GitHub workflow.
 

@@ -12,52 +12,56 @@ Shellia is a terminal-native AI shell agent CLI. It converts natural language in
 
 
 ```bash
-go build -o shellia .           # Build local binary
-go run .                        # Interactive mode
-go run . "run git status"       # One-shot mode
+go build -o shellia ./cmd/shellia           # Build local binary
+go run ./cmd/shellia                        # Interactive mode
+go run ./cmd/shellia "run git status"       # One-shot mode
 env GOCACHE=/tmp/go-build go test -count=1 ./...  # Run test suite in sandboxed environments
-gofmt -w *.go                   # Format before opening a PR
+gofmt -w ./cmd ./internal                   # Format before opening a PR
 ```
 
 Review `.goreleaser.yaml` and `.github/workflows/release.yml` if changing release behavior.
 
 ## Architecture
 
-All code is in the `main` package at the repo root. No subdirectories for Go source.
+The executable entry point is in `cmd/shellia`. Private implementation packages live in `internal/`, following the same `cmd` + `internal` style used by `mcp-ai-memory`.
 
 **Core execution flow:**
 
 ```
-main.go → parseArgs() → runInteractive() or one-shot
-              ↓
-          runTurn() [up to 4 rounds of planning]
-              ├── callLLM()           [llm.go]   — HTTP request, streaming, retry
-              ├── parseResponse()     [llm.go]   — JSON plan → commandPlan structs
-              ├── executeCommands()   [executor.go] — PTY, capture, confirmation
-              └── streamSummarize()   [llm.go]   — final answer stream
+cmd/shellia/main.go → app.Run() → parseArgs() → runInteractive() or one-shot
+                                      ↓
+                                  runTurn() [configurable planning rounds]
+                                      ├── llm        — HTTP request, streaming, retry, prompt parsing
+                                      ├── safety     — local risk classification
+                                      ├── executor   — PTY, capture, confirmation, cwd tracking
+                                      └── ui         — terminal rendering and final answer stream display
 ```
 
 **File responsibilities:**
 
 | File | Responsibility |
 |------|---------------|
-| `main.go` | Entry point, arg parsing, interactive session loop, turn orchestration |
-| `runtime.go` | Runtime dependency injection for core loops: stdio, HTTP client, command runners |
-| `llm.go` | OpenAI-compatible API calls, prompt building, response parsing, streaming |
-| `executor.go` | Command execution with PTY, bounded output capture, working directory tracking |
-| `safety.go` + `safety_rules.go` | Local risk classification (safe/risky/dangerous) before any LLM trust |
-| `config.go` | TOML config loading; precedence: defaults → `~/.config/shellia/config.toml` → env vars → CLI flags |
-| `session_memory.go` | Session state across turns (pending intent, created files, runtime hints, observations) |
-| `ui.go` + `ui_stepbox.go` | Terminal rendering, ANSI colors, step boxes, plan visualization |
-| `input_unix.go` | Unix polling to distinguish Esc keypress from escape sequences |
+| Path | Responsibility |
+|------|---------------|
+| `cmd/shellia/main.go` | Thin process entry point and build-time version injection |
+| `internal/app` | Arg parsing, interactive session loop, turn orchestration, runtime dependency injection |
+| `internal/core` | Shared types crossing package boundaries |
+| `internal/config` | TOML config loading; precedence: defaults → `~/.config/shellia/config.toml` → env vars → CLI flags |
+| `internal/llm` | OpenAI-compatible API calls, prompt building, response parsing, streaming |
+| `internal/executor` | Command execution with PTY, bounded output capture, working directory tracking |
+| `internal/safety` | Local risk classification (safe/risky/dangerous) before any LLM trust |
+| `internal/session` | Session state across turns (pending intent, created files, runtime hints, observations) |
+| `internal/ui` | Terminal rendering, ANSI colors, step boxes, plan visualization, prompt editor |
+| `internal/trace` | JSONL diagnostic trace lifecycle and event payloads |
+| `internal/interactive` | Slash-command parsing and completion |
 
 **Key types:**
 
-- `config` — merged configuration from all sources
-- `runtimeDeps` — injectable process dependencies for core loop tests and orchestration
-- `commandPlan` — LLM-generated plan for a single command (command, purpose, risk, interactive flag)
-- `commandExecution` — post-execution result including captured stdout/stderr and exit code
-- `sessionState` — rolling per-session memory for follow-up turns
+- `config.Config` — merged configuration from all sources
+- `app.runtimeDeps` — injectable process dependencies for core loop tests and orchestration
+- `core.CommandPlan` — LLM-generated plan for a single command (command, purpose, risk, interactive flag)
+- `core.CommandExecution` — post-execution result including captured stdout/stderr and exit code
+- `core.SessionState` — rolling per-session memory for follow-up turns
 
 **Runtime dependencies and tests:**
 

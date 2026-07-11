@@ -1,0 +1,107 @@
+version: "2"
+
+run:
+  concurrency: 4
+  timeout: 5m
+  tests: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 50
+
+linters:
+  enable:
+    # correctness
+    - govet
+    - staticcheck
+    - ineffassign
+    - errorlint
+    - nilerr
+    - forcetypeassert
+    - copyloopvar
+    - durationcheck
+
+    # security and resources
+    - bidichk
+    - bodyclose
+    - noctx
+    - containedctx
+    - fatcontext
+
+    # style with low noise for this CLI
+    - revive
+    - misspell
+    - dupword
+    - predeclared
+    - errname
+    - asciicheck
+    - whitespace
+
+    # tests and lint hygiene
+    - thelper
+    - usetesting
+    - nolintlint
+
+    # modernization
+    - intrange
+    - usestdlibvars
+
+  disable:
+    # Phase-two linters. They currently surface useful but noisy legacy cleanup.
+    - errcheck
+    - gosec
+    - modernize
+    - unused
+
+    - lll
+    - paralleltest
+    - funlen
+    - dupl
+    - gocyclo
+    - nestif
+    - goconst
+    - wsl_v5
+    - godot
+    - perfsprint
+    - unconvert
+    - wrapcheck
+    - err113
+    - mnd
+    - depguard
+    - goheader
+    - importas
+    - varnamelen
+    - exhaustruct
+    - gochecknoglobals
+    - gochecknoinits
+    - unparam
+    - testpackage
+    - exhaustive
+
+  exclusions:
+    generated: lax
+    paths:
+      - vendor$
+      - docs$
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    revive:
+      severity: warning
+      rules:
+        - name: exported
+          disabled: true
+
+formatters:
+  enable:
+    - gofmt
+    - gofumpt
+
+  exclusions:
+    generated: lax
+    paths:
+      - vendor$

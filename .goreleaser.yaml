@@ -8,7 +8,7 @@ before:
 
 builds:
   - id: shellia
-    main: .
+    main: ./cmd/shellia
     binary: shellia
     ldflags:
       - -s -w

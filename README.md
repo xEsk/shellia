@@ -109,7 +109,7 @@ mv shellia /usr/local/bin/
 ### Build from source
 
 ```bash
-go build -o shellia .
+go build -o shellia ./cmd/shellia
 ```
 
 Then run it:
