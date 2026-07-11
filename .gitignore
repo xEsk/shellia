@@ -3,3 +3,5 @@ shellia
 .gocache
 dist/
 .idea
+docs/old
+docs/superpowers
