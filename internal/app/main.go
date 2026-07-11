@@ -958,6 +958,10 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 	w := newResultWriter(ui, deps.Stdout)
 	answer, streamErr := streamSummarizeExecutions(ctx, deps.HTTPClient, cfg, instruction, allExecutions, w, deps.Trace, turnID)
 	w.StopThinking()
+	if ctx.Err() != nil {
+		closeResultPanelTo(deps.Stdout, ui)
+		return turnResult{}, ctx.Err()
+	}
 	if streamErr != nil || strings.TrimSpace(answer) == "" {
 		answer = staticFallbackAnswer(lastSummary, allExecutions)
 		// Only print the fallback if streaming never wrote a single byte to the terminal.

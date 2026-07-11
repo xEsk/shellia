@@ -17,9 +17,10 @@ import (
 )
 
 type loopLLMResponse struct {
-	content string
-	stream  bool
-	raw     bool
+	content           string
+	stream            bool
+	raw               bool
+	cancellationStart chan struct{}
 }
 
 type loopLLMRequest struct {
@@ -91,6 +92,11 @@ func (fake *loopLLMClient) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 
 	response := fake.responses[index]
+	if response.cancellationStart != nil {
+		close(response.cancellationStart)
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	}
 	if response.stream {
 		if response.raw {
 			return loopHTTPResponse(r, http.StatusOK, response.content, map[string]string{"Content-Type": "text/event-stream"}), nil
@@ -824,6 +830,72 @@ func TestRunTurnExecutesSafePlanAndStreamsSummary(t *testing.T) {
 	streams := fake.requestStreams()
 	if len(streams) != 2 || streams[0] || !streams[1] {
 		t.Fatalf("request streams = %#v, want []bool{false, true}", streams)
+	}
+}
+
+// TestRunTurnPropagatesParentCancellationDuringSummary checks Ctrl+C is not
+// converted into a successful fallback response after commands have run.
+func TestRunTurnPropagatesParentCancellationDuringSummary(t *testing.T) {
+	summaryStarted := make(chan struct{})
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{
+			content: `{"summary":"Print a marker.","commands":[{"command":"echo shellia-loop","purpose":"Print marker","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+		},
+		loopLLMResponse{cancellationStart: summaryStarted},
+	)
+	cfg := loopTestConfig(fake.URL())
+	ctxInfo := loopTestContext(t)
+	ctx, cancel := context.WithCancel(t.Context())
+
+	done := make(chan error, 1)
+	go func() {
+		var runErr error
+		captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
+			_, runErr = runTurn(ctx, deps, false, loopTurnRequest(cfg, &ctxInfo, "print marker"))
+		})
+		done <- runErr
+	}()
+
+	select {
+	case <-summaryStarted:
+		cancel()
+	case <-time.After(2 * time.Second):
+		t.Fatal("summary request did not start")
+	}
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("runTurn() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runTurn() did not return after cancellation")
+	}
+}
+
+// TestRunTurnKeepsFallbackForRecoverableSummaryErrors checks provider failures
+// still produce a result from the completed command execution.
+func TestRunTurnKeepsFallbackForRecoverableSummaryErrors(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{
+			content: `{"summary":"Print a marker.","commands":[{"command":"echo shellia-loop","purpose":"Print marker","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+		},
+		loopLLMResponse{content: "data: {bad json}\n\n", stream: true, raw: true},
+	)
+	cfg := loopTestConfig(fake.URL())
+	ctxInfo := loopTestContext(t)
+
+	var result turnResult
+	captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		var err error
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "print marker"))
+		if err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	if result.Result != "shellia-loop" {
+		t.Fatalf("runTurn() Result = %q, want fallback answer", result.Result)
 	}
 }
 
