@@ -3,6 +3,7 @@ package ui
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -303,7 +304,10 @@ func promptPlanExecution(target io.Writer, ui bool, stdin *os.File) (bool, error
 	defer box.Close()
 
 	key, ok, err := readSingleConfirmationKey(stdin)
-	if err == nil && ok {
+	if err != nil {
+		return false, err
+	}
+	if ok {
 		if choice, found := parseConfirmationChoice(string(key)); found {
 			run := choice == confirmationDefaultYes
 			logPlanExecutionChoice(box, run)
@@ -359,7 +363,10 @@ func promptPlanningLimitContinuation(target io.Writer, ui bool, stdin *os.File, 
 	defer box.Close()
 
 	key, ok, err := readSingleConfirmationKey(stdin)
-	if err == nil && ok {
+	if err != nil {
+		return false, err
+	}
+	if ok {
 		if choice, found := parseConfirmationChoice(string(key)); found {
 			run := choice == confirmationDefaultYes
 			logPlanningLimitChoice(box, limit, run)
@@ -951,7 +958,10 @@ func promptConfirmation(box *stepBox, reader *bufio.Reader, stdin *os.File, prom
 	renderConfirmationPrompt(box, prompt, defaultChoice)
 
 	key, ok, err := readSingleConfirmationKey(stdin)
-	if err == nil && ok {
+	if err != nil {
+		return confirmDecisionCancel, "", err
+	}
+	if ok {
 		for {
 			if isConfirmationEnterKey(key) && defaultChoice != confirmationDefaultNone {
 				return applyConfirmationChoice(box, reader, stdin, prompt, initialCommand, defaultChoice, defaultChoice)
@@ -1092,8 +1102,19 @@ func readSingleConfirmationKey(stdin *os.File) (byte, bool, error) {
 	if err != nil {
 		return 0, false, fmt.Errorf("cannot read confirmation key: %w", err)
 	}
+	if err := rawTurnPromptCancellation(buffer[0]); err != nil {
+		return 0, false, err
+	}
 
 	return buffer[0], true, nil
+}
+
+// rawTurnPromptCancellation maps raw Ctrl+C input to turn cancellation.
+func rawTurnPromptCancellation(key byte) error {
+	if key == 3 {
+		return context.Canceled
+	}
+	return nil
 }
 
 var errDiscardRune = errors.New("discard rune")

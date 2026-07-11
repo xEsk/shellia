@@ -100,8 +100,12 @@ func runApp(parentCtx context.Context, args []string, deps runtimeDeps) int {
 		return 0
 	}
 
-	// appCtx is cancelled on the first Ctrl+C, aborting any in-flight LLM request.
-	appCtx, stop := signal.NotifyContext(parentCtx, os.Interrupt)
+	appCtx := parentCtx
+	stop := func() {}
+	if !cfg.Interactive {
+		// One-shot runs exit when Ctrl+C cancels the application context.
+		appCtx, stop = signal.NotifyContext(parentCtx, os.Interrupt)
+	}
 	defer stop()
 
 	ctxInfo, err := getContext(appCtx, cfg)

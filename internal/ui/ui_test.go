@@ -3,12 +3,24 @@ package ui
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+// TestRawTurnPromptCtrlCCancels checks raw Ctrl+C is propagated as cancellation
+// by prompts that are part of an active turn.
+func TestRawTurnPromptCtrlCCancels(t *testing.T) {
+	if err := rawTurnPromptCancellation(3); !errors.Is(err, context.Canceled) {
+		t.Fatalf("rawTurnPromptCancellation(Ctrl+C) error = %v, want context.Canceled", err)
+	}
+	if err := rawTurnPromptCancellation('y'); err != nil {
+		t.Fatalf("rawTurnPromptCancellation(y) error = %v, want nil", err)
+	}
+}
 
 // TestShelliaVersionBadgeUsesConfiguredVersion checks that the UI shows the configured version.
 func TestShelliaVersionBadgeUsesConfiguredVersion(t *testing.T) {

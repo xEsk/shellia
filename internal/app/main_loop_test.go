@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -37,8 +38,21 @@ type errorBodyTransport struct{}
 
 type contextErrorTransport struct{}
 
+type blockingContextTransport struct {
+	started chan struct{}
+	once    sync.Once
+}
+
 type errorReadCloser struct {
 	err error
+}
+
+func (transport *blockingContextTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	transport.once.Do(func() {
+		close(transport.started)
+	})
+	<-request.Context().Done()
+	return nil, request.Context().Err()
 }
 
 // newLoopLLMClient builds an OpenAI-compatible fake transport for main loop tests.
@@ -355,6 +369,103 @@ func TestRunAppTraceWritesSingleSessionFile(t *testing.T) {
 	}
 	if len(traceEventsByName(events, "turn_start")) != 1 || len(traceEventsByName(events, "turn_end")) != 1 {
 		t.Fatalf("turn events start=%d end=%d, want 1 and 1", len(traceEventsByName(events, "turn_start")), len(traceEventsByName(events, "turn_end")))
+	}
+}
+
+// TestInteractiveSIGINTCancelsTurnWithoutClosingSession checks an interrupt during
+// a turn returns to the main prompt instead of cancelling the interactive session.
+func TestInteractiveSIGINTCancelsTurnWithoutClosingSession(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	stdin, stdinWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe(stdin) error = %v", err)
+	}
+	t.Cleanup(func() {
+		stdin.Close()       //nolint:errcheck // best-effort cleanup of test pipes.
+		stdinWriter.Close() //nolint:errcheck // best-effort cleanup of test pipes.
+	})
+
+	stdout, err := os.CreateTemp(t.TempDir(), "stdout")
+	if err != nil {
+		t.Fatalf("CreateTemp(stdout) error = %v", err)
+	}
+	t.Cleanup(func() {
+		stdout.Close() //nolint:errcheck // best-effort cleanup of the temporary output.
+	})
+
+	transport := &blockingContextTransport{started: make(chan struct{})}
+	deps := defaultRuntimeDeps()
+	deps.Stdin = stdin
+	deps.Stdout = stdout
+	deps.Stderr = stdout
+	deps.HTTPClient = &http.Client{Transport: transport}
+
+	interrupts := make(chan os.Signal, 1)
+	signal.Notify(interrupts, os.Interrupt)
+	t.Cleanup(func() {
+		signal.Stop(interrupts)
+	})
+
+	done := make(chan int, 1)
+	go func() {
+		done <- runApp(context.Background(), []string{
+			"--interactive",
+			"--base-url", "http://localhost:8080/v1",
+			"--model", "test-model",
+		}, deps)
+	}()
+
+	if _, err := io.WriteString(stdinWriter, "answer something\n"); err != nil {
+		t.Fatalf("WriteString(prompt) error = %v", err)
+	}
+
+	select {
+	case <-transport.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("LLM request did not start")
+	}
+
+	process, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		t.Fatalf("FindProcess() error = %v", err)
+	}
+	if err := process.Signal(os.Interrupt); err != nil {
+		t.Fatalf("Signal(os.Interrupt) error = %v", err)
+	}
+
+	select {
+	case <-interrupts:
+	case <-time.After(2 * time.Second):
+		t.Fatal("test guard did not observe os.Interrupt")
+	}
+
+	if _, err := io.WriteString(stdinWriter, "/exit\n"); err != nil {
+		t.Fatalf("WriteString(/exit) error = %v", err)
+	}
+
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("runApp() code = %d, want 0", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("interactive session did not exit after /exit")
+	}
+
+	if _, err := stdout.Seek(0, io.SeekStart); err != nil {
+		t.Fatalf("Seek(stdout) error = %v", err)
+	}
+	output, err := io.ReadAll(stdout)
+	if err != nil {
+		t.Fatalf("ReadAll(stdout) error = %v", err)
+	}
+	if !strings.Contains(string(output), "Request cancelled.") {
+		t.Fatalf("output missing turn cancellation: %q", output)
+	}
+	if !strings.Contains(string(output), "Session closed.") {
+		t.Fatalf("output missing session close after /exit: %q", output)
 	}
 }
 

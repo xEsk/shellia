@@ -150,14 +150,15 @@ func (box *stepBox) EditCommand(reader *bufio.Reader, stdin *os.File, initial st
 			fmt.Fprint(box.target, "\r\n")
 			return "", fmt.Errorf("cannot read command editor input: %w", err)
 		}
+		if err := rawTurnPromptCancellation(single[0]); err != nil {
+			fmt.Fprint(box.target, "\r\n")
+			return "", err
+		}
 
 		switch single[0] {
 		case '\r', '\n':
 			fmt.Fprint(box.target, "\r\n")
 			return strings.TrimSpace(string(buffer)), nil
-		case 3:
-			fmt.Fprint(box.target, "\r\n")
-			return "", nil
 		case 27:
 			if err := applyEscapeSequenceFrom(stdin, &buffer, &cursor, 0, nil); err != nil {
 				fmt.Fprint(box.target, "\r\n")
