@@ -1230,6 +1230,61 @@ func TestRunTurnTraceRecordsDiscoveryRepair(t *testing.T) {
 	}
 }
 
+// TestRunTurnUsesBoundedExplicitGitObservation checks repository state reaches
+// the model only through the normal command observation path.
+func TestRunTurnUsesBoundedExplicitGitObservation(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{
+			content: `{"summary":"Inspect current repository state.","requires_observation":true,"commands":[{"command":"git status --short","purpose":"Inspect Git status","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+		},
+		loopLLMResponse{
+			content: `{"summary":"Repository state inspected.","commands":[]}`,
+		},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	cfg.ObservationOutputChars = 12
+	ctxInfo := loopTestContext(t)
+
+	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) ([]commandExecution, error) {
+			return []commandExecution{{
+				Command:  plans[0].Command,
+				Purpose:  plans[0].Purpose,
+				ExitCode: 0,
+				Stdout: capturedStream{
+					Text:       " M first.go\n?? second.go",
+					TotalBytes: 500,
+					KeptBytes:  20,
+					Truncated:  true,
+				},
+			}}, nil
+		}
+
+		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "show me the Git status")); err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	bodies := fake.requestBodies()
+	if len(bodies) != 2 {
+		t.Fatalf("request bodies = %d, want initial and observation rounds", len(bodies))
+	}
+	for index, body := range bodies {
+		for _, ambient := range []string{"git.is_repo", "git.branch", "git.status_short"} {
+			if strings.Contains(body, ambient) {
+				t.Fatalf("request %d contains ambient Git field %q: %q", index+1, ambient, body)
+			}
+		}
+	}
+	if !strings.Contains(bodies[1], "git status --short") || !strings.Contains(bodies[1], "stdout truncated locally: kept 20 of 500 bytes") {
+		t.Fatalf("observation request does not contain bounded explicit Git output: %q", bodies[1])
+	}
+	if strings.Contains(bodies[1], "?? second.go") {
+		t.Fatalf("observation request contains output beyond the prompt budget: %q", bodies[1])
+	}
+}
+
 // TestRunTurnCanContinueAfterPlanningRoundLimit checks users can approve extra planning rounds.
 func TestRunTurnCanContinueAfterPlanningRoundLimit(t *testing.T) {
 	fake := newLoopLLMClient(t,

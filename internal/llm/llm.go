@@ -804,7 +804,7 @@ func buildUserPromptRules() []string {
 
 // buildPromptContextBlock renders the local context fields enabled in config.
 func buildPromptContextBlock(cfg config, ctxInfo contextInfo) string {
-	lines := make([]string, 0, 7)
+	lines := make([]string, 0, 4)
 	if cfg.IncludeCWD {
 		lines = append(lines, "- cwd: "+ctxInfo.CWD)
 	}
@@ -816,17 +816,6 @@ func buildPromptContextBlock(cfg config, ctxInfo contextInfo) string {
 	}
 	if cfg.IncludeShell {
 		lines = append(lines, "- shell: "+ctxInfo.Shell)
-	}
-	if cfg.IncludeGit {
-		gitStatus := ctxInfo.Git.StatusShort
-		if strings.TrimSpace(gitStatus) == "" {
-			gitStatus = "(clean or empty)"
-		}
-		lines = append(lines,
-			fmt.Sprintf("- git.is_repo: %t", ctxInfo.Git.IsRepo),
-			"- git.branch: "+ctxInfo.Git.Branch,
-			"- git.status_short:\n"+gitStatus,
-		)
 	}
 	if len(lines) == 0 {
 		return "(not shared by configuration)"

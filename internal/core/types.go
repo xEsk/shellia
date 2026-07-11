@@ -20,18 +20,10 @@ const (
 
 // ContextInfo contains local context sent to the model and shown in the UI.
 type ContextInfo struct {
-	CWD   string     `json:"cwd"`
-	User  string     `json:"user"`
-	OS    string     `json:"os"`
-	Shell string     `json:"shell"`
-	Git   GitContext `json:"git"`
-}
-
-// GitContext contains the Git state for the current working directory.
-type GitContext struct {
-	IsRepo      bool   `json:"is_repo"`
-	Branch      string `json:"branch"`
-	StatusShort string `json:"status_short"`
+	CWD   string `json:"cwd"`
+	User  string `json:"user"`
+	OS    string `json:"os"`
+	Shell string `json:"shell"`
 }
 
 // HistoryEntry stores a compact prior turn for prompt context.

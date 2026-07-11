@@ -11,7 +11,6 @@ import (
 type (
 	config           = configpkg.Config
 	contextInfo      = core.ContextInfo
-	gitContext       = core.GitContext
 	commandPlan      = core.CommandPlan
 	commandExecution = core.CommandExecution
 	capturedStream   = core.CapturedStream

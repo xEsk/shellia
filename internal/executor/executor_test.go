@@ -327,17 +327,12 @@ func TestApplySessionStateUpdatesCWDOnSuccessfulCD(t *testing.T) {
 	nextDir := filepath.Join(currentCWD, "docs")
 	ctxInfo := &contextInfo{
 		CWD: currentCWD,
-		Git: gitContext{IsRepo: true, Branch: "main"},
 	}
-	cfg := config{IncludeGit: false}
 
-	applySessionState(context.Background(), ctxInfo, cfg, "cd docs", 0)
+	applySessionState(ctxInfo, "cd docs", 0)
 
 	if ctxInfo.CWD != nextDir {
 		t.Fatalf("ctxInfo.CWD = %q, want %q", ctxInfo.CWD, nextDir)
-	}
-	if ctxInfo.Git != (gitContext{}) {
-		t.Fatalf("ctxInfo.Git = %#v, want cleared git context", ctxInfo.Git)
 	}
 }
 
@@ -346,7 +341,7 @@ func TestApplySessionStateIgnoresFailedCommand(t *testing.T) {
 	ctxInfo := &contextInfo{CWD: t.TempDir()}
 	before := *ctxInfo
 
-	applySessionState(context.Background(), ctxInfo, config{}, "cd docs", 1)
+	applySessionState(ctxInfo, "cd docs", 1)
 
 	if *ctxInfo != before {
 		t.Fatalf("ctxInfo = %#v, want unchanged %#v", *ctxInfo, before)

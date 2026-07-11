@@ -417,49 +417,15 @@ func TestBuildUserPromptAlwaysAddsJSONGuidance(t *testing.T) {
 	}
 }
 
-// TestBuildUserPromptIncludesGitContextByDefault checks Git context remains enabled by default.
-func TestBuildUserPromptIncludesGitContextByDefault(t *testing.T) {
+// TestBuildUserPromptOmitsImplicitGitContext checks repository state is only
+// shared after an explicit command observation.
+func TestBuildUserPromptOmitsImplicitGitContext(t *testing.T) {
 	cfg := defaultConfig()
 	ctxInfo := contextInfo{
 		CWD:   "/tmp/project",
 		User:  "xesc",
 		OS:    "darwin/arm64",
 		Shell: "/bin/zsh",
-		Git: gitContext{
-			IsRepo:      true,
-			Branch:      "main",
-			StatusShort: " M llm.go",
-		},
-	}
-
-	prompt := buildUserPrompt(PromptRequest{
-		Config:              cfg,
-		ContextInfo:         ctxInfo,
-		Instruction:         "check status",
-		ResolvedInstruction: "check status",
-	})
-
-	for _, snippet := range []string{"- git.is_repo: true", "- git.branch: main", "- git.status_short:\n M llm.go"} {
-		if !strings.Contains(prompt, snippet) {
-			t.Fatalf("buildUserPrompt() missing %q in %q", snippet, prompt)
-		}
-	}
-}
-
-// TestBuildUserPromptOmitsGitContextWhenDisabled checks Git fields are not exposed when disabled.
-func TestBuildUserPromptOmitsGitContextWhenDisabled(t *testing.T) {
-	cfg := defaultConfig()
-	cfg.IncludeGit = false
-	ctxInfo := contextInfo{
-		CWD:   "/tmp/project",
-		User:  "xesc",
-		OS:    "darwin/arm64",
-		Shell: "/bin/zsh",
-		Git: gitContext{
-			IsRepo:      true,
-			Branch:      "main",
-			StatusShort: " M llm.go",
-		},
 	}
 
 	prompt := buildUserPrompt(PromptRequest{
@@ -471,7 +437,7 @@ func TestBuildUserPromptOmitsGitContextWhenDisabled(t *testing.T) {
 
 	for _, snippet := range []string{"git.is_repo", "git.branch", "git.status_short"} {
 		if strings.Contains(prompt, snippet) {
-			t.Fatalf("buildUserPrompt() includes disabled Git field %q in %q", snippet, prompt)
+			t.Fatalf("buildUserPrompt() includes implicit Git context %q in %q", snippet, prompt)
 		}
 	}
 }
@@ -639,11 +605,6 @@ func TestBuildDiscoveryRepairPromptIncludesContext(t *testing.T) {
 		User:  "xesc",
 		OS:    "darwin/arm64",
 		Shell: "/bin/zsh",
-		Git: gitContext{
-			IsRepo:      true,
-			Branch:      "main",
-			StatusShort: " M ui.go",
-		},
 	}
 	history := []historyEntry{
 		{Instruction: "check brew", Result: "brew is installed"},

@@ -11,7 +11,6 @@ import (
 type (
 	config             = configpkg.Config
 	contextInfo        = core.ContextInfo
-	gitContext         = core.GitContext
 	historyEntry       = core.HistoryEntry
 	observationMemory  = core.ObservationMemory
 	sessionState       = core.SessionState

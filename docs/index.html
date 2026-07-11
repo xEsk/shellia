@@ -860,7 +860,7 @@ p{margin:0}
         <div class="trust-item"><b>Open source</b><span>MPL-2.0 project you can inspect.</span></div>
         <div class="trust-item"><b>Local safety</b><span>Commands are classified on your machine.</span></div>
         <div class="trust-item"><b>No telemetry</b><span>Only your configured LLM endpoint is called.</span></div>
-        <div class="trust-item"><b>Real shell</b><span>Works with your cwd, git state, and session.</span></div>
+        <div class="trust-item"><b>Real shell</b><span>Works with your cwd, bounded observations, and session.</span></div>
       </div>
     </div>
     <div class="hero-term">
@@ -885,7 +885,7 @@ p{margin:0}
 
 <!-- ════════ animated separator 1 ════════ -->
 <div class="wrap"><div class="sep" data-sep data-prompt="› reading context"
-  data-sequence="cwd: ~/projects/api · zsh · git main · staged: 3 · session memory: empty"
+  data-sequence="cwd: ~/projects/api · zsh · observations: bounded · session memory: empty"
   data-ms="14ms"></div></div>
 
 <!-- ════════ pillars ════════ -->
@@ -895,7 +895,7 @@ p{margin:0}
     <div class="pillar">
       <div class="pillar-tag">reads context</div>
       <h3>Your shell, not its imagination</h3>
-      <p>Working directory, shell engine, git state, recent commands, short-term session memory. The model sees what you actually have.</p>
+      <p>Working directory, shell engine, bounded command observations, short-term session memory. Repository state is inspected only when the task needs it.</p>
     </div>
     <div class="pillar">
       <div class="pillar-tag">plans first</div>
@@ -970,7 +970,7 @@ p{margin:0}
       <p>Prefix any line with <code>!</code> and Shellia runs it verbatim — no model call, no plan. Structured output and session state still apply, so the next prompt-mode question knows what just happened.</p>
       <ul class="pane-list">
         <li><b>Two engines</b><span><code>command_mode = "plain"</code> for structured output, <code>"interactive"</code> for a real TTY pass-through.</span></li>
-        <li><b>State preserved</b><span>cwd survives, git context refreshes, captured output feeds future plans.</span></li>
+        <li><b>State preserved</b><span>cwd survives and bounded captured output feeds future plans.</span></li>
         <li><b>Zero friction</b><span>No "you" prefix, no plan, no confirmation. It's a shell.</span></li>
       </ul>
     </div>
@@ -1002,7 +1002,7 @@ p{margin:0}
       <ul class="pane-list">
         <li><b>Real terminal</b><span>Interactive engine by default — <code>vim</code>, <code>htop</code>, <code>psql</code> all work.</span></li>
         <li><b>Returns context</b><span>Switch back to AI and ask "what did I just break" — it has the receipts.</span></li>
-        <li><b>One session</b><span>cwd, env, git, captured output: shared across all three modes.</span></li>
+        <li><b>One session</b><span>cwd, session memory, and captured output are shared across all three modes.</span></li>
       </ul>
     </div>
     <div class="modes-demo">
@@ -1046,7 +1046,7 @@ p{margin:0}
     <div class="how-step" data-reveal>
       <span class="how-num">01 / read</span>
       <h3>Local context</h3>
-      <p>Shellia detects cwd, current user, OS, shell engine, and git repo state. Plus a small in-process memory of what just happened.</p>
+      <p>Shellia detects cwd, current user, OS, and shell engine, plus a small in-process memory of what just happened. Repository facts are inspected through explicit commands when needed.</p>
     </div>
     <div class="how-step" data-reveal>
       <span class="how-num">02 / plan</span>

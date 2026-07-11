@@ -23,7 +23,6 @@ type (
 
 	truncationStrategy     = core.TruncationStrategy
 	contextInfo            = core.ContextInfo
-	gitContext             = core.GitContext
 	historyEntry           = core.HistoryEntry
 	interactiveMode        = core.InteractiveMode
 	interactiveCommand     = interactivepkg.Command

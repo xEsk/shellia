@@ -83,7 +83,6 @@ type Config struct {
 	ShowCommandPopup bool
 
 	// Context options control which local facts are sent to the model and shown by /context.
-	IncludeGit                bool
 	IncludeUser               bool
 	IncludeOS                 bool
 	IncludeShell              bool
@@ -155,7 +154,6 @@ type FileConfig struct {
 
 	// [context]
 	Context struct {
-		IncludeGit                *bool `toml:"include_git"`
 		IncludeUser               *bool `toml:"include_user"`
 		IncludeOS                 *bool `toml:"include_os"`
 		IncludeShell              *bool `toml:"include_shell"`
@@ -201,7 +199,6 @@ func defaultConfig() Config {
 		ShowCommandPopup: true,
 
 		// [context]
-		IncludeGit:                true,
 		IncludeUser:               true,
 		IncludeOS:                 true,
 		IncludeShell:              true,
@@ -279,9 +276,6 @@ func applyFileConfig(cfg *Config, fileCfg FileConfig) {
 	}
 	if fileCfg.UI.ShowCommandPopup != nil {
 		cfg.ShowCommandPopup = *fileCfg.UI.ShowCommandPopup
-	}
-	if fileCfg.Context.IncludeGit != nil {
-		cfg.IncludeGit = *fileCfg.Context.IncludeGit
 	}
 	if fileCfg.Context.IncludeUser != nil {
 		cfg.IncludeUser = *fileCfg.Context.IncludeUser
@@ -618,7 +612,6 @@ show_command_popup = true
 [context]
 # Control which local context is shared with the planning model and shown by /context.
 # Keep cwd, os and shell enabled unless privacy is more important than command accuracy.
-include_git = true
 include_user = true
 include_os = true
 include_shell = true

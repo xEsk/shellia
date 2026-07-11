@@ -32,8 +32,54 @@ func TestDefaultConfigShowsSystemOutput(t *testing.T) {
 // TestDefaultConfigIncludesLocalContext checks context sharing defaults preserve current behaviour.
 func TestDefaultConfigIncludesLocalContext(t *testing.T) {
 	cfg := defaultConfig()
-	if !cfg.IncludeGit || !cfg.IncludeUser || !cfg.IncludeOS || !cfg.IncludeShell || !cfg.IncludeCWD || !cfg.IncludeSessionMemory || !cfg.IncludeRecentObservations {
+	if !cfg.IncludeUser || !cfg.IncludeOS || !cfg.IncludeShell || !cfg.IncludeCWD || !cfg.IncludeSessionMemory || !cfg.IncludeRecentObservations {
 		t.Fatalf("defaultConfig() context flags = %#v, want all enabled", cfg)
+	}
+}
+
+// TestDefaultConfigTemplateOmitsImplicitGitContext checks new config files do
+// not advertise ambient Git repository detection.
+func TestDefaultConfigTemplateOmitsImplicitGitContext(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	var output strings.Builder
+	if err := initConfigFileTo(&output, false); err != nil {
+		t.Fatalf("initConfigFileTo() error = %v", err)
+	}
+	path := filepath.Join(home, ".config", "shellia", "config.toml")
+	template, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", path, err)
+	}
+	if strings.Contains(string(template), "include_git") {
+		t.Fatalf("generated config contains obsolete include_git setting: %q", template)
+	}
+}
+
+// TestLoadFileConfigAcceptsObsoleteIncludeGit checks existing user configs keep
+// loading after the ambient Git option is removed.
+func TestLoadFileConfigAcceptsObsoleteIncludeGit(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	path := filepath.Join(configHome, "shellia", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte("[context]\ninclude_git = true\ninclude_cwd = true\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	fileCfg, loadedPath, err := loadFileConfig()
+	if err != nil {
+		t.Fatalf("loadFileConfig() error = %v", err)
+	}
+	if loadedPath != path {
+		t.Fatalf("loadFileConfig() path = %q, want %q", loadedPath, path)
+	}
+	if fileCfg.Context.IncludeCWD == nil || !*fileCfg.Context.IncludeCWD {
+		t.Fatalf("loadFileConfig() did not preserve supported context setting: %#v", fileCfg.Context)
 	}
 }
 
@@ -42,7 +88,6 @@ func TestApplyFileConfigCanDisableContextFields(t *testing.T) {
 	cfg := defaultConfig()
 	disabled := false
 	fileCfg := FileConfig{}
-	fileCfg.Context.IncludeGit = &disabled
 	fileCfg.Context.IncludeUser = &disabled
 	fileCfg.Context.IncludeOS = &disabled
 	fileCfg.Context.IncludeShell = &disabled
@@ -52,7 +97,7 @@ func TestApplyFileConfigCanDisableContextFields(t *testing.T) {
 
 	applyFileConfig(&cfg, fileCfg)
 
-	if cfg.IncludeGit || cfg.IncludeUser || cfg.IncludeOS || cfg.IncludeShell || cfg.IncludeCWD || cfg.IncludeSessionMemory || cfg.IncludeRecentObservations {
+	if cfg.IncludeUser || cfg.IncludeOS || cfg.IncludeShell || cfg.IncludeCWD || cfg.IncludeSessionMemory || cfg.IncludeRecentObservations {
 		t.Fatalf("context flags = %#v, want all disabled", cfg)
 	}
 }

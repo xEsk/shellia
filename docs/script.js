@@ -17,7 +17,7 @@ const mocks = [
       {
         t: "session",
         lines: [
-          "/Users/Xesc/Documents/Programacio/Go/shellia · main (dirty)",
+          "/Users/Xesc/Documents/Programacio/Go/shellia",
         ],
       },
       { t: "sum", title: "plan", lines: ["Clean unused Docker images with a non-interactive prune command."] },
@@ -55,7 +55,7 @@ const mocks = [
       {
         t: "session",
         lines: [
-          "/Users/Xesc/Documents/Programacio/Go/shellia · main (dirty)",
+          "/Users/Xesc/Documents/Programacio/Go/shellia",
         ],
       },
       { t: "sum", title: "plan", lines: ["Run the Go test suite first; if it passes, commit the current changes."] },

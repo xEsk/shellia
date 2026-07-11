@@ -48,16 +48,12 @@ func TestShelliaVersionBadgeFallsBackToDev(t *testing.T) {
 	}
 }
 
-// TestPrintHeaderOmitsGitWhenDisabled checks the compact header respects context config.
-func TestPrintHeaderOmitsGitWhenDisabled(t *testing.T) {
+// TestPrintHeaderOmitsImplicitGitContext checks compact headers never expose
+// ambient repository state.
+func TestPrintHeaderOmitsImplicitGitContext(t *testing.T) {
 	cfg := defaultConfig()
-	cfg.IncludeGit = false
 	ctxInfo := contextInfo{
 		CWD: "/tmp/project",
-		Git: gitContext{
-			IsRepo: true,
-			Branch: "main",
-		},
 	}
 	var buffer bytes.Buffer
 
@@ -65,7 +61,7 @@ func TestPrintHeaderOmitsGitWhenDisabled(t *testing.T) {
 
 	output := buffer.String()
 	if strings.Contains(output, "main") || strings.Contains(output, "clean") || strings.Contains(output, "dirty") {
-		t.Fatalf("printHeaderTo() includes disabled Git context: %q", output)
+		t.Fatalf("printHeaderTo() includes implicit Git context: %q", output)
 	}
 	if !strings.Contains(output, "/tmp/project") {
 		t.Fatalf("printHeaderTo() missing enabled cwd: %q", output)
@@ -75,7 +71,6 @@ func TestPrintHeaderOmitsGitWhenDisabled(t *testing.T) {
 // TestPrintContextRespectsContextConfig checks /context only renders enabled fields.
 func TestPrintContextRespectsContextConfig(t *testing.T) {
 	cfg := defaultConfig()
-	cfg.IncludeGit = false
 	cfg.IncludeUser = false
 	cfg.IncludeShell = false
 	ctxInfo := contextInfo{
@@ -83,11 +78,6 @@ func TestPrintContextRespectsContextConfig(t *testing.T) {
 		User:  "xesc",
 		OS:    "darwin/arm64",
 		Shell: "/bin/zsh",
-		Git: gitContext{
-			IsRepo:      true,
-			Branch:      "main",
-			StatusShort: " M ui.go",
-		},
 	}
 	var buffer bytes.Buffer
 

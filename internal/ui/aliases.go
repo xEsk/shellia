@@ -13,7 +13,6 @@ type (
 	modelConfig         = configpkg.ModelConfig
 	confirmationDefault = configpkg.ConfirmationDefault
 	contextInfo         = core.ContextInfo
-	gitContext          = core.GitContext
 	interactiveMode     = core.InteractiveMode
 	commandPlan         = core.CommandPlan
 	llmResponse         = llmpkg.Response

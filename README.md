@@ -45,7 +45,6 @@ The goal of Shellia is simple:
   - current user
   - operating system
   - current shell
-  - Git repository context when available
 - OpenAI-compatible `/chat/completions` integration
 - Persistent config in `~/.config/shellia/config.toml`
 - Safe/risky/dangerous local command classification
@@ -69,6 +68,8 @@ Shellia follows this general flow:
 8. If needed, inspect real command output, re-plan, and continue with a better-informed next step.
 
 In interactive mode, Shellia also keeps lightweight session memory so later prompts can refer to previous work.
+
+Git repository state is not collected or sent as ambient context. When a task depends on Git, Shellia plans an explicit inspection command such as `git status --short` and feeds its bounded captured output into the next planning round.
 
 ## Integrations
 
@@ -183,7 +184,6 @@ shellia › where am I now?
 Commands executed this way still stay inside Shellia's session state:
 
 - the current working directory is preserved
-- Git context is refreshed
 - command observations can still help later AI prompts
 - every command uses the shell engine configured by `shell_mode`
 

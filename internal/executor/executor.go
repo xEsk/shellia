@@ -303,7 +303,7 @@ func (writer *limitedCaptureWriter) Stream() capturedStream {
 }
 
 // getContext collects the local context available to the model and UI.
-func getContext(parentCtx context.Context, cfg config) (contextInfo, error) {
+func getContext(_ context.Context, cfg config) (contextInfo, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		return contextInfo{}, fmt.Errorf("cannot detect current directory: %w", err)
@@ -326,37 +326,7 @@ func getContext(parentCtx context.Context, cfg config) (contextInfo, error) {
 		}
 		ctx.User = currentUser.Username
 	}
-	if cfg.IncludeGit {
-		ctx.Git = getGitContext(parentCtx, wd)
-	}
 	return ctx, nil
-}
-
-// getGitContext detects whether the current directory belongs to a Git repository.
-func getGitContext(parentCtx context.Context, cwd string) gitContext {
-	if _, err := exec.LookPath("git"); err != nil {
-		return gitContext{}
-	}
-
-	if code, _ := runCommandCapture(parentCtx, cwd, "git", "rev-parse", "--is-inside-work-tree"); code != 0 {
-		return gitContext{}
-	}
-
-	ctx := gitContext{IsRepo: true}
-
-	if code, output := runCommandCapture(parentCtx, cwd, "git", "branch", "--show-current"); code == 0 {
-		if output == "" {
-			ctx.Branch = "DETACHED"
-		} else {
-			ctx.Branch = output
-		}
-	}
-
-	if code, output := runCommandCapture(parentCtx, cwd, "git", "status", "--short"); code == 0 {
-		ctx.StatusShort = output
-	}
-
-	return ctx
 }
 
 // executeCommands runs the sequential plan, stopping on the first unrecoverable error.
@@ -474,7 +444,7 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 			return executions, err
 		}
 
-		applySessionState(ctx, ctxInfo, cfg, effectiveCommand, result.ExitCode)
+		applySessionState(ctxInfo, effectiveCommand, result.ExitCode)
 		showCompletedMarker(box, result.HadOutput)
 		if box != nil {
 			box.Close()
@@ -548,7 +518,7 @@ func executeManualCommand(ctx context.Context, deps RuntimeDeps, ui bool, cfg co
 		return execution, err
 	}
 
-	applySessionState(ctx, ctxInfo, cfg, command, result.ExitCode)
+	applySessionState(ctxInfo, command, result.ExitCode)
 	showCompletedMarker(box, result.HadOutput)
 	if box != nil {
 		box.Close()
@@ -865,7 +835,7 @@ done:
 }
 
 // applySessionState updates the persistent context when a command changes the session state.
-func applySessionState(parentCtx context.Context, ctxInfo *contextInfo, cfg config, command string, exitCode int) {
+func applySessionState(ctxInfo *contextInfo, command string, exitCode int) {
 	if ctxInfo == nil || exitCode != 0 {
 		return
 	}
@@ -876,11 +846,6 @@ func applySessionState(parentCtx context.Context, ctxInfo *contextInfo, cfg conf
 	}
 
 	ctxInfo.CWD = nextCWD
-	if cfg.IncludeGit {
-		ctxInfo.Git = getGitContext(parentCtx, nextCWD)
-	} else {
-		ctxInfo.Git = gitContext{}
-	}
 }
 
 // resolveDirectoryChange detects a simple cd and computes the next session cwd.
@@ -1013,19 +978,4 @@ func staticFallbackAnswer(fallbackSummary string, executions []commandExecution)
 		return preferred
 	}
 	return fmt.Sprintf("The command `%s` failed with exit code %d.", strings.TrimSpace(last.Command), last.ExitCode)
-}
-
-// runCommandCapture runs a simple command and returns its combined output.
-func runCommandCapture(parentCtx context.Context, cwd, name string, args ...string) (int, string) {
-	cmd := exec.CommandContext(parentCtx, name, args...)
-	cmd.Dir = cwd
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return exitErr.ExitCode(), strings.TrimSpace(string(output))
-		}
-		return 1, strings.TrimSpace(string(output))
-	}
-	return 0, strings.TrimSpace(string(output))
 }

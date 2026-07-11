@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -175,7 +174,7 @@ func printContext(ui bool, cfg config, ctxInfo contextInfo) {
 
 // printContextTo shows the detected context on the provided target.
 func printContextTo(target io.Writer, ui bool, cfg config, ctxInfo contextInfo) {
-	lines := make([]string, 0, 7)
+	lines := make([]string, 0, 4)
 	if cfg.IncludeCWD {
 		lines = append(lines, metaLine(ui, "cwd", ctxInfo.CWD))
 	}
@@ -187,17 +186,6 @@ func printContextTo(target io.Writer, ui bool, cfg config, ctxInfo contextInfo) 
 	}
 	if cfg.IncludeShell {
 		lines = append(lines, metaLine(ui, "shell", ctxInfo.Shell))
-	}
-	if cfg.IncludeGit {
-		lines = append(lines,
-			metaLine(ui, "git", strconv.FormatBool(ctxInfo.Git.IsRepo)),
-			metaLine(ui, "branch", fallbackValue(ctxInfo.Git.Branch, "-")),
-		)
-		if ctxInfo.Git.StatusShort == "" {
-			lines = append(lines, metaLine(ui, "status", style(ui, colorDim, "(clean or empty)")))
-		} else {
-			lines = append(lines, fmt.Sprintf("%s\n%s", metaLabel(ui, "status"), indentLines(ctxInfo.Git.StatusShort, shellStreamPrefix(ui))))
-		}
 	}
 	if len(lines) == 0 {
 		lines = append(lines, style(ui, colorDim, "No local context shared by configuration."))
@@ -1744,29 +1732,12 @@ func renderPanel(target io.Writer, ui bool, title string, color string, lines []
 	}
 }
 
-// plainHeaderGitValue generates a short plain Git summary without styles.
-func plainHeaderGitValue(ctxInfo contextInfo) string {
-	if !ctxInfo.Git.IsRepo {
-		return "not a repository"
-	}
-
-	branch := fallbackValue(ctxInfo.Git.Branch, "DETACHED")
-	if strings.TrimSpace(ctxInfo.Git.StatusShort) == "" {
-		return branch + " (clean)"
-	}
-	return branch + " (dirty)"
-}
-
 // plainHeaderContextValue generates the short local context line for turn headers.
 func plainHeaderContextValue(cfg config, ctxInfo contextInfo) string {
-	parts := make([]string, 0, 2)
-	if cfg.IncludeCWD {
-		parts = append(parts, ctxInfo.CWD)
+	if !cfg.IncludeCWD {
+		return ""
 	}
-	if cfg.IncludeGit {
-		parts = append(parts, plainHeaderGitValue(ctxInfo))
-	}
-	return strings.Join(parts, " · ")
+	return ctxInfo.CWD
 }
 
 // plainHeaderModelValue generates a short model summary for the startup header.
