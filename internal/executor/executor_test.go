@@ -3,6 +3,8 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -220,6 +222,38 @@ func TestExecuteOneCommandRespectsTimeout(t *testing.T) {
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("errors.Is(timeout, context.DeadlineExceeded) = false, want true")
+	}
+}
+
+// TestExecuteOneCommandTimeoutStopsDescendants checks timed-out commands cannot leave child processes running.
+func TestExecuteOneCommandTimeoutStopsDescendants(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.CommandTimeout = 20 * time.Millisecond
+	cfg.ShowSystemOutput = false
+	cfg.CaptureStdoutBytes = 1024
+	cfg.CaptureStderrBytes = 1024
+
+	tempDir := t.TempDir()
+	markerPath := filepath.Join(tempDir, "child-survived")
+	command := fmt.Sprintf("(sleep 0.2; printf survived > %q) & wait", markerPath)
+
+	result, err := executeOneCommand(t.Context(), commandRunRequest{
+		Config: cfg,
+		ContextInfo: contextInfo{
+			CWD:   tempDir,
+			Shell: "/bin/sh",
+		},
+		Command: command,
+		Timeout: cfg.CommandTimeout,
+	})
+
+	var runErr *commandRunError
+	if !errors.As(err, &runErr) || !runErr.TimedOut || result.ExitCode != 124 {
+		t.Fatalf("executeOneCommand() error/result = %#v / %#v, want timeout with exit code 124", err, result)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if _, statErr := os.Stat(markerPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("descendant marker stat error = %v, want os.ErrNotExist", statErr)
 	}
 }
 
