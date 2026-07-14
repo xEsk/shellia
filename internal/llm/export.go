@@ -62,11 +62,12 @@ func StreamSummarizeExecutions(
 	cfg config,
 	instruction string,
 	executions []core.CommandExecution,
+	skipped []core.SkippedCommand,
 	w io.Writer,
 	trace *tracepkg.Logger,
 	turnID string,
 ) (string, error) {
-	return streamSummarizeExecutions(ctx, client, cfg, instruction, executions, w, trace, turnID)
+	return streamSummarizeExecutions(ctx, client, cfg, instruction, executions, skipped, w, trace, turnID)
 }
 
 // TrimForSummary truncates long text for prompts or compact user-facing previews.

@@ -826,6 +826,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			History:      history,
 			State:        state,
 			Observations: allExecutions,
+			Skipped:      allSkipped,
 		}
 		roundResult, err := runPlanningRound(ctx, planningRoundRequest{
 			Deps:   deps,
@@ -852,7 +853,14 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			if cfg.PlanOnly {
 				printPlanOnlyGuidanceTo(deps.Stdout, ui, parsed, cfg.AskConfirmPlanOnly)
 			}
-			return turnResult{Result: summary, Summary: summary, Actionable: false, Plans: plans}, nil
+			return turnResult{
+				Result:     summary,
+				Summary:    summary,
+				Actionable: len(allExecutions) > 0,
+				Plans:      plans,
+				Executions: allExecutions,
+				Skipped:    allSkipped,
+			}, nil
 		}
 
 		if shouldSkipRedundantRound(plans, allExecutions) {
@@ -885,7 +893,14 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 					return turnResult{Result: planOnlyResult(summary, parsed), Summary: summary, Actionable: len(plans) > 0, Plans: plans}, nil
 				}
 				printInfoTo(deps.Stdout, ui, "Plan not executed.")
-				return turnResult{Result: summary, Summary: summary, Actionable: false, Plans: plans}, nil
+				return turnResult{
+					Result:     summary,
+					Summary:    summary,
+					Actionable: len(allExecutions) > 0,
+					Plans:      plans,
+					Executions: allExecutions,
+					Skipped:    allSkipped,
+				}, nil
 			}
 		}
 
@@ -895,48 +910,37 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		batch, err := deps.ExecuteCommands(ctx, deps, ui, cfg, ctxInfo, plans)
 		allExecutions = append(allExecutions, batch.Executions...)
 		allSkipped = append(allSkipped, batch.Skipped...)
-		if err != nil {
-			if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {
-				return turnResult{}, err
-			}
-			if len(batch.Executions) == 0 {
-				return turnResult{}, err
-			}
-			if shouldRetryAfterExecutionError(err, round, planningRoundLimit) {
-				continue
-			}
-			if parsed.RequiresObservation {
-				if round >= planningRoundLimit-1 {
-					keepGoing, promptErr := promptPlanningLimitContinuation(deps.Stdout, ui, deps.Stdin, planningRoundLimit)
-					if promptErr != nil {
-						return turnResult{}, promptErr
-					}
-					deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
-						"decision": "planning_limit_continuation",
-						"accepted": keepGoing,
-						"limit":    planningRoundLimit,
-					})
-					if keepGoing {
-						planningRoundLimit += cfg.PlanningMaxRounds
-						continue
-					}
-					break
-				}
-				deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
-					"decision": "continue_after_observation",
-				})
-				continue
-			}
-			break
+		if errors.Is(err, errAborted) {
+			return turnResult{}, err
 		}
-		if !parsed.RequiresObservation {
+		if errors.Is(err, context.Canceled) {
+			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
+				"decision": "execution_failure_replan_excluded",
+				"reason":   "cancellation",
+			})
+			return turnResult{}, err
+		}
+		var promptErr *interactivePromptError
+		interactiveRepair := errors.As(err, &promptErr)
+		if err != nil && !interactiveRepair {
+			return turnResult{}, err
+		}
+
+		requiresFollowup := interactiveRepair || batch.HadOrdinaryFailure || (parsed.RequiresObservation && !batch.HadTimeout)
+		if !requiresFollowup {
+			if batch.HadTimeout {
+				deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
+					"decision": "execution_failure_replan_excluded",
+					"reason":   "timeout",
+				})
+			}
 			break
 		}
 
 		if round >= planningRoundLimit-1 {
-			keepGoing, err := promptPlanningLimitContinuation(deps.Stdout, ui, deps.Stdin, planningRoundLimit)
-			if err != nil {
-				return turnResult{}, err
+			keepGoing, limitErr := promptPlanningLimitContinuation(deps.Stdout, ui, deps.Stdin, planningRoundLimit)
+			if limitErr != nil {
+				return turnResult{}, limitErr
 			}
 			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
 				"decision": "planning_limit_continuation",
@@ -949,14 +953,19 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			}
 			break
 		}
+		decision := "continue_after_observation"
+		if batch.HadOrdinaryFailure {
+			decision = "continue_after_execution_failure"
+		}
 		deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
-			"decision": "continue_after_observation",
+			"decision": decision,
 		})
+		continue
 	}
 
 	openResultPanelTo(deps.Stdout, ui)
 	w := newResultWriter(ui, deps.Stdout)
-	answer, streamErr := streamSummarizeExecutions(ctx, deps.HTTPClient, cfg, instruction, allExecutions, w, deps.Trace, turnID)
+	answer, streamErr := streamSummarizeExecutions(ctx, deps.HTTPClient, cfg, instruction, allExecutions, allSkipped, w, deps.Trace, turnID)
 	w.StopThinking()
 	if ctx.Err() != nil {
 		closeResultPanelTo(deps.Stdout, ui)
@@ -1140,16 +1149,6 @@ func runDiscoveryRepair(
 		Summary: repairedSummary,
 		Plans:   repairedPlans,
 	}, true
-}
-
-// shouldRetryAfterExecutionError reports whether an execution failure should become a new planning observation.
-func shouldRetryAfterExecutionError(err error, round int, maxRounds int) bool {
-	if round >= maxRounds-1 {
-		return false
-	}
-
-	var promptErr *interactivePromptError
-	return errors.As(err, &promptErr)
 }
 
 // shouldSkipRedundantRound avoids re-running commands already executed in the same turn.

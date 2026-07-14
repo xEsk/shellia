@@ -193,6 +193,11 @@ func (execution CommandExecution) PromptTranscript(limit int, strategy Truncatio
 	return strings.Join(sections, "\n")
 }
 
+// ObservationTranscript builds a planning observation with its command exit code.
+func (execution CommandExecution) ObservationTranscript(limit int, strategy TruncationStrategy) string {
+	return fmt.Sprintf("Exit code: %d\n%s", execution.ExitCode, execution.PromptTranscript(limit, strategy))
+}
+
 // TrimForSummary truncates long text for prompts or compact user-facing previews.
 func TrimForSummary(text string, maxChars int, strategy TruncationStrategy) string {
 	runes := []rune(strings.TrimSpace(text))

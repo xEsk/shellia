@@ -54,6 +54,7 @@ type PromptRequest struct {
 	History             []historyEntry
 	State               sessionState
 	Observations        []commandExecution
+	Skipped             []skippedCommand
 }
 
 // DiscoveryPromptRequest adds the failed response that triggered discovery repair.
@@ -398,6 +399,7 @@ func streamSummarizeExecutions(
 	cfg config,
 	instruction string,
 	executions []commandExecution,
+	skipped []skippedCommand,
 	w io.Writer,
 	trace *traceLogger,
 	turnID string,
@@ -409,6 +411,14 @@ func streamSummarizeExecutions(
 		fmt.Fprintf(&transcript, "Command: %s\n", execution.Command)
 		fmt.Fprintf(&transcript, "Exit code: %d\n", execution.ExitCode)
 		fmt.Fprintf(&transcript, "%s\n\n", execution.PromptTranscript(cfg.SummaryOutputChars, cfg.TruncationStrategy))
+	}
+	if len(skipped) > 0 {
+		transcript.WriteString("Skipped commands\n")
+		for index, item := range skipped {
+			fmt.Fprintf(&transcript, "%d. Purpose: %s\n", index+1, item.Purpose)
+			fmt.Fprintf(&transcript, "   Command: %s\n", item.Command)
+			fmt.Fprintf(&transcript, "   Reason: %s\n", item.Reason)
+		}
 	}
 
 	reqCtx, cancel := context.WithTimeout(ctx, cfg.RequestTimeout)
@@ -424,6 +434,7 @@ func streamSummarizeExecutions(
 		"Do NOT claim something is absent unless you have read the full output and it is genuinely missing. " +
 		"Different commands answer different sub-questions: do not merge their answers incorrectly (e.g. 'not running' does not mean 'not installed'). " +
 		"Never claim an action was completed unless the executed commands clearly performed it or the output explicitly confirms it. " +
+		"Commands listed as skipped were not executed; never describe them as completed or assign them output. " +
 		"If there are concrete results, include them. " +
 		"Keep it concise."
 	userPrompt := fmt.Sprintf("Original request:\n%s\n\nExecuted commands and outputs:\n%s", instruction, transcript.String())
@@ -671,6 +682,7 @@ func buildUserPrompt(request PromptRequest) string {
 	history := request.History
 	state := request.State
 	observations := request.Observations
+	skipped := request.Skipped
 
 	historyBlock := ""
 	if cfg.IncludeSessionMemory && len(history) > 0 {
@@ -726,13 +738,21 @@ func buildUserPrompt(request PromptRequest) string {
 	}
 
 	observationBlock := ""
-	if cfg.IncludeRecentObservations && len(observations) > 0 {
+	if cfg.IncludeRecentObservations && (len(observations) > 0 || len(skipped) > 0) {
 		var b strings.Builder
 		b.WriteString("\nObserved outputs from the current task:\n")
 		for index, execution := range observations {
 			fmt.Fprintf(&b, "%d. Purpose: %s\n", index+1, execution.Purpose)
 			fmt.Fprintf(&b, "   Command: %s\n", execution.Command)
-			fmt.Fprintf(&b, "%s\n", indentLines(execution.PromptTranscript(cfg.ObservationOutputChars, cfg.TruncationStrategy), "   "))
+			fmt.Fprintf(&b, "%s\n", indentLines(execution.ObservationTranscript(cfg.ObservationOutputChars, cfg.TruncationStrategy), "   "))
+		}
+		if len(skipped) > 0 {
+			b.WriteString("Skipped commands from the current task:\n")
+			for index, item := range skipped {
+				fmt.Fprintf(&b, "%d. Purpose: %s\n", index+1, item.Purpose)
+				fmt.Fprintf(&b, "   Command: %s\n", item.Command)
+				fmt.Fprintf(&b, "   Reason: %s\n", item.Reason)
+			}
 		}
 		observationBlock = b.String()
 	}

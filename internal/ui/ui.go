@@ -303,8 +303,7 @@ func promptPlanExecution(target io.Writer, ui bool, stdin *os.File) (bool, error
 		}
 	}
 
-	reader := bufio.NewReader(stdin)
-	line, err := reader.ReadString('\n')
+	line, err := readConfirmationLine(stdin)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return false, err
 	}
@@ -362,8 +361,7 @@ func promptPlanningLimitContinuation(target io.Writer, ui bool, stdin *os.File, 
 		}
 	}
 
-	reader := bufio.NewReader(stdin)
-	line, err := reader.ReadString('\n')
+	line, err := readConfirmationLine(stdin)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return false, err
 	}
@@ -991,6 +989,29 @@ func promptConfirmation(box *stepBox, reader *bufio.Reader, stdin *os.File, prom
 
 		logConfirmationChoice(box, prompt, defaultChoice, "no")
 		return confirmDecisionCancel, "", nil
+	}
+}
+
+// readConfirmationLine reads exactly one answer so later prompts retain their input.
+func readConfirmationLine(stdin *os.File) (string, error) {
+	if stdin == nil {
+		stdin = os.Stdin
+	}
+
+	var line strings.Builder
+	buffer := []byte{0}
+	for {
+		_, err := stdin.Read(buffer)
+		if err != nil {
+			if errors.Is(err, io.EOF) && line.Len() > 0 {
+				return line.String(), nil
+			}
+			return line.String(), err
+		}
+		line.WriteByte(buffer[0])
+		if buffer[0] == '\n' {
+			return line.String(), nil
+		}
 	}
 }
 

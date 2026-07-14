@@ -45,6 +45,20 @@ type commandRunResult struct {
 	HadOutput bool
 }
 
+// confirmationInput prevents one batch's buffered confirmation reader from
+// consuming answers intended for a later planning or execution round.
+type confirmationInput struct {
+	io.Reader
+}
+
+// Read limits confirmation input to one byte at a time.
+func (input confirmationInput) Read(buffer []byte) (int, error) {
+	if len(buffer) > 1 {
+		buffer = buffer[:1]
+	}
+	return input.Reader.Read(buffer)
+}
+
 // commandRunError represents an executed command that finished with an error or timeout.
 type commandRunError struct {
 	Command  string
@@ -334,7 +348,7 @@ const skippedAfterFailureReason = "dependent on an earlier failed command"
 // executeCommands runs the sequential plan and returns its structured batch outcome.
 func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan) (commandBatchResult, error) {
 	deps = deps.withDefaults()
-	reader := bufio.NewReader(deps.Stdin)
+	reader := bufio.NewReader(confirmationInput{Reader: deps.Stdin})
 	batch := commandBatchResult{
 		Executions: make([]commandExecution, 0, len(plans)),
 		Skipped:    make([]skippedCommand, 0, len(plans)),

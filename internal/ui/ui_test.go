@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -194,6 +195,33 @@ func TestReadFallbackPromptLineReturnsPartialLineOnEOF(t *testing.T) {
 	}
 	if got != "answer without newline" {
 		t.Fatalf("readFallbackPromptLine() = %q, want partial line", got)
+	}
+}
+
+// TestPromptPlanExecutionPreservesLaterPipedAnswers checks one confirmation
+// does not buffer and discard answers intended for a later confirmation.
+func TestPromptPlanExecutionPreservesLaterPipedAnswers(t *testing.T) {
+	stdin, err := os.CreateTemp(t.TempDir(), "stdin")
+	if err != nil {
+		t.Fatalf("CreateTemp(stdin) error = %v", err)
+	}
+	t.Cleanup(func() { stdin.Close() }) //nolint:errcheck // best-effort test cleanup.
+	if _, err := stdin.WriteString("y\ny\n"); err != nil {
+		t.Fatalf("WriteString(stdin) error = %v", err)
+	}
+	if _, err := stdin.Seek(0, io.SeekStart); err != nil {
+		t.Fatalf("Seek(stdin) error = %v", err)
+	}
+
+	var output strings.Builder
+	for call := 0; call < 2; call++ {
+		accepted, err := promptPlanExecution(&output, false, stdin)
+		if err != nil {
+			t.Fatalf("promptPlanExecution() call %d error = %v", call+1, err)
+		}
+		if !accepted {
+			t.Fatalf("promptPlanExecution() call %d = false, want true", call+1)
+		}
 	}
 }
 
