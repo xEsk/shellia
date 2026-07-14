@@ -1357,9 +1357,11 @@ func TestRunTurnReplansOnceAfterOrdinaryFailure(t *testing.T) {
 	cfg.AskConfirmPlan = true
 	cfg.ContinueOnError = true
 	ctxInfo := loopTestContext(t)
+	logger := openLoopTrace(t)
 	call := 0
 
 	output := captureMainLoopIO(t, "y\ny\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.Trace = logger
 		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
 			call++
 			if call == 1 {
@@ -1402,6 +1404,36 @@ func TestRunTurnReplansOnceAfterOrdinaryFailure(t *testing.T) {
 	}
 	if strings.Count(output, "Execute this plan? [y/n]: yes") != 2 {
 		t.Fatalf("output = %q, want confirmation for initial and recovery plans", output)
+	}
+
+	events := closeLoopTraceAndRead(t, logger)
+	continueAfterFailure := 0
+	for _, event := range traceEventsByName(events, "shellia_decision") {
+		if traceEventData(t, event)["decision"] == "continue_after_execution_failure" {
+			continueAfterFailure++
+		}
+	}
+	if continueAfterFailure != 1 {
+		t.Fatalf("continue_after_execution_failure events = %d, want 1", continueAfterFailure)
+	}
+
+	turnEnds := traceEventsByName(events, "turn_end")
+	if len(turnEnds) != 1 || traceEventData(t, turnEnds[0])["skipped_count"] != float64(1) {
+		t.Fatalf("turn_end events = %#v, want skipped_count 1", turnEnds)
+	}
+
+	plannerEvents := traceEventsByName(events, "planner_result")
+	if len(plannerEvents) != 2 {
+		t.Fatalf("planner_result events = %d, want 2", len(plannerEvents))
+	}
+	commands, ok := traceEventData(t, plannerEvents[0])["commands"].([]any)
+	if !ok || len(commands) != 3 {
+		t.Fatalf("planner commands = %#v, want three command objects", commands)
+	}
+	first, firstOK := commands[0].(map[string]any)
+	independent, independentOK := commands[2].(map[string]any)
+	if !firstOK || !independentOK || first["independent_on_failure"] != false || independent["independent_on_failure"] != true {
+		t.Fatalf("planner commands = %#v, want explicit conservative and independent failure fields", commands)
 	}
 }
 
@@ -1551,15 +1583,15 @@ func TestRunTurnTimeoutDoesNotReplan(t *testing.T) {
 		t.Fatalf("requests = %d, result = %#v, want planning/summary and both executions", fake.requestCount(), result)
 	}
 	events := closeLoopTraceAndRead(t, logger)
-	found := false
+	exclusionCount := 0
 	for _, event := range traceEventsByName(events, "shellia_decision") {
 		data := traceEventData(t, event)
 		if data["decision"] == "execution_failure_replan_excluded" && data["reason"] == "timeout" {
-			found = true
+			exclusionCount++
 		}
 	}
-	if !found {
-		t.Fatal("trace missing timeout execution_failure_replan_excluded decision")
+	if exclusionCount != 1 {
+		t.Fatalf("timeout execution_failure_replan_excluded events = %d, want 1", exclusionCount)
 	}
 }
 

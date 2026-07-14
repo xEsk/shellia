@@ -354,6 +354,7 @@ func TestStaticFallbackAnswer(t *testing.T) {
 		name       string
 		summary    string
 		executions []commandExecution
+		skipped    []skippedCommand
 		want       string
 	}{
 		{name: "no executions", summary: "Nothing to run.", want: "Nothing to run."},
@@ -373,7 +374,7 @@ func TestStaticFallbackAnswer(t *testing.T) {
 			name:       "failed with output",
 			summary:    "Command failed.",
 			executions: []commandExecution{{Command: "ls missing", Purpose: "List file", ExitCode: 2, Stderr: capturedStream{Text: "No such file"}}},
-			want:       "No such file",
+			want:       "No such file\nThe command `ls missing` failed with exit code 2.",
 		},
 		{
 			name:       "failed without output",
@@ -381,11 +382,27 @@ func TestStaticFallbackAnswer(t *testing.T) {
 			executions: []commandExecution{{Command: "false", Purpose: "Fail", ExitCode: 1}},
 			want:       "The command `false` failed with exit code 1.",
 		},
+		{
+			name:    "recovered turn preserves failure and skipped omission",
+			summary: "Recovery completed.",
+			executions: []commandExecution{
+				{Command: "false", Purpose: "Fail", ExitCode: 7, Stderr: capturedStream{Text: "initial failure"}},
+				{Command: "pwd", Purpose: "Recover", ExitCode: 0, Stdout: capturedStream{Text: "/tmp/project"}},
+			},
+			skipped: []skippedCommand{{Command: "touch blocked", Purpose: "Blocked", Reason: skippedAfterFailureReason}},
+			want:    "initial failure\nThe command `false` failed with exit code 7. 1 command(s) were skipped and not executed.",
+		},
+		{
+			name:    "skipped work prevents synthesized success",
+			summary: "Partial work.",
+			skipped: []skippedCommand{{Command: "touch blocked", Purpose: "Blocked", Reason: skippedAfterFailureReason}},
+			want:    "Partial work.\nSome commands were skipped and were not executed.",
+		},
 	}
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := staticFallbackAnswer(tt.summary, tt.executions); got != tt.want {
+			if got := staticFallbackAnswer(tt.summary, tt.executions, tt.skipped); got != tt.want {
 				t.Fatalf("staticFallbackAnswer() = %q, want %q", got, tt.want)
 			}
 		})
@@ -442,7 +459,7 @@ func TestExecuteCommandsContinuesOnlyIndependentStepsAfterFailure(t *testing.T) 
 		t.Fatalf("command_skipped events = %d, want 1", len(skippedEvents))
 	}
 	data := traceEventData(t, skippedEvents[0])
-	if data["command"] != plans[1].Command || data["reason"] != skippedAfterFailureReason {
+	if data["command"] != plans[1].Command || data["purpose"] != plans[1].Purpose || data["reason"] != skippedAfterFailureReason {
 		t.Fatalf("command_skipped data = %#v, want dependent command and reason", data)
 	}
 	if len(traceEventsByName(events, "command_confirmation")) != 2 || len(traceEventsByName(events, "command_start")) != 2 {

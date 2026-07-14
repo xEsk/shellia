@@ -7,7 +7,7 @@ import (
 
 var backtickCommandPattern = regexp.MustCompile("`([^`]+)`")
 
-// updateSessionState stores durable session memory after a successful turn.
+// updateSessionState stores durable session memory after a successful or actionable partial turn.
 func updateSessionState(state *sessionState, instruction string, turn turnResult, cfg config) {
 	if state == nil {
 		return
@@ -123,6 +123,9 @@ func detectRuntimeHint(instruction string, turn turnResult) string {
 		}
 	}
 	for _, execution := range turn.Executions {
+		if execution.ExitCode != 0 {
+			continue
+		}
 		command := normalizeForMemory(execution.Command)
 		if strings.Contains(command, "docker") || strings.Contains(command, "php") {
 			return strings.TrimSpace(instruction)
@@ -135,6 +138,9 @@ func detectRuntimeHint(instruction string, turn turnResult) string {
 func collectCreatedFiles(executions []commandExecution) []string {
 	created := make([]string, 0, len(executions))
 	for _, execution := range executions {
+		if execution.ExitCode != 0 {
+			continue
+		}
 		tokens := strings.Fields(strings.TrimSpace(execution.Command))
 		if len(tokens) < 2 {
 			continue
@@ -248,10 +254,10 @@ func looksLikeShellCommand(text string) bool {
 func collectObservationMemory(executions []commandExecution, chars int, maxEntries int, strategy truncationStrategy) []observationMemory {
 	observations := make([]observationMemory, 0, len(executions))
 	for _, execution := range executions {
-		transcript := strings.TrimSpace(execution.PromptTranscript(chars, strategy))
-		if transcript == "" || transcript == "Output: (empty)" {
+		if execution.ExitCode == 0 && !execution.Stdout.HasOutput() && !execution.Stderr.HasOutput() {
 			continue
 		}
+		transcript := strings.TrimSpace(execution.ObservationTranscript(chars, strategy))
 		observations = append(observations, observationMemory{
 			Command:    execution.Command,
 			Purpose:    execution.Purpose,

@@ -809,6 +809,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			"actionable":       result.Actionable,
 			"plans_count":      len(result.Plans),
 			"executions_count": len(result.Executions),
+			"skipped_count":    len(result.Skipped),
 		}
 		if err != nil {
 			data["error"] = err.Error()
@@ -993,7 +994,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		return partialResult(), ctx.Err()
 	}
 	if streamErr != nil || strings.TrimSpace(answer) == "" {
-		answer = staticFallbackAnswer(lastSummary, allExecutions)
+		answer = staticFallbackAnswer(lastSummary, allExecutions, allSkipped)
 		// Only print the fallback if streaming never wrote a single byte to the terminal.
 		// If it wrote partial content before erroring, don't print on top of it.
 		if !w.WroteAnything() {
@@ -1075,7 +1076,7 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 		"input_reason":         parsed.InputReason,
 		"requires_observation": parsed.RequiresObservation,
 		"observation_reason":   parsed.ObservationReason,
-		"commands":             plans,
+		"commands":             tracePlannerCommands(plans),
 		"commands_count":       len(plans),
 	})
 
@@ -1161,7 +1162,7 @@ func runDiscoveryRepair(
 		"input_reason":         repairedParsed.InputReason,
 		"requires_observation": repairedParsed.RequiresObservation,
 		"observation_reason":   repairedParsed.ObservationReason,
-		"commands":             repairedPlans,
+		"commands":             tracePlannerCommands(repairedPlans),
 		"commands_count":       len(repairedPlans),
 	})
 
@@ -1170,6 +1171,25 @@ func runDiscoveryRepair(
 		Summary: repairedSummary,
 		Plans:   repairedPlans,
 	}, true
+}
+
+// tracePlannerCommands renders normalized command plans with stable trace field names.
+func tracePlannerCommands(plans []commandPlan) []map[string]any {
+	commands := make([]map[string]any, 0, len(plans))
+	for _, plan := range plans {
+		commands = append(commands, map[string]any{
+			"command":                plan.Command,
+			"purpose":                plan.Purpose,
+			"risk":                   plan.Risk,
+			"requires_confirmation":  plan.RequiresConfirmation,
+			"classification":         plan.Classification,
+			"local_safe":             plan.LocalSafe,
+			"independent_on_failure": plan.IndependentOnFailure,
+			"interactive":            plan.Interactive,
+			"interactive_reason":     plan.InteractiveReason,
+		})
+	}
+	return commands
 }
 
 // filterPreviouslySuccessfulPlans removes commands already completed successfully in the same turn.

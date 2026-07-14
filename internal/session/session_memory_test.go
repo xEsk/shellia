@@ -1,6 +1,7 @@
 package session
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -184,6 +185,16 @@ func TestCollectCreatedFiles(t *testing.T) {
 	}
 }
 
+func TestCollectCreatedFilesIgnoresFailedCommands(t *testing.T) {
+	executions := []commandExecution{
+		{Command: "touch failed.txt", ExitCode: 1},
+		{Command: "touch created.txt", ExitCode: 0},
+	}
+	if got := collectCreatedFiles(executions); !reflect.DeepEqual(got, []string{"created.txt"}) {
+		t.Fatalf("collectCreatedFiles() = %v, want only successful file", got)
+	}
+}
+
 func TestCollectObservationMemory(t *testing.T) {
 	t.Run("empty executions returns empty", func(t *testing.T) {
 		if got := collectObservationMemory(nil, 400, 4, truncationMixed); len(got) != 0 {
@@ -215,6 +226,13 @@ func TestCollectObservationMemory(t *testing.T) {
 	})
 }
 
+func TestCollectObservationMemoryIncludesFailedExitCode(t *testing.T) {
+	got := collectObservationMemory([]commandExecution{{Command: "false", Purpose: "Fail", ExitCode: 7}}, 400, 4, truncationMixed)
+	if len(got) != 1 || !strings.Contains(got[0].Transcript, "Exit code: 7") {
+		t.Fatalf("observations = %#v, want failed exit code", got)
+	}
+}
+
 func TestDetectRuntimeHint(t *testing.T) {
 	t.Run("detects docker in instruction", func(t *testing.T) {
 		if got := detectRuntimeHint("run docker compose up", turnResult{}); got == "" {
@@ -240,6 +258,16 @@ func TestDetectRuntimeHint(t *testing.T) {
 			t.Errorf("expected empty, got %q", got)
 		}
 	})
+}
+
+func TestDetectRuntimeHintIgnoresFailedCommands(t *testing.T) {
+	turn := turnResult{Executions: []commandExecution{
+		{Command: "docker exec app php artisan migrate", ExitCode: 1},
+		{Command: "git status --short", ExitCode: 0},
+	}}
+	if got := detectRuntimeHint("run migration", turn); got != "" {
+		t.Fatalf("detectRuntimeHint() = %q, want no hint from failed command", got)
+	}
 }
 
 func TestResolveInstructionForPlanning(t *testing.T) {

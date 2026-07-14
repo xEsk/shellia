@@ -53,14 +53,35 @@ func TestNormalizePlanPreservesFailureIndependence(t *testing.T) {
 	}
 }
 
-// TestBuildSystemPromptDefinesFailureIndependence checks the planner receives
-// the conservative command-batch dependency contract.
+// TestBuildSystemPromptDefinesFailureIndependence checks every planning prompt keeps the
+// conservative command-batch dependency rules and applicable JSON schema.
 func TestBuildSystemPromptDefinesFailureIndependence(t *testing.T) {
-	prompt := buildSystemPrompt()
-	for _, snippet := range []string{"independent_on_failure", "same command batch", "false"} {
-		if !strings.Contains(prompt, snippet) {
-			t.Fatalf("buildSystemPrompt() missing %q", snippet)
-		}
+	const schemaField = `"independent_on_failure":false`
+	rules := []string{
+		"Set independent_on_failure=true only when the command remains safe and useful if any earlier command in the same command batch fails.",
+		"When uncertain, set independent_on_failure=false. The field never lowers risk or confirmation requirements.",
+	}
+	cases := []struct {
+		name       string
+		prompt     string
+		wantSchema bool
+	}{
+		{name: "normal system prompt", prompt: buildSystemPrompt(), wantSchema: true},
+		{name: "plan-only system prompt", prompt: buildPlanOnlySystemPrompt(), wantSchema: true},
+		{name: "user prompt rules", prompt: strings.Join(buildUserPromptRules(), "\n")},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, rule := range rules {
+				if !strings.Contains(tt.prompt, rule) {
+					t.Fatalf("prompt missing failure-independence rule %q", rule)
+				}
+			}
+			if tt.wantSchema && !strings.Contains(tt.prompt, schemaField) {
+				t.Fatalf("prompt missing schema field %q", schemaField)
+			}
+		})
 	}
 }
 

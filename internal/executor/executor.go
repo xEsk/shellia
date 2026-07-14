@@ -1026,7 +1026,32 @@ func hasUnescapedWhitespace(value string) bool {
 }
 
 // staticFallbackAnswer returns a plain-text answer when the streaming summarizer is unavailable.
-func staticFallbackAnswer(fallbackSummary string, executions []commandExecution) string {
+func staticFallbackAnswer(fallbackSummary string, executions []commandExecution, skipped []skippedCommand) string {
+	for index := len(executions) - 1; index >= 0; index-- {
+		execution := executions[index]
+		if execution.ExitCode == 0 {
+			continue
+		}
+		preferred := strings.TrimSpace(execution.PreferredOutput())
+		status := fmt.Sprintf("The command `%s` failed with exit code %d.", strings.TrimSpace(execution.Command), execution.ExitCode)
+		if len(skipped) > 0 {
+			status += fmt.Sprintf(" %d command(s) were skipped and not executed.", len(skipped))
+		}
+		if preferred != "" {
+			return preferred + "\n" + status
+		}
+		return status
+	}
+
+	if len(skipped) > 0 {
+		omission := "Some commands were skipped and were not executed."
+		summary := strings.TrimSpace(fallbackSummary)
+		if summary == "" {
+			return omission
+		}
+		return summary + "\n" + omission
+	}
+
 	if len(executions) == 0 {
 		return fallbackSummary
 	}
@@ -1034,16 +1059,9 @@ func staticFallbackAnswer(fallbackSummary string, executions []commandExecution)
 	last := executions[len(executions)-1]
 	preferred := strings.TrimSpace(last.PreferredOutput())
 
-	if last.ExitCode == 0 && preferred != "" {
-		return preferred
-	}
-
-	if last.ExitCode == 0 {
-		return fmt.Sprintf("%s done.", strings.TrimSpace(last.Purpose))
-	}
-
 	if preferred != "" {
 		return preferred
 	}
-	return fmt.Sprintf("The command `%s` failed with exit code %d.", strings.TrimSpace(last.Command), last.ExitCode)
+
+	return fmt.Sprintf("%s done.", strings.TrimSpace(last.Purpose))
 }
