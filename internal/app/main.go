@@ -510,6 +510,9 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			State:       state,
 		})
 		stop()
+		if err != nil && turn.Actionable {
+			updateSessionState(&state, cfg.Instruction, turn, cfg)
+		}
 		if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {
 			state.LastRetryInstruction = cfg.Instruction
 			rememberUnfinishedInstruction(&state, cfg.Instruction)
@@ -561,6 +564,9 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 				State:       state,
 			})
 			stop()
+			if err != nil && turn.Actionable {
+				updateSessionState(&state, plannedInstruction, turn, cfg)
+			}
 
 			if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {
 				state.LastRetryInstruction = plannedInstruction
@@ -688,6 +694,9 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			State:       state,
 		})
 		stop()
+		if err != nil && turn.Actionable {
+			updateSessionState(&state, instruction, turn, cfg)
+		}
 
 		if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {
 			state.LastRetryInstruction = instruction
@@ -817,6 +826,16 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 	lastSummary := ""
 	lastPlans := []commandPlan(nil)
 	planningRoundLimit := cfg.PlanningMaxRounds
+	partialResult := func() turnResult {
+		return turnResult{
+			Result:     strings.TrimSpace(lastSummary),
+			Summary:    lastSummary,
+			Actionable: len(allExecutions) > 0,
+			Plans:      lastPlans,
+			Executions: allExecutions,
+			Skipped:    allSkipped,
+		}
+	}
 
 	for round := 0; ; round++ {
 		promptRequest := llmPromptRequest{
@@ -836,7 +855,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			Prompt: promptRequest,
 		})
 		if err != nil {
-			return turnResult{}, err
+			return partialResult(), err
 		}
 		parsed := roundResult.Parsed
 		summary := roundResult.Summary
@@ -883,7 +902,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		} else {
 			executePlan, err := promptPlanExecution(deps.Stdout, ui, deps.Stdin)
 			if err != nil {
-				return turnResult{}, fmt.Errorf("cannot read plan confirmation: %w", err)
+				return partialResult(), fmt.Errorf("cannot read plan confirmation: %w", err)
 			}
 			deps.Trace.Record("plan_confirmation", turnID, "", -1, map[string]any{
 				"accepted": executePlan,
@@ -911,19 +930,19 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		allExecutions = append(allExecutions, batch.Executions...)
 		allSkipped = append(allSkipped, batch.Skipped...)
 		if errors.Is(err, errAborted) {
-			return turnResult{}, err
+			return partialResult(), err
 		}
 		if errors.Is(err, context.Canceled) {
 			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
 				"decision": "execution_failure_replan_excluded",
 				"reason":   "cancellation",
 			})
-			return turnResult{}, err
+			return partialResult(), err
 		}
 		var promptErr *interactivePromptError
 		interactiveRepair := errors.As(err, &promptErr)
 		if err != nil && !interactiveRepair {
-			return turnResult{}, err
+			return partialResult(), err
 		}
 
 		requiresFollowup := interactiveRepair || batch.HadOrdinaryFailure || (parsed.RequiresObservation && !batch.HadTimeout)
@@ -940,7 +959,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		if round >= planningRoundLimit-1 {
 			keepGoing, limitErr := promptPlanningLimitContinuation(deps.Stdout, ui, deps.Stdin, planningRoundLimit)
 			if limitErr != nil {
-				return turnResult{}, limitErr
+				return partialResult(), limitErr
 			}
 			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
 				"decision": "planning_limit_continuation",
@@ -969,7 +988,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 	w.StopThinking()
 	if ctx.Err() != nil {
 		closeResultPanelTo(deps.Stdout, ui)
-		return turnResult{}, ctx.Err()
+		return partialResult(), ctx.Err()
 	}
 	if streamErr != nil || strings.TrimSpace(answer) == "" {
 		answer = staticFallbackAnswer(lastSummary, allExecutions)
@@ -977,7 +996,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		// If it wrote partial content before erroring, don't print on top of it.
 		if !w.WroteAnything() {
 			if err := renderAnswerBlock(deps.Stdout, ui, answer, w.AnswerState()); err != nil {
-				return turnResult{}, err
+				return partialResult(), err
 			}
 			w.MarkWroteAnything()
 		}

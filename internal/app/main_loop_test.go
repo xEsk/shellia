@@ -20,6 +20,7 @@ type loopLLMResponse struct {
 	content           string
 	stream            bool
 	raw               bool
+	status            int
 	cancellationStart chan struct{}
 }
 
@@ -92,6 +93,9 @@ func (fake *loopLLMClient) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 
 	response := fake.responses[index]
+	if response.status != 0 && response.status != http.StatusOK {
+		return loopHTTPResponse(r, response.status, response.content, nil), nil
+	}
 	if response.cancellationStart != nil {
 		close(response.cancellationStart)
 		<-r.Context().Done()
@@ -847,13 +851,18 @@ func TestRunTurnPropagatesParentCancellationDuringSummary(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 	ctx, cancel := context.WithCancel(t.Context())
 
-	done := make(chan error, 1)
+	type turnOutcome struct {
+		result turnResult
+		err    error
+	}
+	done := make(chan turnOutcome, 1)
 	go func() {
+		var result turnResult
 		var runErr error
 		captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
-			_, runErr = runTurn(ctx, deps, false, loopTurnRequest(cfg, &ctxInfo, "print marker"))
+			result, runErr = runTurn(ctx, deps, false, loopTurnRequest(cfg, &ctxInfo, "print marker"))
 		})
-		done <- runErr
+		done <- turnOutcome{result: result, err: runErr}
 	}()
 
 	select {
@@ -864,9 +873,12 @@ func TestRunTurnPropagatesParentCancellationDuringSummary(t *testing.T) {
 	}
 
 	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("runTurn() error = %v, want context.Canceled", err)
+	case outcome := <-done:
+		if !errors.Is(outcome.err, context.Canceled) {
+			t.Fatalf("runTurn() error = %v, want context.Canceled", outcome.err)
+		}
+		if !outcome.result.Actionable || len(outcome.result.Executions) != 1 {
+			t.Fatalf("runTurn() result = %#v, want actionable completed execution", outcome.result)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("runTurn() did not return after cancellation")
@@ -1432,18 +1444,23 @@ func TestRunTurnTimeoutDoesNotReplan(t *testing.T) {
 // TestRunTurnCancellationDoesNotReplan checks cancellation returns immediately
 // and records why execution failure recovery was excluded.
 func TestRunTurnCancellationDoesNotReplan(t *testing.T) {
-	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"summary":"Run command.","commands":[{"command":"pwd","purpose":"Inspect","risk":"safe","requires_confirmation":false}]}`})
+	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"summary":"Run commands.","commands":[{"command":"pwd","purpose":"Completed inspection","risk":"safe","requires_confirmation":false},{"command":"wait","purpose":"Cancelled step","risk":"safe","requires_confirmation":false}]}`})
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
 	ctxInfo := loopTestContext(t)
 	logger := openLoopTrace(t)
 
+	var result turnResult
 	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
 		deps.Trace = logger
 		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
-			return commandBatchResult{Executions: []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 130}}}, context.Canceled
+			return commandBatchResult{
+				Executions: []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 0, Stdout: capturedStream{Text: ctxInfo.CWD}}},
+				Skipped:    []skippedCommand{{Command: plans[1].Command, Purpose: plans[1].Purpose, Reason: "cancelled"}},
+			}, context.Canceled
 		}
-		_, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "cancel command"))
+		var err error
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "cancel command"))
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("runTurn() error = %v, want context.Canceled", err)
 		}
@@ -1451,6 +1468,9 @@ func TestRunTurnCancellationDoesNotReplan(t *testing.T) {
 
 	if fake.requestCount() != 1 {
 		t.Fatalf("LLM requests = %d, want initial planning only", fake.requestCount())
+	}
+	if !result.Actionable || len(result.Executions) != 1 || len(result.Skipped) != 1 {
+		t.Fatalf("runTurn() result = %#v, want actionable partial cancellation result", result)
 	}
 	events := closeLoopTraceAndRead(t, logger)
 	found := false
@@ -1462,6 +1482,134 @@ func TestRunTurnCancellationDoesNotReplan(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("trace missing cancellation execution_failure_replan_excluded decision")
+	}
+}
+
+// TestRunTurnStructuralExecutionErrorReturnsPartialResult checks a runner error
+// stops immediately without discarding real attempts or skipped commands.
+func TestRunTurnStructuralExecutionErrorReturnsPartialResult(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"summary":"Run batch.","commands":[{"command":"pwd","purpose":"Inspect","risk":"safe","requires_confirmation":false},{"command":"later","purpose":"Later step","risk":"safe","requires_confirmation":false}]}`})
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	ctxInfo := loopTestContext(t)
+	runnerErr := errors.New("runner transport failed")
+
+	var result turnResult
+	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+			return commandBatchResult{
+				Executions: []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 0, Stdout: capturedStream{Text: ctxInfo.CWD}}},
+				Skipped:    []skippedCommand{{Command: plans[1].Command, Purpose: plans[1].Purpose, Reason: "runner stopped"}},
+			}, runnerErr
+		}
+		var err error
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "run structural failure"))
+		if !errors.Is(err, runnerErr) {
+			t.Fatalf("runTurn() error = %v, want runner error", err)
+		}
+	})
+
+	if fake.requestCount() != 1 || !result.Actionable || len(result.Executions) != 1 || len(result.Skipped) != 1 {
+		t.Fatalf("requests = %d, result = %#v, want one plan and partial result", fake.requestCount(), result)
+	}
+}
+
+// TestRunTurnLaterPlanningErrorReturnsPartialResult checks a failed follow-up
+// model request retains the batch that required that request.
+func TestRunTurnLaterPlanningErrorReturnsPartialResult(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"summary":"Inspect first.","requires_observation":true,"commands":[{"command":"pwd","purpose":"Inspect","risk":"safe","requires_confirmation":false},{"command":"later","purpose":"Later step","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{status: http.StatusBadRequest, content: "bad follow-up request"},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	ctxInfo := loopTestContext(t)
+
+	var result turnResult
+	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+			return commandBatchResult{
+				Executions: []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 0, Stdout: capturedStream{Text: ctxInfo.CWD}}},
+				Skipped:    []skippedCommand{{Command: plans[1].Command, Purpose: plans[1].Purpose, Reason: "not reached"}},
+			}, nil
+		}
+		var err error
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "inspect before planning error"))
+		if err == nil || !strings.Contains(err.Error(), "status 400") {
+			t.Fatalf("runTurn() error = %v, want follow-up HTTP error", err)
+		}
+	})
+
+	if fake.requestCount() != 2 || !result.Actionable || len(result.Executions) != 1 || len(result.Skipped) != 1 {
+		t.Fatalf("requests = %d, result = %#v, want partial result after failed follow-up", fake.requestCount(), result)
+	}
+}
+
+// TestRunTurnRecoveryConfirmationErrorReturnsPartialResult checks failure to
+// read a later plan confirmation does not erase earlier outcomes.
+func TestRunTurnRecoveryConfirmationErrorReturnsPartialResult(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false},{"command":"later","purpose":"Later step","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"summary":"Recover.","commands":[{"command":"pwd","purpose":"Recover","risk":"safe","requires_confirmation":false}]}`},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = true
+	ctxInfo := loopTestContext(t)
+
+	var result turnResult
+	captureMainLoopIO(t, "y\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(_ context.Context, deps runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+			if err := deps.Stdin.Close(); err != nil {
+				t.Fatalf("Close(stdin) error = %v", err)
+			}
+			return commandBatchResult{
+				Executions:         []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 1}},
+				Skipped:            []skippedCommand{{Command: plans[1].Command, Purpose: plans[1].Purpose, Reason: "dependent"}},
+				HadOrdinaryFailure: true,
+			}, nil
+		}
+		var err error
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "confirm recovery"))
+		if err == nil || !strings.Contains(err.Error(), "cannot read plan confirmation") {
+			t.Fatalf("runTurn() error = %v, want recovery confirmation error", err)
+		}
+	})
+
+	if !result.Actionable || len(result.Executions) != 1 || len(result.Skipped) != 1 {
+		t.Fatalf("result = %#v, want partial result after confirmation error", result)
+	}
+}
+
+// TestRunTurnPlanningLimitPromptErrorReturnsPartialResult checks the existing
+// limit prompt's error path preserves accumulated execution state.
+func TestRunTurnPlanningLimitPromptErrorReturnsPartialResult(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false},{"command":"later","purpose":"Later step","risk":"safe","requires_confirmation":false}]}`})
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	cfg.PlanningMaxRounds = 1
+	ctxInfo := loopTestContext(t)
+
+	var result turnResult
+	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(_ context.Context, deps runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+			if err := deps.Stdin.Close(); err != nil {
+				t.Fatalf("Close(stdin) error = %v", err)
+			}
+			return commandBatchResult{
+				Executions:         []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 1}},
+				Skipped:            []skippedCommand{{Command: plans[1].Command, Purpose: plans[1].Purpose, Reason: "dependent"}},
+				HadOrdinaryFailure: true,
+			}, nil
+		}
+		var err error
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "reach planning limit"))
+		if err == nil {
+			t.Fatal("runTurn() error = nil, want planning-limit prompt error")
+		}
+	})
+
+	if !result.Actionable || len(result.Executions) != 1 || len(result.Skipped) != 1 {
+		t.Fatalf("result = %#v, want partial result after planning-limit error", result)
 	}
 }
 
@@ -2025,6 +2173,48 @@ func TestRunInteractiveRetryCommandRepeatsLastFailedInstruction(t *testing.T) {
 	}
 	if !strings.Contains(output, "Retrying: build it") {
 		t.Fatalf("output = %q, want retry status", output)
+	}
+}
+
+// TestRunInteractiveCancellationRemembersPartialObservations checks a cancelled
+// turn remains retryable while its real execution reaches session memory.
+func TestRunInteractiveCancellationRemembersPartialObservations(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"summary":"Inspect once.","commands":[{"command":"pwd","purpose":"Inspect before cancellation","risk":"safe","requires_confirmation":false},{"command":"wait","purpose":"Cancelled step","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"summary":"Retry received partial context.","commands":[]}`},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	ctxInfo := loopTestContext(t)
+	calls := 0
+
+	output := captureMainLoopIO(t, "inspect once\n/retry\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+			calls++
+			return commandBatchResult{Executions: []commandExecution{{
+				Command:  plans[0].Command,
+				Purpose:  plans[0].Purpose,
+				ExitCode: 0,
+				Stdout:   capturedStream{Text: "observed-before-cancel"},
+			}}}, context.Canceled
+		}
+		runInteractive(t.Context(), deps, false, cfg, &ctxInfo)
+	})
+
+	if calls != 1 || fake.requestCount() != 2 {
+		t.Fatalf("execution calls = %d, LLM requests = %d, want one cancelled execution and one retry plan", calls, fake.requestCount())
+	}
+	retryBody := fake.requestBodies()[1]
+	for _, snippet := range []string{"last_retry_instruction: inspect once", "Recent reusable observations:", "Inspect before cancellation", "observed-before-cancel"} {
+		if !strings.Contains(retryBody, snippet) {
+			t.Fatalf("retry prompt missing %q: %q", snippet, retryBody)
+		}
+	}
+	if strings.Contains(retryBody, "Recent session context:") {
+		t.Fatalf("retry prompt treated cancellation as successful history: %q", retryBody)
+	}
+	if !strings.Contains(output, "Request cancelled.") || !strings.Contains(output, "Retrying: inspect once") {
+		t.Fatalf("output = %q, want cancellation and retry status", output)
 	}
 }
 

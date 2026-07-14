@@ -495,7 +495,8 @@ func TestExecuteCommandsTracksTimeoutWithoutOrdinaryFailure(t *testing.T) {
 	cfg.ContinueOnError = true
 	cfg.ShowSystemOutput = false
 	cfg.ShowCommandPopup = false
-	cfg.CommandTimeout = 20 * time.Millisecond
+	// Leave enough headroom for the independent command under parallel package load.
+	cfg.CommandTimeout = 250 * time.Millisecond
 	ctxInfo := loopTestContext(t)
 	dependent := filepath.Join(ctxInfo.CWD, "dependent")
 	independent := filepath.Join(ctxInfo.CWD, "independent")
