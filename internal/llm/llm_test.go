@@ -21,6 +21,49 @@ func TestParseResponseAcceptsExtraTrailingBrace(t *testing.T) {
 	}
 }
 
+// TestParseResponseDefaultsFailureIndependenceToFalse checks omitted dependency
+// metadata keeps the conservative zero value.
+func TestParseResponseDefaultsFailureIndependenceToFalse(t *testing.T) {
+	parsed, err := parseResponse(`{"summary":"Run one command.","commands":[{"command":"pwd","purpose":"Print directory","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`)
+	if err != nil {
+		t.Fatalf("parseResponse() error = %v", err)
+	}
+	if parsed.Commands[0].IndependentOnFailure {
+		t.Fatal("IndependentOnFailure = true, want conservative false default")
+	}
+}
+
+// TestNormalizePlanPreservesFailureIndependence checks explicit independence
+// survives local plan normalization.
+func TestNormalizePlanPreservesFailureIndependence(t *testing.T) {
+	_, plans, err := normalizePlan(Response{
+		Summary: "Continue independent inspection.",
+		Commands: []Command{{
+			Command:              "pwd",
+			Purpose:              "Print directory",
+			Risk:                 "safe",
+			IndependentOnFailure: true,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("normalizePlan() error = %v", err)
+	}
+	if len(plans) != 1 || !plans[0].IndependentOnFailure {
+		t.Fatalf("plans = %#v, want independent command", plans)
+	}
+}
+
+// TestBuildSystemPromptDefinesFailureIndependence checks the planner receives
+// the conservative command-batch dependency contract.
+func TestBuildSystemPromptDefinesFailureIndependence(t *testing.T) {
+	prompt := buildSystemPrompt()
+	for _, snippet := range []string{"independent_on_failure", "same command batch", "false"} {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("buildSystemPrompt() missing %q", snippet)
+		}
+	}
+}
+
 // TestTrimForSummaryHandlesNonPositiveLimit checks defensive callers cannot panic trimming output.
 func TestTrimForSummaryHandlesNonPositiveLimit(t *testing.T) {
 	if got := trimForSummary("abcdef", 0, truncationStart); got != "" {

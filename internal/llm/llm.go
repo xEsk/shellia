@@ -77,6 +77,7 @@ type Command struct {
 	Purpose              string `json:"purpose"`
 	Risk                 string `json:"risk"`
 	RequiresConfirmation bool   `json:"requires_confirmation"`
+	IndependentOnFailure bool   `json:"independent_on_failure"`
 	Interactive          bool   `json:"interactive"`
 	InteractiveReason    string `json:"interactive_reason"`
 }
@@ -546,6 +547,7 @@ func normalizePlan(response Response) (string, []commandPlan, error) {
 			RequiresConfirmation: item.RequiresConfirmation || local.RequiresConfirmation,
 			Classification:       local.Classification,
 			LocalSafe:            local.Classification == classificationSafe && !local.RequiresConfirmation,
+			IndependentOnFailure: item.IndependentOnFailure,
 			Interactive:          item.Interactive,
 			InteractiveReason:    strings.TrimSpace(item.InteractiveReason),
 		})
@@ -605,10 +607,12 @@ func buildSystemPromptSentences() []string {
 		"When investigating how a local tool or dependency is installed or managed, do not stop after a single unsuccessful ownership check if other plausible local discovery paths still exist.",
 		"Do not refuse only because a referenced file has an unusual extension; if needed, inspect it safely first.",
 		"If the task is ambiguous, choose the safest minimal plan.",
+		"Set independent_on_failure=true only when the command remains safe and useful if any earlier command in the same command batch fails.",
+		"When uncertain, set independent_on_failure=false. The field never lowers risk or confirmation requirements.",
 
 		"Output contract:",
 		"Return only strict JSON with this exact schema:",
-		`{"summary":"short explanation","requires_observation":false,"observation_reason":"","requires_input":false,"input_reason":"","commands":[{"command":"string","purpose":"string","risk":"safe|medium|high","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}.`,
+		`{"summary":"short explanation","requires_observation":false,"observation_reason":"","requires_input":false,"input_reason":"","commands":[{"command":"string","purpose":"string","risk":"safe|medium|high","requires_confirmation":true,"independent_on_failure":false,"interactive":false,"interactive_reason":""}]}.`,
 		"The commands array may contain multiple commands in execution order.",
 		"Estimate risk and confirmation need, but Shellia's local command policy is final.",
 		"Any command that changes the filesystem, uses sudo, changes system users, permissions, services, packages, or network state must have requires_confirmation=true.",
@@ -647,8 +651,10 @@ func buildPlanOnlySystemPromptSentences() []string {
 		"The observation_reason must say what to do if the output shows a usable value, and what to do if it does not.",
 		"If a later command cannot be exact until the user chooses a value from output, describe the command shape in observation_reason using the value by name, not as a placeholder command.",
 		"If exact planning is impossible because a mandatory user-provided detail is missing, return no commands and set requires_input=true with a short input_reason.",
+		"Set independent_on_failure=true only when the command remains safe and useful if any earlier command in the same command batch fails.",
+		"When uncertain, set independent_on_failure=false. The field never lowers risk or confirmation requirements.",
 		"Return only strict JSON with this exact schema:",
-		`{"summary":"short operational plan summary","requires_observation":false,"observation_reason":"","requires_input":false,"input_reason":"","commands":[{"command":"string","purpose":"string","risk":"safe|medium|high","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}.`,
+		`{"summary":"short operational plan summary","requires_observation":false,"observation_reason":"","requires_input":false,"input_reason":"","commands":[{"command":"string","purpose":"string","risk":"safe|medium|high","requires_confirmation":true,"independent_on_failure":false,"interactive":false,"interactive_reason":""}]}.`,
 		"The commands array may contain multiple commands in manual execution order.",
 		"Any command that changes the filesystem, uses sudo, changes system users, permissions, services, packages, or network state must have requires_confirmation=true.",
 		"If a command launches a prompt, REPL, TUI, password prompt, interactive installer, fuzzy finder, or anything that needs a real terminal session, set interactive=true and explain why in interactive_reason.",
@@ -790,6 +796,8 @@ func buildUserPromptRules() []string {
 		"- If a command needs a real terminal session, set interactive=true and explain why in interactive_reason.",
 		"- If observed output shows a confirmation prompt or terminal question, do not repeat the same non-interactive command; choose a known non-interactive variant with high confidence or set interactive=true.",
 		"- If Shellia already asks the user to confirm a risky command, avoid a second in-command confirmation prompt when a known non-interactive flag is available with high confidence.",
+		"- Set independent_on_failure=true only when the command remains safe and useful if any earlier command in the same command batch fails.",
+		"- When uncertain, set independent_on_failure=false. The field never lowers risk or confirmation requirements.",
 
 		"Fallback policy:",
 		"- If a mandatory user-provided detail is still missing, return no commands and explain the missing detail in summary and input_reason.",

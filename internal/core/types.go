@@ -65,6 +65,7 @@ type TurnResult struct {
 	Actionable bool
 	Plans      []CommandPlan
 	Executions []CommandExecution
+	Skipped    []SkippedCommand
 }
 
 // CommandPlan is the combined result of LLM planning and local safety classification.
@@ -75,8 +76,24 @@ type CommandPlan struct {
 	RequiresConfirmation bool
 	Classification       string
 	LocalSafe            bool
+	IndependentOnFailure bool
 	Interactive          bool
 	InteractiveReason    string
+}
+
+// SkippedCommand stores a command omitted from execution and the reason why.
+type SkippedCommand struct {
+	Command string
+	Purpose string
+	Reason  string
+}
+
+// CommandBatchResult stores command executions, skips, and failure categories.
+type CommandBatchResult struct {
+	Executions         []CommandExecution
+	Skipped            []SkippedCommand
+	HadOrdinaryFailure bool
+	HadTimeout         bool
 }
 
 // CommandExecution stores the captured output and exit code for one command.

@@ -15,6 +15,7 @@ type (
 	observationMemory  = core.ObservationMemory
 	sessionState       = core.SessionState
 	commandExecution   = core.CommandExecution
+	skippedCommand     = core.SkippedCommand
 	capturedStream     = core.CapturedStream
 	commandPlan        = core.CommandPlan
 	truncationStrategy = core.TruncationStrategy
