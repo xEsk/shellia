@@ -329,14 +329,41 @@ func getContext(_ context.Context, cfg config) (contextInfo, error) {
 	return ctx, nil
 }
 
-// executeCommands runs the sequential plan, stopping on the first unrecoverable error.
-func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan) ([]commandExecution, error) {
+const skippedAfterFailureReason = "dependent on an earlier failed command"
+
+// executeCommands runs the sequential plan and returns its structured batch outcome.
+func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan) (commandBatchResult, error) {
 	deps = deps.withDefaults()
 	reader := bufio.NewReader(deps.Stdin)
-	executions := make([]commandExecution, 0, len(plans))
+	batch := commandBatchResult{
+		Executions: make([]commandExecution, 0, len(plans)),
+		Skipped:    make([]skippedCommand, 0, len(plans)),
+	}
+	blocked := false
 	turnID := traceTurnID(ctx)
 
 	for index, plan := range plans {
+		if blocked && !plan.IndependentOnFailure {
+			skipped := skippedCommand{
+				Command: plan.Command,
+				Purpose: plan.Purpose,
+				Reason:  skippedAfterFailureReason,
+			}
+			batch.Skipped = append(batch.Skipped, skipped)
+			box := printCommandExecutionTo(deps.Stdout, ui, cfg, index+1, len(plans), plan)
+			box.Section("skipped", colorDim)
+			box.Text(skipped.Reason, colorDim)
+			box.Close()
+			deps.Trace.Record("command_skipped", turnID, "", -1, map[string]any{
+				"step":        index + 1,
+				"total_steps": len(plans),
+				"command":     skipped.Command,
+				"purpose":     skipped.Purpose,
+				"reason":      skipped.Reason,
+			})
+			continue
+		}
+
 		box := printCommandExecutionTo(deps.Stdout, ui, cfg, index+1, len(plans), plan)
 		effectiveCommand := plan.Command
 		interactive := plan.Interactive
@@ -357,11 +384,11 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 					"error":   err.Error(),
 				})
 				box.Close()
-				return nil, fmt.Errorf("cannot read confirmation: %w", err)
+				return batch, fmt.Errorf("cannot read confirmation: %w", err)
 			}
 			if decision == confirmDecisionCancel {
 				box.Close()
-				return nil, errAborted
+				return batch, errAborted
 			}
 			if decision == confirmDecisionEdit {
 				effectiveCommand = editedCommand
@@ -399,7 +426,20 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 			Timeout:     cfg.CommandTimeout,
 			Interactive: interactive,
 		})
-		executions = append(executions, commandExecution{
+		if errors.Is(ctx.Err(), context.Canceled) {
+			deps.Trace.Record("command_error", turnID, "", -1, map[string]any{
+				"step":      index + 1,
+				"command":   effectiveCommand,
+				"exit_code": result.ExitCode,
+				"error":     context.Canceled.Error(),
+			})
+			if box != nil {
+				box.Text("interrupted", colorDim)
+				box.Close()
+			}
+			return batch, context.Canceled
+		}
+		batch.Executions = append(batch.Executions, commandExecution{
 			Command:  effectiveCommand,
 			Purpose:  plan.Purpose,
 			Stdout:   result.Output.Stdout,
@@ -409,7 +449,7 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 		deps.Trace.Record("command_end", turnID, "", -1, map[string]any{
 			"step":        index + 1,
 			"total_steps": len(plans),
-			"execution":   traceExecutionData(executions[len(executions)-1]),
+			"execution":   traceExecutionData(batch.Executions[len(batch.Executions)-1]),
 		})
 		if err != nil {
 			deps.Trace.Record("command_error", turnID, "", -1, map[string]any{
@@ -435,13 +475,27 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 			}
 			var promptErr *interactivePromptError
 			if errors.As(err, &promptErr) {
-				return executions, err
+				return batch, err
 			}
-			if cfg.ContinueOnError {
-				printWarningTo(deps.Stderr, ui, err.Error())
-				continue
+			if errors.Is(err, errAborted) {
+				return batch, err
 			}
-			return executions, err
+
+			var runErr *commandRunError
+			if !errors.As(err, &runErr) {
+				return batch, err
+			}
+			blocked = true
+			if runErr.TimedOut {
+				batch.HadTimeout = true
+			} else {
+				batch.HadOrdinaryFailure = true
+			}
+			if !cfg.ContinueOnError {
+				return batch, nil
+			}
+			printWarningTo(deps.Stderr, ui, err.Error())
+			continue
 		}
 
 		applySessionState(ctxInfo, effectiveCommand, result.ExitCode)
@@ -451,7 +505,7 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 		}
 	}
 
-	return executions, nil
+	return batch, nil
 }
 
 // executeManualCommand runs a direct shell command inside the current Shellia session.

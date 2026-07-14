@@ -9,14 +9,16 @@ import (
 )
 
 type (
-	config           = configpkg.Config
-	contextInfo      = core.ContextInfo
-	commandPlan      = core.CommandPlan
-	commandExecution = core.CommandExecution
-	capturedStream   = core.CapturedStream
-	stepBox          = uipkg.StepBox
-	confirmDecision  = uipkg.ConfirmDecision
-	traceLogger      = tracepkg.Logger
+	config             = configpkg.Config
+	contextInfo        = core.ContextInfo
+	commandPlan        = core.CommandPlan
+	commandExecution   = core.CommandExecution
+	commandBatchResult = core.CommandBatchResult
+	skippedCommand     = core.SkippedCommand
+	capturedStream     = core.CapturedStream
+	stepBox            = uipkg.StepBox
+	confirmDecision    = uipkg.ConfirmDecision
+	traceLogger        = tracepkg.Logger
 )
 
 const (

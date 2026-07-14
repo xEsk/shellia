@@ -31,6 +31,8 @@ type (
 	turnResult             = core.TurnResult
 	commandPlan            = core.CommandPlan
 	commandExecution       = core.CommandExecution
+	commandBatchResult     = core.CommandBatchResult
+	skippedCommand         = core.SkippedCommand
 	manualRenderMode       = executorpkg.ManualRenderMode
 	interactivePromptError = executorpkg.InteractivePromptError
 	traceLogger            = tracepkg.Logger

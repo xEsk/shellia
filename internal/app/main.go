@@ -813,6 +813,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 
 	printHeaderTo(deps.Stdout, ui, cfg, *ctxInfo)
 	allExecutions := make([]commandExecution, 0, 4)
+	allSkipped := make([]skippedCommand, 0, 4)
 	lastSummary := ""
 	lastPlans := []commandPlan(nil)
 	planningRoundLimit := cfg.PlanningMaxRounds
@@ -891,15 +892,16 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		if cfg.PlanOnly {
 			cfg.PlanOnly = false
 		}
-		executions, err := deps.ExecuteCommands(ctx, deps, ui, cfg, ctxInfo, plans)
+		batch, err := deps.ExecuteCommands(ctx, deps, ui, cfg, ctxInfo, plans)
+		allExecutions = append(allExecutions, batch.Executions...)
+		allSkipped = append(allSkipped, batch.Skipped...)
 		if err != nil {
 			if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {
 				return turnResult{}, err
 			}
-			if len(executions) == 0 {
+			if len(batch.Executions) == 0 {
 				return turnResult{}, err
 			}
-			allExecutions = append(allExecutions, executions...)
 			if shouldRetryAfterExecutionError(err, round, planningRoundLimit) {
 				continue
 			}
@@ -927,8 +929,6 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			}
 			break
 		}
-		allExecutions = append(allExecutions, executions...)
-
 		if !parsed.RequiresObservation {
 			break
 		}
@@ -980,6 +980,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		Actionable: true,
 		Plans:      lastPlans,
 		Executions: allExecutions,
+		Skipped:    allSkipped,
 	}, nil
 }
 

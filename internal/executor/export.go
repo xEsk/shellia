@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 
+	"shellia/internal/core"
 	tracepkg "shellia/internal/trace"
 )
 
@@ -54,8 +55,8 @@ func GetContext(parentCtx context.Context, cfg config) (contextInfo, error) {
 	return getContext(parentCtx, cfg)
 }
 
-// ExecuteCommands runs the sequential plan, stopping on the first unrecoverable error.
-func ExecuteCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan) ([]commandExecution, error) {
+// ExecuteCommands runs the sequential plan and returns its structured batch outcome.
+func ExecuteCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan) (core.CommandBatchResult, error) {
 	return executeCommands(ctx, deps, ui, cfg, ctxInfo, plans)
 }
 

@@ -9,7 +9,7 @@ import (
 )
 
 // commandRunner executes a model-generated command plan.
-type commandRunner func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan) ([]commandExecution, error)
+type commandRunner func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan) (commandBatchResult, error)
 
 // manualCommandRunner executes a user-entered shell command.
 type manualCommandRunner func(context.Context, runtimeDeps, bool, config, *contextInfo, string, manualRenderMode) (commandExecution, error)
@@ -71,7 +71,7 @@ func executorDeps(deps runtimeDeps) executorpkg.RuntimeDeps {
 	}
 }
 
-func executeCommands(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan) ([]commandExecution, error) {
+func executeCommands(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan) (commandBatchResult, error) {
 	return executorpkg.ExecuteCommands(ctx, executorDeps(deps), ui, cfg, ctxInfo, plans)
 }
 

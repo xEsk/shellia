@@ -392,6 +392,180 @@ func TestStaticFallbackAnswer(t *testing.T) {
 	}
 }
 
+// TestExecuteCommandsContinuesOnlyIndependentStepsAfterFailure checks dependent commands are skipped after an ordinary failure.
+func TestExecuteCommandsContinuesOnlyIndependentStepsAfterFailure(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.YesSafe = true
+	cfg.ContinueOnError = true
+	cfg.ShowSystemOutput = false
+	cfg.ShowCommandPopup = false
+	ctxInfo := loopTestContext(t)
+	dependent := filepath.Join(ctxInfo.CWD, "dependent")
+	independent := filepath.Join(ctxInfo.CWD, "independent")
+	plans := []commandPlan{
+		{Command: "false", Purpose: "Fail", Classification: classificationSafe, LocalSafe: true},
+		{Command: "touch " + dependent, Purpose: "Dependent", Classification: classificationSafe, LocalSafe: true},
+		{Command: "touch " + independent, Purpose: "Independent", Classification: classificationSafe, LocalSafe: true, IndependentOnFailure: true},
+	}
+	logger := openLoopTrace(t)
+	turnID := logger.StartTurn(nil)
+
+	var batch commandBatchResult
+	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
+		deps.Trace = logger
+		var err error
+		batch, err = executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans)
+		if err != nil {
+			t.Fatalf("executeCommands() error = %v", err)
+		}
+	})
+
+	if !batch.HadOrdinaryFailure || batch.HadTimeout {
+		t.Fatalf("batch flags = %#v, want ordinary failure only", batch)
+	}
+	if len(batch.Executions) != 2 || len(batch.Skipped) != 1 {
+		t.Fatalf("batch = %#v, want 2 executions and 1 skip", batch)
+	}
+	if batch.Skipped[0].Command != plans[1].Command {
+		t.Fatalf("skipped = %#v, want dependent command", batch.Skipped)
+	}
+	if _, err := os.Stat(dependent); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dependent marker error = %v, want os.ErrNotExist", err)
+	}
+	if _, err := os.Stat(independent); err != nil {
+		t.Fatalf("independent marker error = %v, want file", err)
+	}
+
+	events := closeLoopTraceAndRead(t, logger)
+	skippedEvents := traceEventsByName(events, "command_skipped")
+	if len(skippedEvents) != 1 {
+		t.Fatalf("command_skipped events = %d, want 1", len(skippedEvents))
+	}
+	data := traceEventData(t, skippedEvents[0])
+	if data["command"] != plans[1].Command || data["reason"] != skippedAfterFailureReason {
+		t.Fatalf("command_skipped data = %#v, want dependent command and reason", data)
+	}
+	if len(traceEventsByName(events, "command_confirmation")) != 2 || len(traceEventsByName(events, "command_start")) != 2 {
+		t.Fatalf("skipped command emitted confirmation or start event")
+	}
+}
+
+// TestExecuteCommandsStopsBatchWhenContinueOnErrorIsFalse checks a failure stops all later commands.
+func TestExecuteCommandsStopsBatchWhenContinueOnErrorIsFalse(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.YesSafe = true
+	cfg.ContinueOnError = false
+	cfg.ShowSystemOutput = false
+	cfg.ShowCommandPopup = false
+	ctxInfo := loopTestContext(t)
+	dependent := filepath.Join(ctxInfo.CWD, "dependent")
+	independent := filepath.Join(ctxInfo.CWD, "independent")
+	plans := []commandPlan{
+		{Command: "false", Purpose: "Fail", Classification: classificationSafe, LocalSafe: true},
+		{Command: "touch " + dependent, Purpose: "Dependent", Classification: classificationSafe, LocalSafe: true},
+		{Command: "touch " + independent, Purpose: "Independent", Classification: classificationSafe, LocalSafe: true, IndependentOnFailure: true},
+	}
+
+	var batch commandBatchResult
+	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
+		var err error
+		batch, err = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans)
+		if err != nil {
+			t.Fatalf("executeCommands() error = %v", err)
+		}
+	})
+
+	if !batch.HadOrdinaryFailure || batch.HadTimeout {
+		t.Fatalf("batch flags = %#v, want ordinary failure only", batch)
+	}
+	if len(batch.Executions) != 1 || len(batch.Skipped) != 0 {
+		t.Fatalf("batch = %#v, want one execution and no recorded skips", batch)
+	}
+	for _, marker := range []string{dependent, independent} {
+		if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("marker %q error = %v, want os.ErrNotExist", marker, err)
+		}
+	}
+}
+
+// TestExecuteCommandsTracksTimeoutWithoutOrdinaryFailure checks timeouts block only dependent commands.
+func TestExecuteCommandsTracksTimeoutWithoutOrdinaryFailure(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.YesSafe = true
+	cfg.ContinueOnError = true
+	cfg.ShowSystemOutput = false
+	cfg.ShowCommandPopup = false
+	cfg.CommandTimeout = 20 * time.Millisecond
+	ctxInfo := loopTestContext(t)
+	dependent := filepath.Join(ctxInfo.CWD, "dependent")
+	independent := filepath.Join(ctxInfo.CWD, "independent")
+	plans := []commandPlan{
+		{Command: "sleep 1", Purpose: "Time out", Classification: classificationSafe, LocalSafe: true},
+		{Command: "touch " + dependent, Purpose: "Dependent", Classification: classificationSafe, LocalSafe: true},
+		{Command: "touch " + independent, Purpose: "Independent", Classification: classificationSafe, LocalSafe: true, IndependentOnFailure: true},
+	}
+
+	var batch commandBatchResult
+	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
+		var err error
+		batch, err = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans)
+		if err != nil {
+			t.Fatalf("executeCommands() error = %v", err)
+		}
+	})
+
+	if batch.HadOrdinaryFailure || !batch.HadTimeout {
+		t.Fatalf("batch flags = %#v, want timeout only", batch)
+	}
+	if len(batch.Executions) != 2 || len(batch.Skipped) != 1 {
+		t.Fatalf("batch = %#v, want 2 executions and 1 skip", batch)
+	}
+	if _, err := os.Stat(dependent); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dependent marker error = %v, want os.ErrNotExist", err)
+	}
+	if _, err := os.Stat(independent); err != nil {
+		t.Fatalf("independent marker error = %v, want file", err)
+	}
+}
+
+// TestExecuteCommandsStopsImmediatelyOnCancellation checks parent cancellation is returned without a fabricated execution.
+func TestExecuteCommandsStopsImmediatelyOnCancellation(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.YesSafe = true
+	cfg.ContinueOnError = true
+	cfg.ShowSystemOutput = false
+	cfg.ShowCommandPopup = false
+	cfg.CommandTimeout = 10 * time.Second
+	ctxInfo := loopTestContext(t)
+	later := filepath.Join(ctxInfo.CWD, "later")
+	plans := []commandPlan{
+		{Command: "sleep 10", Purpose: "Wait", Classification: classificationSafe, LocalSafe: true},
+		{Command: "touch " + later, Purpose: "Later", Classification: classificationSafe, LocalSafe: true, IndependentOnFailure: true},
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	var batch commandBatchResult
+	var runErr error
+	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
+		batch, runErr = executeCommands(ctx, deps, false, cfg, &ctxInfo, plans)
+	})
+
+	if !errors.Is(runErr, context.Canceled) {
+		t.Fatalf("executeCommands() error = %v, want context.Canceled", runErr)
+	}
+	if len(batch.Executions) != 0 || len(batch.Skipped) != 0 || batch.HadOrdinaryFailure || batch.HadTimeout {
+		t.Fatalf("batch = %#v, want empty completed prefix", batch)
+	}
+	if _, err := os.Stat(later); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("later marker error = %v, want os.ErrNotExist", err)
+	}
+}
+
 // TestExecuteCommandsTraceRecordsCapturedOutput checks command output metadata is traceable.
 func TestExecuteCommandsTraceRecordsCapturedOutput(t *testing.T) {
 	cfg := defaultConfig()
@@ -413,12 +587,12 @@ func TestExecuteCommandsTraceRecordsCapturedOutput(t *testing.T) {
 			Classification: classificationSafe,
 			LocalSafe:      true,
 		}}
-		executions, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans)
+		batch, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
-		if len(executions) != 1 {
-			t.Fatalf("executions = %d, want 1", len(executions))
+		if len(batch.Executions) != 1 {
+			t.Fatalf("executions = %d, want 1", len(batch.Executions))
 		}
 	})
 
@@ -464,9 +638,12 @@ func TestExecuteCommandsTraceRecordsCommandErrors(t *testing.T) {
 			Classification: classificationSafe,
 			LocalSafe:      true,
 		}}
-		_, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans)
-		if err == nil {
-			t.Fatalf("executeCommands() error = nil, want command failure")
+		batch, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans)
+		if err != nil {
+			t.Fatalf("executeCommands() error = %v", err)
+		}
+		if !batch.HadOrdinaryFailure || batch.HadTimeout {
+			t.Fatalf("batch flags = %#v, want ordinary failure only", batch)
 		}
 	})
 
@@ -504,12 +681,12 @@ func TestExecuteCommandsTraceRecordsEditedCommand(t *testing.T) {
 			Classification: classificationSafe,
 			LocalSafe:      true,
 		}}
-		executions, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans)
+		batch, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
-		if len(executions) != 1 || executions[0].Command != "printf edited" {
-			t.Fatalf("executions = %#v, want edited command", executions)
+		if len(batch.Executions) != 1 || batch.Executions[0].Command != "printf edited" {
+			t.Fatalf("executions = %#v, want edited command", batch.Executions)
 		}
 	})
 

@@ -913,13 +913,13 @@ func TestRunTurnTraceRecordsSummaryPromptAndResponse(t *testing.T) {
 
 	captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
 		deps.Trace = logger
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) ([]commandExecution, error) {
-			return []commandExecution{{
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+			return commandBatchResult{Executions: []commandExecution{{
 				Command:  plans[0].Command,
 				Purpose:  plans[0].Purpose,
 				ExitCode: 0,
 				Stdout:   capturedStream{Text: "shellia-loop", TotalBytes: 12, KeptBytes: 12},
-			}}, nil
+			}}}, nil
 		}
 		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "print marker")); err != nil {
 			t.Fatalf("runTurn() error = %v", err)
@@ -960,9 +960,9 @@ func TestRunTurnDeclinesPlanWithoutExecuting(t *testing.T) {
 
 	var result turnResult
 	output := captureMainLoopIO(t, "no\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan) ([]commandExecution, error) {
+		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan) (commandBatchResult, error) {
 			executed = true
-			return nil, nil
+			return commandBatchResult{}, nil
 		}
 
 		var err error
@@ -998,9 +998,9 @@ func TestRunTurnPlanOnlyPrintsCommandsWithoutExecuting(t *testing.T) {
 
 	var result turnResult
 	output := captureMainLoopIO(t, "no\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan) ([]commandExecution, error) {
+		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan) (commandBatchResult, error) {
 			executed = true
-			return nil, nil
+			return commandBatchResult{}, nil
 		}
 
 		var err error
@@ -1044,13 +1044,13 @@ func TestRunTurnPlanOnlyExecutesAcceptedPlan(t *testing.T) {
 
 	var result turnResult
 	output := captureMainLoopIO(t, "y\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) ([]commandExecution, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
 			gotPlans = append([]commandPlan{}, plans...)
-			return []commandExecution{{
+			return commandBatchResult{Executions: []commandExecution{{
 				Command:  plans[0].Command,
 				Purpose:  plans[0].Purpose,
 				ExitCode: 0,
-			}}, nil
+			}}}, nil
 		}
 
 		var err error
@@ -1145,14 +1145,14 @@ func TestRunTurnUsesDiscoveryRepairForRecoverableEmptyPlan(t *testing.T) {
 	var gotPlans []commandPlan
 	var result turnResult
 	output := captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) ([]commandExecution, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
 			gotPlans = append([]commandPlan{}, plans...)
-			return []commandExecution{{
+			return commandBatchResult{Executions: []commandExecution{{
 				Command:  plans[0].Command,
 				Purpose:  plans[0].Purpose,
 				ExitCode: 0,
 				Stdout:   capturedStream{Text: "/usr/local/bin/shellia"},
-			}}, nil
+			}}}, nil
 		}
 
 		var err error
@@ -1197,13 +1197,13 @@ func TestRunTurnTraceRecordsDiscoveryRepair(t *testing.T) {
 
 	captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
 		deps.Trace = logger
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) ([]commandExecution, error) {
-			return []commandExecution{{
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+			return commandBatchResult{Executions: []commandExecution{{
 				Command:  plans[0].Command,
 				Purpose:  plans[0].Purpose,
 				ExitCode: 0,
 				Stdout:   capturedStream{Text: "/usr/local/bin/shellia"},
-			}}, nil
+			}}}, nil
 		}
 		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "update shellia")); err != nil {
 			t.Fatalf("runTurn() error = %v", err)
@@ -1247,8 +1247,8 @@ func TestRunTurnUsesBoundedExplicitGitObservation(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 
 	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) ([]commandExecution, error) {
-			return []commandExecution{{
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+			return commandBatchResult{Executions: []commandExecution{{
 				Command:  plans[0].Command,
 				Purpose:  plans[0].Purpose,
 				ExitCode: 0,
@@ -1258,7 +1258,7 @@ func TestRunTurnUsesBoundedExplicitGitObservation(t *testing.T) {
 					KeptBytes:  20,
 					Truncated:  true,
 				},
-			}}, nil
+			}}}, nil
 		}
 
 		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "show me the Git status")); err != nil {
@@ -1306,14 +1306,14 @@ func TestRunTurnCanContinueAfterPlanningRoundLimit(t *testing.T) {
 
 	var result turnResult
 	output := captureMainLoopIO(t, "y\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) ([]commandExecution, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
 			executed = append(executed, plans[0].Command)
-			return []commandExecution{{
+			return commandBatchResult{Executions: []commandExecution{{
 				Command:  plans[0].Command,
 				Purpose:  plans[0].Purpose,
 				ExitCode: 0,
 				Stdout:   capturedStream{Text: strings.TrimPrefix(plans[0].Command, "echo ")},
-			}}, nil
+			}}}, nil
 		}
 
 		var err error
@@ -1355,13 +1355,13 @@ func TestRunTurnSummarizesWhenPlanningRoundLimitIsDeclined(t *testing.T) {
 
 	var result turnResult
 	output := captureMainLoopIO(t, "n\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) ([]commandExecution, error) {
-			return []commandExecution{{
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+			return commandBatchResult{Executions: []commandExecution{{
 				Command:  plans[0].Command,
 				Purpose:  plans[0].Purpose,
 				ExitCode: 0,
 				Stdout:   capturedStream{Text: "first"},
-			}}, nil
+			}}}, nil
 		}
 
 		var err error
@@ -1483,9 +1483,9 @@ func TestRunInteractivePlanCommandPlansWithoutExecuting(t *testing.T) {
 	executed := false
 
 	output := captureMainLoopIO(t, "/plan create marker\nno\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan) ([]commandExecution, error) {
+		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan) (commandBatchResult, error) {
 			executed = true
-			return nil, nil
+			return commandBatchResult{}, nil
 		}
 		runInteractive(t.Context(), deps, false, cfg, &ctxInfo)
 	})
