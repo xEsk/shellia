@@ -116,12 +116,6 @@ func detectRuntimeHint(instruction string, turn turnResult) string {
 	if strings.Contains(normalized, "php8") || strings.Contains(normalized, "php 8") {
 		return strings.TrimSpace(instruction)
 	}
-	for _, plan := range turn.Plans {
-		command := normalizeForMemory(plan.Command)
-		if strings.Contains(command, "docker") || strings.Contains(command, "php") {
-			return strings.TrimSpace(instruction)
-		}
-	}
 	for _, execution := range turn.Executions {
 		if execution.ExitCode != 0 {
 			continue

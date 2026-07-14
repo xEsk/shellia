@@ -398,6 +398,12 @@ func TestStaticFallbackAnswer(t *testing.T) {
 			skipped: []skippedCommand{{Command: "touch blocked", Purpose: "Blocked", Reason: skippedAfterFailureReason}},
 			want:    "Partial work.\nSome commands were skipped and were not executed.",
 		},
+		{
+			name:    "skipped work with empty summary",
+			summary: "  \n\t",
+			skipped: []skippedCommand{{Command: "touch blocked", Purpose: "Blocked", Reason: skippedAfterFailureReason}},
+			want:    "Some commands were skipped and were not executed.",
+		},
 	}
 
 	for _, tt := range cases {

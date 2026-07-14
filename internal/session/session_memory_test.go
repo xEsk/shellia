@@ -246,10 +246,30 @@ func TestDetectRuntimeHint(t *testing.T) {
 		}
 	})
 
-	t.Run("detects docker in plan commands", func(t *testing.T) {
+	t.Run("ignores unexecuted docker plan", func(t *testing.T) {
 		turn := turnResult{Plans: []commandPlan{{Command: "docker exec app php artisan"}}}
+		if got := detectRuntimeHint("run migration", turn); got != "" {
+			t.Fatalf("detectRuntimeHint() = %q, want no hint from unexecuted plan", got)
+		}
+	})
+
+	t.Run("ignores skipped php plan", func(t *testing.T) {
+		turn := turnResult{
+			Plans:      []commandPlan{{Command: "php artisan migrate"}},
+			Executions: []commandExecution{{Command: "git status --short", ExitCode: 0}},
+		}
+		if got := detectRuntimeHint("run migration", turn); got != "" {
+			t.Fatalf("detectRuntimeHint() = %q, want no hint from skipped plan", got)
+		}
+	})
+
+	t.Run("detects docker in successful execution", func(t *testing.T) {
+		turn := turnResult{
+			Plans:      []commandPlan{{Command: "docker exec app php artisan"}},
+			Executions: []commandExecution{{Command: "docker exec app php artisan", ExitCode: 0}},
+		}
 		if got := detectRuntimeHint("run migration", turn); got == "" {
-			t.Error("expected non-empty hint from plan")
+			t.Error("expected non-empty hint from successful execution")
 		}
 	})
 
@@ -261,10 +281,13 @@ func TestDetectRuntimeHint(t *testing.T) {
 }
 
 func TestDetectRuntimeHintIgnoresFailedCommands(t *testing.T) {
-	turn := turnResult{Executions: []commandExecution{
-		{Command: "docker exec app php artisan migrate", ExitCode: 1},
-		{Command: "git status --short", ExitCode: 0},
-	}}
+	turn := turnResult{
+		Plans: []commandPlan{{Command: "docker exec app php artisan migrate"}},
+		Executions: []commandExecution{
+			{Command: "docker exec app php artisan migrate", ExitCode: 1},
+			{Command: "git status --short", ExitCode: 0},
+		},
+	}
 	if got := detectRuntimeHint("run migration", turn); got != "" {
 		t.Fatalf("detectRuntimeHint() = %q, want no hint from failed command", got)
 	}
