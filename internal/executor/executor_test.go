@@ -437,7 +437,7 @@ func TestExecuteCommandsContinuesOnlyIndependentStepsAfterFailure(t *testing.T) 
 	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
 		deps.Trace = logger
 		var err error
-		batch, err = executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans)
+		batch, err = executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -473,6 +473,79 @@ func TestExecuteCommandsContinuesOnlyIndependentStepsAfterFailure(t *testing.T) 
 	}
 }
 
+// TestExecuteCommandsSkipsDuplicateSuccessfulCommandInBatch checks a command
+// completed successfully earlier in the batch is not confirmed or executed again.
+func TestExecuteCommandsSkipsDuplicateSuccessfulCommandInBatch(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.YesSafe = true
+	cfg.ShowSystemOutput = false
+	cfg.ShowCommandPopup = false
+	ctxInfo := loopTestContext(t)
+	plans := []commandPlan{
+		{Command: "printf duplicate", Purpose: "Print once", Classification: classificationSafe, LocalSafe: true},
+		{Command: "  printf duplicate\t", Purpose: "Do not print twice", Classification: classificationSafe, LocalSafe: true},
+	}
+	logger := openLoopTrace(t)
+	turnID := logger.StartTurn(nil)
+
+	var batch commandBatchResult
+	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
+		deps.Trace = logger
+		var err error
+		batch, err = executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
+		if err != nil {
+			t.Fatalf("executeCommands() error = %v", err)
+		}
+	})
+
+	if len(batch.Executions) != 1 || batch.Executions[0].Command != plans[0].Command {
+		t.Fatalf("executions = %#v, want first command only", batch.Executions)
+	}
+	if len(batch.Skipped) != 1 || batch.Skipped[0].Command != plans[1].Command || batch.Skipped[0].Reason != "already completed successfully in this turn" {
+		t.Fatalf("skipped = %#v, want duplicate success skip", batch.Skipped)
+	}
+	if batch.HadOrdinaryFailure || batch.HadTimeout {
+		t.Fatalf("batch flags = %#v, want duplicate skip without blocking", batch)
+	}
+
+	events := closeLoopTraceAndRead(t, logger)
+	if len(traceEventsByName(events, "command_confirmation")) != 1 || len(traceEventsByName(events, "command_start")) != 1 {
+		t.Fatalf("duplicate command was confirmed or started")
+	}
+	skippedEvents := traceEventsByName(events, "command_skipped")
+	if len(skippedEvents) != 1 || traceEventData(t, skippedEvents[0])["reason"] != "already completed successfully in this turn" {
+		t.Fatalf("command_skipped events = %#v, want duplicate success reason", skippedEvents)
+	}
+}
+
+// TestExecuteCommandsDoesNotSuppressPreviouslyFailedEffectiveCommand checks
+// a failed effective identity from an earlier turn batch remains retryable.
+func TestExecuteCommandsDoesNotSuppressPreviouslyFailedEffectiveCommand(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.YesSafe = true
+	cfg.ShowSystemOutput = false
+	cfg.ShowCommandPopup = false
+	ctxInfo := loopTestContext(t)
+	plans := []commandPlan{{Command: "false", Purpose: "Retry failure", Classification: classificationSafe, LocalSafe: true}}
+	priorExecutions := []commandExecution{{Command: " false\t", Purpose: "Earlier failure", ExitCode: 1}}
+
+	var batch commandBatchResult
+	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
+		var err error
+		batch, err = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, priorExecutions)
+		if err != nil {
+			t.Fatalf("executeCommands() error = %v", err)
+		}
+	})
+
+	if len(batch.Executions) != 1 || len(batch.Skipped) != 0 {
+		t.Fatalf("batch = %#v, want failed retry executed", batch)
+	}
+	if !batch.HadOrdinaryFailure || batch.HadTimeout {
+		t.Fatalf("batch flags = %#v, want ordinary failure only", batch)
+	}
+}
+
 // TestExecuteCommandsStopsBatchWhenContinueOnErrorIsFalse checks a failure stops all later commands.
 func TestExecuteCommandsStopsBatchWhenContinueOnErrorIsFalse(t *testing.T) {
 	cfg := defaultConfig()
@@ -492,7 +565,7 @@ func TestExecuteCommandsStopsBatchWhenContinueOnErrorIsFalse(t *testing.T) {
 	var batch commandBatchResult
 	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
 		var err error
-		batch, err = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans)
+		batch, err = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -532,7 +605,7 @@ func TestExecuteCommandsTracksTimeoutWithoutOrdinaryFailure(t *testing.T) {
 	var batch commandBatchResult
 	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
 		var err error
-		batch, err = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans)
+		batch, err = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -576,7 +649,7 @@ func TestExecuteCommandsStopsImmediatelyOnCancellation(t *testing.T) {
 	var batch commandBatchResult
 	var runErr error
 	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
-		batch, runErr = executeCommands(ctx, deps, false, cfg, &ctxInfo, plans)
+		batch, runErr = executeCommands(ctx, deps, false, cfg, &ctxInfo, plans, nil)
 	})
 
 	if !errors.Is(runErr, context.Canceled) {
@@ -611,7 +684,7 @@ func TestExecuteCommandsTraceRecordsCapturedOutput(t *testing.T) {
 			Classification: classificationSafe,
 			LocalSafe:      true,
 		}}
-		batch, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans)
+		batch, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -662,7 +735,7 @@ func TestExecuteCommandsTraceRecordsCommandErrors(t *testing.T) {
 			Classification: classificationSafe,
 			LocalSafe:      true,
 		}}
-		batch, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans)
+		batch, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -705,7 +778,7 @@ func TestExecuteCommandsTraceRecordsEditedCommand(t *testing.T) {
 			Classification: classificationSafe,
 			LocalSafe:      true,
 		}}
-		batch, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans)
+		batch, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}

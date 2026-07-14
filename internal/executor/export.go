@@ -56,8 +56,8 @@ func GetContext(parentCtx context.Context, cfg config) (contextInfo, error) {
 }
 
 // ExecuteCommands runs the sequential plan and returns its structured batch outcome.
-func ExecuteCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan) (core.CommandBatchResult, error) {
-	return executeCommands(ctx, deps, ui, cfg, ctxInfo, plans)
+func ExecuteCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan, priorExecutions []commandExecution) (core.CommandBatchResult, error) {
+	return executeCommands(ctx, deps, ui, cfg, ctxInfo, plans, priorExecutions)
 }
 
 // ExecuteManualCommand executes a user-entered shell command.

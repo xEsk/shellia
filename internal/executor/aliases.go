@@ -30,6 +30,8 @@ const (
 	confirmDecisionRun         = uipkg.ConfirmDecisionRun
 	confirmDecisionEdit        = uipkg.ConfirmDecisionEdit
 	confirmDecisionInteractive = uipkg.ConfirmDecisionInteractive
+
+	skippedDuplicateSuccessReason = core.SkippedDuplicateSuccessReason
 )
 
 var (

@@ -885,6 +885,15 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 
 		plans, redundantPlans := filterPreviouslySuccessfulPlans(plans, allExecutions)
 		lastPlans = plans
+		for _, plan := range redundantPlans {
+			skipped := skippedCommand{Command: plan.Command, Purpose: plan.Purpose, Reason: skippedDuplicateSuccessReason}
+			allSkipped = append(allSkipped, skipped)
+			deps.Trace.Record("command_skipped", turnID, "planning", round, map[string]any{
+				"command": skipped.Command,
+				"purpose": skipped.Purpose,
+				"reason":  skipped.Reason,
+			})
+		}
 		if len(plans) == 0 && len(redundantPlans) > 0 {
 			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
 				"decision": "skip_redundant_successes",
@@ -929,7 +938,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		if cfg.PlanOnly {
 			cfg.PlanOnly = false
 		}
-		batch, err := deps.ExecuteCommands(ctx, deps, ui, cfg, ctxInfo, plans)
+		batch, err := deps.ExecuteCommands(ctx, deps, ui, cfg, ctxInfo, plans, allExecutions)
 		allExecutions = append(allExecutions, batch.Executions...)
 		allSkipped = append(allSkipped, batch.Skipped...)
 		if errors.Is(err, errAborted) {
@@ -958,6 +967,13 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			}
 			break
 		}
+		followupTrigger := "observation"
+		if interactiveRepair {
+			followupTrigger = "interactive_repair"
+		}
+		if batch.HadOrdinaryFailure {
+			followupTrigger = "execution_failure"
+		}
 
 		if round >= planningRoundLimit-1 {
 			keepGoing, limitErr := promptPlanningLimitContinuation(deps.Stdout, ui, deps.Stdin, planningRoundLimit)
@@ -968,10 +984,22 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 				"decision": "planning_limit_continuation",
 				"accepted": keepGoing,
 				"limit":    planningRoundLimit,
+				"trigger":  followupTrigger,
 			})
 			if keepGoing {
 				planningRoundLimit += cfg.PlanningMaxRounds
+				if batch.HadOrdinaryFailure {
+					deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
+						"decision": "continue_after_execution_failure",
+					})
+				}
 				continue
+			}
+			if batch.HadOrdinaryFailure {
+				deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
+					"decision": "execution_failure_replan_excluded",
+					"reason":   "planning_limit_declined",
+				})
 			}
 			break
 		}

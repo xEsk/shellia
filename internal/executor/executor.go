@@ -346,7 +346,7 @@ func getContext(_ context.Context, cfg config) (contextInfo, error) {
 const skippedAfterFailureReason = "dependent on an earlier failed command"
 
 // executeCommands runs the sequential plan and returns its structured batch outcome.
-func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan, priorExecutions []commandExecution) (commandBatchResult, error) {
 	deps = deps.withDefaults()
 	reader := bufio.NewReader(confirmationInput{Reader: deps.Stdin})
 	batch := commandBatchResult{
@@ -355,26 +355,15 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 	}
 	blocked := false
 	turnID := traceTurnID(ctx)
+	succeeded := successfulCommandIdentities(priorExecutions)
 
 	for index, plan := range plans {
 		if blocked && !plan.IndependentOnFailure {
-			skipped := skippedCommand{
-				Command: plan.Command,
-				Purpose: plan.Purpose,
-				Reason:  skippedAfterFailureReason,
-			}
-			batch.Skipped = append(batch.Skipped, skipped)
-			box := printCommandExecutionTo(deps.Stdout, ui, cfg, index+1, len(plans), plan)
-			box.Section("skipped", colorDim)
-			box.Text(skipped.Reason, colorDim)
-			box.Close()
-			deps.Trace.Record("command_skipped", turnID, "", -1, map[string]any{
-				"step":        index + 1,
-				"total_steps": len(plans),
-				"command":     skipped.Command,
-				"purpose":     skipped.Purpose,
-				"reason":      skipped.Reason,
-			})
+			batch.Skipped = append(batch.Skipped, skipCommand(deps, ui, cfg, nil, turnID, index, len(plans), plan, plan.Command, skippedAfterFailureReason))
+			continue
+		}
+		if succeeded[strings.TrimSpace(plan.Command)] {
+			batch.Skipped = append(batch.Skipped, skipCommand(deps, ui, cfg, nil, turnID, index, len(plans), plan, plan.Command, skippedDuplicateSuccessReason))
 			continue
 		}
 
@@ -417,6 +406,10 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 				"command":     plan.Command,
 				"decision":    "auto_safe",
 			})
+		}
+		if succeeded[strings.TrimSpace(effectiveCommand)] {
+			batch.Skipped = append(batch.Skipped, skipCommand(deps, ui, cfg, box, turnID, index, len(plans), plan, effectiveCommand, skippedDuplicateSuccessReason))
+			continue
 		}
 
 		deps.Trace.Record("command_start", turnID, "", -1, map[string]any{
@@ -465,6 +458,9 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 			"total_steps": len(plans),
 			"execution":   traceExecutionData(batch.Executions[len(batch.Executions)-1]),
 		})
+		if result.ExitCode == 0 {
+			succeeded[strings.TrimSpace(effectiveCommand)] = true
+		}
 		if err != nil {
 			deps.Trace.Record("command_error", turnID, "", -1, map[string]any{
 				"step":      index + 1,
@@ -520,6 +516,41 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 	}
 
 	return batch, nil
+}
+
+// successfulCommandIdentities returns exact trimmed identities for prior successful executions.
+func successfulCommandIdentities(executions []commandExecution) map[string]bool {
+	succeeded := make(map[string]bool, len(executions))
+	for _, execution := range executions {
+		identity := strings.TrimSpace(execution.Command)
+		if execution.ExitCode == 0 && identity != "" {
+			succeeded[identity] = true
+		}
+	}
+	return succeeded
+}
+
+// skipCommand renders and traces one command that was deliberately not executed.
+func skipCommand(deps RuntimeDeps, ui bool, cfg config, box *stepBox, turnID string, index int, total int, plan commandPlan, effectiveCommand string, reason string) skippedCommand {
+	skipped := skippedCommand{
+		Command: effectiveCommand,
+		Purpose: plan.Purpose,
+		Reason:  reason,
+	}
+	if box == nil {
+		box = printCommandExecutionTo(deps.Stdout, ui, cfg, index+1, total, plan)
+	}
+	box.Section("skipped", colorDim)
+	box.Text(reason, colorDim)
+	box.Close()
+	deps.Trace.Record("command_skipped", turnID, "", -1, map[string]any{
+		"step":        index + 1,
+		"total_steps": total,
+		"command":     effectiveCommand,
+		"purpose":     plan.Purpose,
+		"reason":      reason,
+	})
+	return skipped
 }
 
 // executeManualCommand runs a direct shell command inside the current Shellia session.

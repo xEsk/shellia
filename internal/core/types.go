@@ -81,6 +81,9 @@ type CommandPlan struct {
 	InteractiveReason    string
 }
 
+// SkippedDuplicateSuccessReason explains why a completed command was not run again.
+const SkippedDuplicateSuccessReason = "already completed successfully in this turn"
+
 // SkippedCommand stores a command omitted from execution and the reason why.
 type SkippedCommand struct {
 	Command string

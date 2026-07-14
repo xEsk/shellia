@@ -332,6 +332,51 @@ func TestFilterPreviouslySuccessfulPlansKeepsSkippedCommands(t *testing.T) {
 	}
 }
 
+// TestRunTurnSkipsCommandEditedIntoPriorSuccessfulEffectiveCommand checks the
+// executor rechecks effective identity after editing and reports a real skip.
+func TestRunTurnSkipsCommandEditedIntoPriorSuccessfulEffectiveCommand(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"summary":"Inspect once.","requires_observation":true,"commands":[{"command":"printf prior","purpose":"Capture prior output","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"summary":"Inspect another value.","commands":[{"command":"printf proposed","purpose":"Capture another output","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: "Kept the first result.", stream: true},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	cfg.YesSafe = false
+	ctxInfo := loopTestContext(t)
+	logger := openLoopTrace(t)
+
+	var result turnResult
+	captureMainLoopIO(t, "y\ne\nprintf prior\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.Trace = logger
+		var err error
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "inspect without repeating work"))
+		if err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	if len(result.Executions) != 1 || result.Executions[0].Command != "printf prior" {
+		t.Fatalf("executions = %#v, want first effective command only", result.Executions)
+	}
+	if len(result.Skipped) != 1 || result.Skipped[0].Command != "printf prior" || result.Skipped[0].Reason != "already completed successfully in this turn" {
+		t.Fatalf("skipped = %#v, want edited duplicate outcome", result.Skipped)
+	}
+	if fake.requestCount() != 3 {
+		t.Fatalf("LLM requests = %d, want two planning requests and summary", fake.requestCount())
+	}
+
+	events := closeLoopTraceAndRead(t, logger)
+	starts := traceEventsByName(events, "command_start")
+	if len(starts) != 1 || traceEventData(t, starts[0])["command"] != "printf prior" {
+		t.Fatalf("command_start events = %#v, want only first command", starts)
+	}
+	skippedEvents := traceEventsByName(events, "command_skipped")
+	if len(skippedEvents) != 1 || traceEventData(t, skippedEvents[0])["command"] != "printf prior" {
+		t.Fatalf("command_skipped events = %#v, want edited command", skippedEvents)
+	}
+}
+
 // TestSwitchInteractiveModelAppliesAndPersistsDefault checks /model changes the runtime profile and config default.
 func TestSwitchInteractiveModelAppliesAndPersistsDefault(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
@@ -973,7 +1018,7 @@ func TestRunTurnTraceRecordsSummaryPromptAndResponse(t *testing.T) {
 
 	captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
 		deps.Trace = logger
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			return commandBatchResult{Executions: []commandExecution{{
 				Command:  plans[0].Command,
 				Purpose:  plans[0].Purpose,
@@ -1020,7 +1065,7 @@ func TestRunTurnDeclinesPlanWithoutExecuting(t *testing.T) {
 
 	var result turnResult
 	output := captureMainLoopIO(t, "no\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan, []commandExecution) (commandBatchResult, error) {
 			executed = true
 			return commandBatchResult{}, nil
 		}
@@ -1058,7 +1103,7 @@ func TestRunTurnPlanOnlyPrintsCommandsWithoutExecuting(t *testing.T) {
 
 	var result turnResult
 	output := captureMainLoopIO(t, "no\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan, []commandExecution) (commandBatchResult, error) {
 			executed = true
 			return commandBatchResult{}, nil
 		}
@@ -1104,7 +1149,7 @@ func TestRunTurnPlanOnlyExecutesAcceptedPlan(t *testing.T) {
 
 	var result turnResult
 	output := captureMainLoopIO(t, "y\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			gotPlans = append([]commandPlan{}, plans...)
 			return commandBatchResult{Executions: []commandExecution{{
 				Command:  plans[0].Command,
@@ -1205,7 +1250,7 @@ func TestRunTurnUsesDiscoveryRepairForRecoverableEmptyPlan(t *testing.T) {
 	var gotPlans []commandPlan
 	var result turnResult
 	output := captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			gotPlans = append([]commandPlan{}, plans...)
 			return commandBatchResult{Executions: []commandExecution{{
 				Command:  plans[0].Command,
@@ -1257,7 +1302,7 @@ func TestRunTurnTraceRecordsDiscoveryRepair(t *testing.T) {
 
 	captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
 		deps.Trace = logger
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			return commandBatchResult{Executions: []commandExecution{{
 				Command:  plans[0].Command,
 				Purpose:  plans[0].Purpose,
@@ -1307,7 +1352,7 @@ func TestRunTurnUsesBoundedExplicitGitObservation(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 
 	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			return commandBatchResult{Executions: []commandExecution{{
 				Command:  plans[0].Command,
 				Purpose:  plans[0].Purpose,
@@ -1362,7 +1407,7 @@ func TestRunTurnReplansOnceAfterOrdinaryFailure(t *testing.T) {
 
 	output := captureMainLoopIO(t, "y\ny\n", fake.HTTPClient(), func(deps runtimeDeps) {
 		deps.Trace = logger
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			call++
 			if call == 1 {
 				if len(plans) != 3 || !plans[2].IndependentOnFailure {
@@ -1454,7 +1499,7 @@ func TestRunTurnFiltersSuccessfulCorrectionsButRetriesFailures(t *testing.T) {
 
 	var result turnResult
 	output := captureMainLoopIO(t, "y\ny\ny\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			executionBatches = append(executionBatches, commandNames(plans))
 			batch := commandBatchResult{}
 			for _, plan := range plans {
@@ -1525,7 +1570,7 @@ func TestRunTurnMultipleFailuresTriggerOneRecoveryRound(t *testing.T) {
 	calls := 0
 
 	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			calls++
 			if calls == 1 {
 				return commandBatchResult{
@@ -1563,7 +1608,7 @@ func TestRunTurnTimeoutDoesNotReplan(t *testing.T) {
 	var result turnResult
 	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
 		deps.Trace = logger
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			return commandBatchResult{
 				Executions: []commandExecution{
 					{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 124},
@@ -1607,7 +1652,7 @@ func TestRunTurnCancellationDoesNotReplan(t *testing.T) {
 	var result turnResult
 	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
 		deps.Trace = logger
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			return commandBatchResult{
 				Executions: []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 0, Stdout: capturedStream{Text: ctxInfo.CWD}}},
 				Skipped:    []skippedCommand{{Command: plans[1].Command, Purpose: plans[1].Purpose, Reason: "cancelled"}},
@@ -1650,7 +1695,7 @@ func TestRunTurnStructuralExecutionErrorReturnsPartialResult(t *testing.T) {
 
 	var result turnResult
 	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			return commandBatchResult{
 				Executions: []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 0, Stdout: capturedStream{Text: ctxInfo.CWD}}},
 				Skipped:    []skippedCommand{{Command: plans[1].Command, Purpose: plans[1].Purpose, Reason: "runner stopped"}},
@@ -1681,7 +1726,7 @@ func TestRunTurnLaterPlanningErrorReturnsPartialResult(t *testing.T) {
 
 	var result turnResult
 	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			return commandBatchResult{
 				Executions: []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 0, Stdout: capturedStream{Text: ctxInfo.CWD}}},
 				Skipped:    []skippedCommand{{Command: plans[1].Command, Purpose: plans[1].Purpose, Reason: "not reached"}},
@@ -1712,7 +1757,7 @@ func TestRunTurnRecoveryConfirmationErrorReturnsPartialResult(t *testing.T) {
 
 	var result turnResult
 	captureMainLoopIO(t, "y\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, deps runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, deps runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			if err := deps.Stdin.Close(); err != nil {
 				t.Fatalf("Close(stdin) error = %v", err)
 			}
@@ -1745,7 +1790,7 @@ func TestRunTurnPlanningLimitPromptErrorReturnsPartialResult(t *testing.T) {
 
 	var result turnResult
 	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, deps runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, deps runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			if err := deps.Stdin.Close(); err != nil {
 				t.Fatalf("Close(stdin) error = %v", err)
 			}
@@ -1781,7 +1826,7 @@ func TestRunTurnOrdinaryFailureOverridesTimeoutExclusion(t *testing.T) {
 	calls := 0
 
 	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			calls++
 			if calls == 1 {
 				return commandBatchResult{
@@ -1821,7 +1866,7 @@ func TestRunTurnInteractiveRepairUsesPlanningLimit(t *testing.T) {
 
 	var result turnResult
 	output := captureMainLoopIO(t, "y\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			calls++
 			if calls == 1 {
 				return commandBatchResult{Executions: []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 130}}}, &interactivePromptError{Command: plans[0].Command, Prompt: "Continue? [y/N]"}
@@ -1881,10 +1926,12 @@ func TestRunTurnFailureRecoveryUsesPlanningLimit(t *testing.T) {
 			cfg.PlanningMaxRounds = 1
 			ctxInfo := loopTestContext(t)
 			calls := 0
+			logger := openLoopTrace(t)
 
 			var result turnResult
 			captureMainLoopIO(t, tt.input, fake.HTTPClient(), func(deps runtimeDeps) {
-				deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+				deps.Trace = logger
+				deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 					calls++
 					if calls == 1 {
 						return commandBatchResult{
@@ -1905,6 +1952,36 @@ func TestRunTurnFailureRecoveryUsesPlanningLimit(t *testing.T) {
 			if fake.requestCount() != tt.wantRequests || result.Result != tt.wantResult || len(result.Executions) != calls || len(result.Skipped) != 1 {
 				t.Fatalf("requests = %d, calls = %d, result = %#v", fake.requestCount(), calls, result)
 			}
+
+			events := closeLoopTraceAndRead(t, logger)
+			limitEvents := traceEventsByName(events, "shellia_decision")
+			foundLimitContinuation := false
+			foundFailureContinuation := false
+			foundLimitDecline := false
+			for _, event := range limitEvents {
+				data := traceEventData(t, event)
+				switch data["decision"] {
+				case "planning_limit_continuation":
+					if data["trigger"] == "execution_failure" {
+						foundLimitContinuation = true
+					}
+				case "continue_after_execution_failure":
+					foundFailureContinuation = true
+				case "execution_failure_replan_excluded":
+					if data["reason"] == "planning_limit_declined" {
+						foundLimitDecline = true
+					}
+				}
+			}
+			if !foundLimitContinuation {
+				t.Fatalf("planning limit continuation trace missing execution_failure trigger")
+			}
+			if tt.name == "accepted" && (!foundFailureContinuation || foundLimitDecline) {
+				t.Fatalf("accepted trace decisions: continue = %t, declined = %t", foundFailureContinuation, foundLimitDecline)
+			}
+			if tt.name == "declined" && (foundFailureContinuation || !foundLimitDecline) {
+				t.Fatalf("declined trace decisions: continue = %t, declined = %t", foundFailureContinuation, foundLimitDecline)
+			}
 		})
 	}
 }
@@ -1922,7 +1999,7 @@ func TestRunTurnPreservesBatchWhenRecoveryPlanIsEmpty(t *testing.T) {
 
 	var result turnResult
 	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			return commandBatchResult{
 				Executions: []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 0}},
 				Skipped:    []skippedCommand{{Command: "unused", Purpose: "Skipped action", Reason: "not needed"}},
@@ -1953,7 +2030,7 @@ func TestRunTurnPreservesBatchWhenRecoveryPlanIsDeclined(t *testing.T) {
 
 	var result turnResult
 	output := captureMainLoopIO(t, "y\nn\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			return commandBatchResult{
 				Executions:         []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 1}},
 				Skipped:            []skippedCommand{{Command: plans[1].Command, Purpose: plans[1].Purpose, Reason: "dependent on an earlier failed command"}},
@@ -2030,12 +2107,12 @@ func TestRunTurnSafeRecoveryHonorsYesSafe(t *testing.T) {
 			calls := 0
 
 			output := captureMainLoopIO(t, tt.input, fake.HTTPClient(), func(deps runtimeDeps) {
-				deps.ExecuteCommands = func(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+				deps.ExecuteCommands = func(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan, priorExecutions []commandExecution) (commandBatchResult, error) {
 					calls++
 					if calls == 1 {
 						return commandBatchResult{Executions: []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 1}}, HadOrdinaryFailure: true}, nil
 					}
-					return executeCommands(ctx, deps, ui, cfg, ctxInfo, plans)
+					return executeCommands(ctx, deps, ui, cfg, ctxInfo, plans, priorExecutions)
 				}
 				if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "recover safely")); err != nil {
 					t.Fatalf("runTurn() error = %v", err)
@@ -2065,12 +2142,12 @@ func TestRunTurnRiskyRecoveryRequiresConfirmationWithYesSafe(t *testing.T) {
 	calls := 0
 
 	output := captureMainLoopIO(t, "y\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan, priorExecutions []commandExecution) (commandBatchResult, error) {
 			calls++
 			if calls == 1 {
 				return commandBatchResult{Executions: []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 1}}, HadOrdinaryFailure: true}, nil
 			}
-			return executeCommands(ctx, deps, ui, cfg, ctxInfo, plans)
+			return executeCommands(ctx, deps, ui, cfg, ctxInfo, plans, priorExecutions)
 		}
 		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "recover with marker")); err != nil {
 			t.Fatalf("runTurn() error = %v", err)
@@ -2106,7 +2183,7 @@ func TestRunTurnCanContinueAfterPlanningRoundLimit(t *testing.T) {
 
 	var result turnResult
 	output := captureMainLoopIO(t, "y\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			executed = append(executed, plans[0].Command)
 			return commandBatchResult{Executions: []commandExecution{{
 				Command:  plans[0].Command,
@@ -2155,7 +2232,7 @@ func TestRunTurnSummarizesWhenPlanningRoundLimitIsDeclined(t *testing.T) {
 
 	var result turnResult
 	output := captureMainLoopIO(t, "n\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			return commandBatchResult{Executions: []commandExecution{{
 				Command:  plans[0].Command,
 				Purpose:  plans[0].Purpose,
@@ -2283,7 +2360,7 @@ func TestRunInteractivePlanCommandPlansWithoutExecuting(t *testing.T) {
 	executed := false
 
 	output := captureMainLoopIO(t, "/plan create marker\nno\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan, []commandExecution) (commandBatchResult, error) {
 			executed = true
 			return commandBatchResult{}, nil
 		}
@@ -2343,7 +2420,7 @@ func TestRunInteractiveCancellationRemembersPartialObservations(t *testing.T) {
 	calls := 0
 
 	output := captureMainLoopIO(t, "inspect once\n/retry\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			calls++
 			return commandBatchResult{Executions: []commandExecution{{
 				Command:  plans[0].Command,

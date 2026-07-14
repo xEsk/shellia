@@ -69,9 +69,10 @@ const (
 	truncationEnd   = core.TruncationEnd
 	truncationMixed = core.TruncationMixed
 
-	interactiveModeAI        = core.InteractiveModeAI
-	interactiveModeShell     = core.InteractiveModeShell
-	defaultPlanningMaxRounds = 4
+	interactiveModeAI             = core.InteractiveModeAI
+	interactiveModeShell          = core.InteractiveModeShell
+	defaultPlanningMaxRounds      = 4
+	skippedDuplicateSuccessReason = core.SkippedDuplicateSuccessReason
 
 	interactiveCommandNone    = interactivepkg.CommandNone
 	interactiveCommandUnknown = interactivepkg.CommandUnknown
