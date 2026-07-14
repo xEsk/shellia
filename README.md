@@ -52,6 +52,7 @@ The goal of Shellia is simple:
 - Optional auto-run of locally safe commands with `--yes-safe`
 - Real-time command output
 - Iterative planning when a later step depends on data that still needs to be observed first
+- Failure-aware replanning: ordinary command failures become bounded observations, while dependent later steps are skipped
 - Session memory for follow-ups such as “do the Docker thing from before”
 
 ## How it works
@@ -421,6 +422,12 @@ When `dir` is empty, Shellia writes traces to `$XDG_STATE_HOME/shellia/sessions`
 - `planning_max_rounds`
   - maximum number of planning follow-up rounds before Shellia asks whether to continue
   - can be overridden for one run with `SHELLIA_PLANNING_MAX_ROUNDS`
+- `continue_on_error`
+  - when `false`, the first failed or timed-out command stops the current batch
+  - when `true`, Shellia skips dependent later commands and runs only commands the plan explicitly marks independent of earlier failures
+  - ordinary failures trigger bounded replanning; timeouts, cancellations, `!`, and `/shell` do not
+
+Recovery plans retain all normal plan and command confirmations, including the existing `--yes-safe` rules.
 
 ### Command engine modes
 

@@ -536,7 +536,8 @@ request_timeout_seconds = 60
 # Automatically confirm commands classified as "safe" without prompting.
 yes_safe = false
 
-# Keep executing remaining plan steps even when one command returns a non-zero exit code.
+# After a command fails, skip dependent steps and continue only steps explicitly marked independent.
+# Ordinary failures can trigger bounded replanning; timeouts and cancellations do not.
 continue_on_error = false
 
 # Show the full plan and ask "Execute this plan? [y/n]" before running any commands.
