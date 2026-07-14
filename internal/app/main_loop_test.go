@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -282,6 +283,53 @@ func closeLoopTraceAndRead(t *testing.T, logger *traceLogger) []map[string]any {
 		t.Fatalf("Close() error = %v", err)
 	}
 	return readTraceEvents(t, logger.Path())
+}
+
+func commandNames(plans []commandPlan) []string {
+	commands := make([]string, 0, len(plans))
+	for _, plan := range plans {
+		commands = append(commands, plan.Command)
+	}
+	return commands
+}
+
+// TestFilterPreviouslySuccessfulPlansKeepsFailedRetries checks only prior
+// successful executions suppress matching proposals.
+func TestFilterPreviouslySuccessfulPlansKeepsFailedRetries(t *testing.T) {
+	plans := []commandPlan{{Command: "pwd"}, {Command: "false"}, {Command: "ls"}}
+	executions := []commandExecution{{Command: "pwd", ExitCode: 0}, {Command: "false", ExitCode: 1}}
+
+	kept, redundant := filterPreviouslySuccessfulPlans(plans, executions)
+	if got := commandNames(kept); !reflect.DeepEqual(got, []string{"false", "ls"}) {
+		t.Fatalf("kept = %v, want failed retry and new command", got)
+	}
+	if got := commandNames(redundant); !reflect.DeepEqual(got, []string{"pwd"}) {
+		t.Fatalf("redundant = %v, want successful command", got)
+	}
+}
+
+// TestFilterPreviouslySuccessfulPlansTrimsEffectiveCommands checks command
+// identity uses trimmed effective execution and proposed command strings.
+func TestFilterPreviouslySuccessfulPlansTrimsEffectiveCommands(t *testing.T) {
+	plans := []commandPlan{{Command: "  pwd\t"}}
+	executions := []commandExecution{{Command: "\n pwd ", ExitCode: 0}}
+
+	kept, redundant := filterPreviouslySuccessfulPlans(plans, executions)
+	if len(kept) != 0 || !reflect.DeepEqual(commandNames(redundant), []string{"  pwd\t"}) {
+		t.Fatalf("kept = %#v, redundant = %#v, want trimmed successful match", kept, redundant)
+	}
+}
+
+// TestFilterPreviouslySuccessfulPlansKeepsSkippedCommands checks commands
+// absent from real executions remain eligible for a later attempt.
+func TestFilterPreviouslySuccessfulPlansKeepsSkippedCommands(t *testing.T) {
+	plans := []commandPlan{{Command: "touch blocked"}}
+	executions := []commandExecution{{Command: "false", ExitCode: 1}}
+
+	kept, redundant := filterPreviouslySuccessfulPlans(plans, executions)
+	if !reflect.DeepEqual(commandNames(kept), []string{"touch blocked"}) || len(redundant) != 0 {
+		t.Fatalf("kept = %#v, redundant = %#v, want skipped command retryable", kept, redundant)
+	}
 }
 
 // TestSwitchInteractiveModelAppliesAndPersistsDefault checks /model changes the runtime profile and config default.
@@ -1354,6 +1402,84 @@ func TestRunTurnReplansOnceAfterOrdinaryFailure(t *testing.T) {
 	}
 	if strings.Count(output, "Execute this plan? [y/n]: yes") != 2 {
 		t.Fatalf("output = %q, want confirmation for initial and recovery plans", output)
+	}
+}
+
+// TestRunTurnFiltersSuccessfulCorrectionsButRetriesFailures checks repeated
+// mixed proposals show, confirm, and execute only commands that have not succeeded.
+func TestRunTurnFiltersSuccessfulCorrectionsButRetriesFailures(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"summary":"Run failing command.","commands":[{"command":"false","purpose":"Trigger failure","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"summary":"Apply correction and retry.","commands":[{"command":"touch corrected","purpose":"Apply correction","risk":"safe","requires_confirmation":false,"independent_on_failure":true},{"command":"false","purpose":"Retry failure","risk":"safe","requires_confirmation":false,"independent_on_failure":true}]}`},
+		loopLLMResponse{content: `{"summary":"Retry the remaining failure.","commands":[{"command":"touch corrected","purpose":"Apply correction","risk":"safe","requires_confirmation":false,"independent_on_failure":true},{"command":"false","purpose":"Retry failure","risk":"safe","requires_confirmation":false,"independent_on_failure":true}]}`},
+		loopLLMResponse{content: `{"summary":"Retries exhausted after grounded outcomes.","commands":[]}`},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = true
+	cfg.PlanningMaxRounds = 4
+	ctxInfo := loopTestContext(t)
+	var executionBatches [][]string
+
+	var result turnResult
+	output := captureMainLoopIO(t, "y\ny\ny\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan) (commandBatchResult, error) {
+			executionBatches = append(executionBatches, commandNames(plans))
+			batch := commandBatchResult{}
+			for _, plan := range plans {
+				exitCode := 0
+				if plan.Command == "false" {
+					exitCode = 1
+					batch.HadOrdinaryFailure = true
+				}
+				batch.Executions = append(batch.Executions, commandExecution{
+					Command:  plan.Command,
+					Purpose:  plan.Purpose,
+					ExitCode: exitCode,
+				})
+			}
+			return batch, nil
+		}
+		var err error
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "correct and retry a failure"))
+		if err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	wantBatches := [][]string{{"false"}, {"touch corrected", "false"}, {"false"}}
+	if !reflect.DeepEqual(executionBatches, wantBatches) {
+		t.Fatalf("execution batches = %v, want %v", executionBatches, wantBatches)
+	}
+	if len(result.Executions) != 4 || result.Result != "Retries exhausted after grounded outcomes." {
+		t.Fatalf("result = %#v, want all four real executions and grounded final answer", result)
+	}
+	falseRuns := 0
+	correctionRuns := 0
+	for _, execution := range result.Executions {
+		switch execution.Command {
+		case "false":
+			falseRuns++
+		case "touch corrected":
+			correctionRuns++
+		}
+	}
+	if falseRuns != 3 || correctionRuns != 1 {
+		t.Fatalf("false runs = %d, correction runs = %d, want 3 and 1", falseRuns, correctionRuns)
+	}
+	if strings.Count(output, "Execute this plan? [y/n]: yes") != 3 {
+		t.Fatalf("output = %q, want three filtered plan confirmations", output)
+	}
+	thirdStart := strings.Index(output, "Retry the remaining failure.")
+	if thirdStart < 0 {
+		t.Fatalf("output = %q, want third plan", output)
+	}
+	thirdEndOffset := strings.Index(output[thirdStart:], "Execute this plan? [y/n]: yes")
+	if thirdEndOffset < 0 {
+		t.Fatalf("output = %q, want third plan confirmation", output)
+	}
+	thirdPlan := output[thirdStart : thirdStart+thirdEndOffset]
+	if !strings.Contains(thirdPlan, "false") || strings.Contains(thirdPlan, "touch corrected") {
+		t.Fatalf("third displayed plan = %q, want only failed retry", thirdPlan)
 	}
 }
 

@@ -882,9 +882,11 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			}, nil
 		}
 
-		if shouldSkipRedundantRound(plans, allExecutions) {
+		plans, redundantPlans := filterPreviouslySuccessfulPlans(plans, allExecutions)
+		lastPlans = plans
+		if len(plans) == 0 && len(redundantPlans) > 0 {
 			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
-				"decision": "skip_redundant_round",
+				"decision": "skip_redundant_successes",
 			})
 			break
 		}
@@ -1170,25 +1172,24 @@ func runDiscoveryRepair(
 	}, true
 }
 
-// shouldSkipRedundantRound avoids re-running commands already executed in the same turn.
-func shouldSkipRedundantRound(plans []commandPlan, executions []commandExecution) bool {
-	if len(plans) == 0 || len(executions) == 0 {
-		return false
-	}
-
-	executedCommands := make(map[string]bool, len(executions))
+// filterPreviouslySuccessfulPlans removes commands already completed successfully in the same turn.
+func filterPreviouslySuccessfulPlans(plans []commandPlan, executions []commandExecution) ([]commandPlan, []commandPlan) {
+	succeeded := make(map[string]bool, len(executions))
 	for _, execution := range executions {
 		command := strings.TrimSpace(execution.Command)
-		if command != "" {
-			executedCommands[command] = true
+		if execution.ExitCode == 0 && command != "" {
+			succeeded[command] = true
 		}
 	}
 
+	kept := make([]commandPlan, 0, len(plans))
+	redundant := make([]commandPlan, 0)
 	for _, plan := range plans {
-		if !executedCommands[strings.TrimSpace(plan.Command)] {
-			return false
+		if succeeded[strings.TrimSpace(plan.Command)] {
+			redundant = append(redundant, plan)
+			continue
 		}
+		kept = append(kept, plan)
 	}
-
-	return true
+	return kept, redundant
 }
