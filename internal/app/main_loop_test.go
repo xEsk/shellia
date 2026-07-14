@@ -1450,21 +1450,17 @@ func TestRunTurnFiltersSuccessfulCorrectionsButRetriesFailures(t *testing.T) {
 	if !reflect.DeepEqual(executionBatches, wantBatches) {
 		t.Fatalf("execution batches = %v, want %v", executionBatches, wantBatches)
 	}
-	if len(result.Executions) != 4 || result.Result != "Retries exhausted after grounded outcomes." {
-		t.Fatalf("result = %#v, want all four real executions and grounded final answer", result)
+	wantExecutions := []commandExecution{
+		{Command: "false", Purpose: "Trigger failure", ExitCode: 1},
+		{Command: "touch corrected", Purpose: "Apply correction", ExitCode: 0},
+		{Command: "false", Purpose: "Retry failure", ExitCode: 1},
+		{Command: "false", Purpose: "Retry failure", ExitCode: 1},
 	}
-	falseRuns := 0
-	correctionRuns := 0
-	for _, execution := range result.Executions {
-		switch execution.Command {
-		case "false":
-			falseRuns++
-		case "touch corrected":
-			correctionRuns++
-		}
+	if !reflect.DeepEqual(result.Executions, wantExecutions) {
+		t.Fatalf("result executions = %#v, want %#v", result.Executions, wantExecutions)
 	}
-	if falseRuns != 3 || correctionRuns != 1 {
-		t.Fatalf("false runs = %d, correction runs = %d, want 3 and 1", falseRuns, correctionRuns)
+	if result.Result != "Retries exhausted after grounded outcomes." {
+		t.Fatalf("result = %q, want grounded final answer", result.Result)
 	}
 	if strings.Count(output, "Execute this plan? [y/n]: yes") != 3 {
 		t.Fatalf("output = %q, want three filtered plan confirmations", output)
