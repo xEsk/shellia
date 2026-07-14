@@ -4,7 +4,7 @@
 
 Shellia is a small Go CLI structured like a standard application module. The binary entry point lives in `cmd/shellia/main.go`. Private application code lives under `internal/`: orchestration in `internal/app`, shared cross-domain types in `internal/core`, configuration in `internal/config`, command execution in `internal/executor`, safety classification in `internal/safety`, model integration in `internal/llm`, terminal rendering in `internal/ui`, session follow-up memory in `internal/session`, traces in `internal/trace`, and slash-command parsing in `internal/interactive`.
 
-Static website files for the public docs/release page live in `docs/` (`index.html`, `styles.css`, `script.js`). Release automation is defined in `.github/workflows/release.yml`.
+Technical design and implementation documents live in `docs/`. Static website files for the public docs/release page live in `site/` (`index.html`, `script.js`). Release automation is defined in `.github/workflows/release.yml`, and GitHub Pages deployment is defined in `.github/workflows/pages.yml`.
 
 IMPORTANT: When applicable, prefer using goland-index MCP tools for code navigation and refactoring.
 
@@ -36,7 +36,7 @@ When adding new core code, thread dependencies through `runtimeDeps` or explicit
 
 Recent history uses short, imperative commit messages such as `Fixed bug with "you" prompt` and `Updated public site`. Keep commits focused and descriptive; one concern per commit when possible.
 
-Pull requests should explain the user-visible change, note any risk in command execution or safety behavior, and include terminal output or screenshots when UI or `docs/` content changes.
+Pull requests should explain the user-visible change, note any risk in command execution or safety behavior, and include terminal output or screenshots when UI or `site/` content changes.
 
 ## Contributor Notes
 

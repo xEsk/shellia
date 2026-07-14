@@ -3,4 +3,4 @@ shellia
 .gocache
 dist/
 .idea
-docs/old
+site/old
