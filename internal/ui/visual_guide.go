@@ -38,8 +38,8 @@ func (renderer *guideRenderer) userTurn(mode core.InteractiveMode, text string) 
 
 	prompt := promptPrefix(renderer.ansi, mode)
 	promptWidth := visibleWidth(prompt)
-	for index, line := range strings.Split(text, "\n") {
-		line = strings.TrimSuffix(line, "\r")
+	contentWidth := surfaceContentWidth(renderer.target, prefix+" "+prompt)
+	for index, line := range wrapPromptRunes([]rune(text), contentWidth) {
 		if index == 0 {
 			guideWrite(renderer.target, prefix, prompt+style(renderer.ansi, colorWhite, line))
 			continue
@@ -194,7 +194,9 @@ func (surface *guideStepSurface) writeRow(rendered string) {
 	if stripANSISequences(rendered) == "• system output" {
 		rendered = style(surface.ansi, colorDim, "system output")
 	}
-	surface.surface.writeRow(rendered)
+	for _, row := range wrapRenderedRows(rendered, surface.surface.contentWidth()) {
+		surface.surface.writeRow(row)
+	}
 }
 
 func (surface *guideStepSurface) replaceLastRenderedRow(rendered string) {
