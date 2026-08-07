@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/term"
 )
@@ -136,4 +137,67 @@ func wrapPlainText(text string, width int) []string {
 	}
 	lines = append(lines, current)
 	return lines
+}
+
+// wrapRenderedRows splits rendered text without breaking ANSI sequences and
+// carries active styling across continuation rows.
+func wrapRenderedRows(rendered string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+	if visibleWidth(rendered) <= width {
+		return []string{rendered}
+	}
+
+	lines := make([]string, 0, (visibleWidth(rendered)/width)+1)
+	var current strings.Builder
+	visible := 0
+	activeStyle := ""
+	for offset := 0; offset < len(rendered); {
+		if sequence, size := renderedANSISequence(rendered[offset:]); size > 0 {
+			current.WriteString(sequence)
+			if strings.HasSuffix(sequence, "m") {
+				if sequence == colorReset || sequence == "\033[m" {
+					activeStyle = ""
+				} else {
+					activeStyle += sequence
+				}
+			}
+			offset += size
+			continue
+		}
+
+		_, size := utf8.DecodeRuneInString(rendered[offset:])
+		if size == 0 {
+			break
+		}
+		if visible == width {
+			if activeStyle != "" {
+				current.WriteString(colorReset)
+			}
+			lines = append(lines, current.String())
+			current.Reset()
+			current.WriteString(activeStyle)
+			visible = 0
+		}
+		current.WriteString(rendered[offset : offset+size])
+		visible++
+		offset += size
+	}
+	if current.Len() > 0 {
+		lines = append(lines, current.String())
+	}
+	return lines
+}
+
+func renderedANSISequence(text string) (string, int) {
+	if len(text) < 3 || text[0] != '\033' || text[1] != '[' {
+		return "", 0
+	}
+	for index := 2; index < len(text); index++ {
+		if text[index] >= '@' && text[index] <= '~' {
+			return text[:index+1], index + 1
+		}
+	}
+	return "", 0
 }
