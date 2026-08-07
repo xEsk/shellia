@@ -20,6 +20,7 @@ type (
 	stepBox            = uipkg.StepBox
 	confirmDecision    = uipkg.ConfirmDecision
 	traceLogger        = tracepkg.Logger
+	presentation       = uipkg.Presentation
 )
 
 const (
@@ -35,6 +36,7 @@ const (
 
 	repeatReasonUserRequested = core.RepeatReasonUserRequested
 	repeatReasonRequired      = core.RepeatReasonRequired
+	visualStylePlain          = configpkg.VisualStylePlain
 )
 
 var (
@@ -44,11 +46,11 @@ var (
 	traceExecutionData        = tracepkg.ExecutionData
 	traceConfirmationDecision = uipkg.TraceConfirmationDecision
 
-	printCommandExecutionTo        = uipkg.PrintCommandExecutionTo
 	printInteractiveCommandStartTo = uipkg.PrintInteractiveCommandStartTo
 	printWarningTo                 = uipkg.PrintWarningTo
 	promptConfirmation             = uipkg.PromptConfirmation
 	newStepBox                     = uipkg.NewStepBox
+	newRenderer                    = uipkg.NewRenderer
 	styleStart                     = uipkg.StyleStart
 	styleEnd                       = uipkg.StyleEnd
 	classifyCommand                = safetypkg.ClassifyCommand

@@ -7,6 +7,7 @@ import (
 
 	"golang.org/x/term"
 	executorpkg "shellia/internal/executor"
+	uipkg "shellia/internal/ui"
 )
 
 // commandRunner executes a model-generated command plan.
@@ -25,6 +26,8 @@ type runtimeDeps struct {
 	ExecuteManualCommand manualCommandRunner
 	StdoutIsTerminal     func(*os.File) bool
 	Trace                *traceLogger
+	Renderer             *uipkg.Renderer
+	Turn                 *uipkg.Turn
 }
 
 // defaultRuntimeDeps returns the production dependencies for Shellia.
@@ -79,6 +82,7 @@ func executorDeps(deps runtimeDeps) executorpkg.RuntimeDeps {
 		Stderr:     deps.Stderr,
 		HTTPClient: deps.HTTPClient,
 		Trace:      deps.Trace,
+		Turn:       deps.Turn,
 	}
 }
 

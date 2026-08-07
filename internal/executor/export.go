@@ -7,6 +7,7 @@ import (
 
 	"shellia/internal/core"
 	tracepkg "shellia/internal/trace"
+	uipkg "shellia/internal/ui"
 )
 
 // RuntimeDeps groups process dependencies needed by the executor.
@@ -16,6 +17,7 @@ type RuntimeDeps struct {
 	Stderr     *os.File
 	HTTPClient *http.Client
 	Trace      *tracepkg.Logger
+	Turn       *uipkg.Turn
 }
 
 func (deps RuntimeDeps) withDefaults() RuntimeDeps {

@@ -87,7 +87,9 @@ func runApp(parentCtx context.Context, args []string, deps runtimeDeps) int {
 		return 2
 	}
 
-	ui := uiEnabled(cfg)
+	effective := effectivePresentation(cfg, deps)
+	deps.Renderer = newRenderer(deps.Stdout, presentation{Style: effective.Style, ANSI: effective.ANSI})
+	ui := effective.ANSI
 
 	switch cfg.CommandKind {
 	case "config-init":
@@ -507,6 +509,9 @@ func usageFunc(fs *flag.FlagSet) func() {
 // allowing the loop to continue for the next request.
 func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo) {
 	deps = deps.withDefaults()
+	if deps.Renderer == nil {
+		deps.Renderer = newRenderer(deps.Stdout, presentation{Style: visualStylePlain, ANSI: ui})
+	}
 	reader := bufio.NewReader(deps.Stdin)
 	history := make([]historyEntry, 0, maxHistoryEntries)
 	state := sessionState{}
@@ -549,7 +554,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			return
 		}
 
-		input, err := readInteractivePrompt(ui, reader, deps.Stdin, deps.Stdout, mode, cfg)
+		input, err := readInteractivePrompt(ui, reader, deps.Stdin, deps.Stdout, mode, cfg, deps.Renderer)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				fmt.Fprintln(deps.Stdout)
@@ -902,7 +907,12 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		printContextTo(deps.Stdout, ui, cfg, *ctxInfo)
 	}
 
-	printHeaderTo(deps.Stdout, ui, cfg, *ctxInfo)
+	if deps.Renderer == nil {
+		deps.Renderer = newRenderer(deps.Stdout, presentation{Style: visualStylePlain, ANSI: ui})
+	}
+	turnUI := deps.Renderer.BeginShelliaTurn(cfg, *ctxInfo)
+	defer turnUI.Close()
+	deps.Turn = turnUI
 	partialResult := func() turnResult {
 		return workflow.result("", "", "")
 	}
@@ -986,7 +996,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 					validationFailure = "Shellia could not validate the model's final response. No commands were executed; retry the request if needed."
 				}
 				failed.Result = validationFailure
-				printFinalResultTo(deps.Stdout, ui, validationFailure)
+				turnUI.Final(validationFailure)
 				return failed, nil
 			}
 			workflow.semanticRepairUsed = true
@@ -1024,7 +1034,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 				})
 				answer = strings.TrimSpace(answer) + "\n\nVols que ho executi?"
 			}
-			printFinalResultTo(deps.Stdout, ui, answer)
+			turnUI.Final(answer)
 			completed := workflow.result(turnOutcomeCompleted, "", "")
 			completed.Result = answer
 			return completed, nil
@@ -1040,7 +1050,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			} else if reason := strings.TrimSpace(parsed.BlockerReason); reason != "" && reason != answer {
 				answer += "\n" + reason
 			}
-			printFinalResultTo(deps.Stdout, ui, answer)
+			turnUI.Final(answer)
 			blocked := workflow.result(turnOutcomeBlocked, parsed.BlockerKind, parsed.BlockerReason)
 			blocked.Result = answer
 			return blocked, nil
@@ -1085,13 +1095,13 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 				"decision": "no_progress",
 			})
 			const noProgressReason = "Shellia could not make progress because the same successful command was proposed again without an explicit repeat reason."
-			printFinalResultTo(deps.Stdout, ui, noProgressReason)
+			turnUI.Final(noProgressReason)
 			stalled := workflow.result(turnOutcomeNoProgress, "no_progress", noProgressReason)
 			stalled.Result = noProgressReason
 			return stalled, nil
 		}
 
-		printPlanTo(deps.Stdout, ui, cfg, summary, plans, false)
+		turnUI.Plan(cfg, summary, plans, false)
 		if !workflow.canExecute() {
 			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
 				"decision": "planned_without_execution",

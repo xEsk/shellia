@@ -40,6 +40,7 @@ type (
 	manualRenderMode       = executorpkg.ManualRenderMode
 	interactivePromptError = executorpkg.InteractivePromptError
 	traceLogger            = tracepkg.Logger
+	presentation           = uipkg.Presentation
 
 	llmPromptRequest      = llmpkg.PromptRequest
 	llmResponse           = llmpkg.Response
@@ -108,6 +109,7 @@ const (
 	manualRenderDirect           = executorpkg.ManualRenderDirect
 	manualRenderInteractive      = executorpkg.ManualRenderInteractive
 	manualRenderShellInteractive = executorpkg.ManualRenderShellInteractive
+	visualStylePlain             = configpkg.VisualStylePlain
 
 	colorBlue   = uipkg.ColorBlue
 	colorCyan   = uipkg.ColorCyan
@@ -137,7 +139,7 @@ var (
 	exitWithError                   = uipkg.ExitWithError
 	renderPanel                     = uipkg.RenderPanel
 	printSessionBannerTo            = uipkg.PrintSessionBannerTo
-	readInteractivePrompt           = uipkg.ReadInteractivePrompt
+	readInteractivePrompt           = uipkg.ReadInteractivePromptWithRenderer
 	printWarningTo                  = uipkg.PrintWarningTo
 	printSeparator                  = uipkg.PrintSeparator
 	printInfoTo                     = uipkg.PrintInfoTo
@@ -146,14 +148,12 @@ var (
 	printModelSwitchTo              = uipkg.PrintModelSwitchTo
 	printNewSessionSeparatorTo      = uipkg.PrintNewSessionSeparatorTo
 	clearScreenTo                   = uipkg.ClearScreenTo
-	printHeaderTo                   = uipkg.PrintHeaderTo
-	printFinalResultTo              = uipkg.PrintFinalResultTo
-	printPlanTo                     = uipkg.PrintPlanTo
 	promptPlanExecution             = uipkg.PromptPlanExecution
 	printRawPromptsTo               = uipkg.PrintRawPromptsTo
 	printSectionTo                  = uipkg.PrintSectionTo
 	promptPlanningLimitContinuation = uipkg.PromptPlanningLimitContinuation
 	startThinkingIndicator          = uipkg.StartThinkingIndicator
+	newRenderer                     = uipkg.NewRenderer
 
 	getContext = executorpkg.GetContext
 

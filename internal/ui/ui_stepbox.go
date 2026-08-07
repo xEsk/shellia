@@ -13,6 +13,7 @@ import (
 
 // stepBox renders a full step with its state, confirmation, and output.
 type stepBox struct {
+	surface       stepSurface
 	target        io.Writer
 	ui            bool
 	width         int
@@ -22,16 +23,19 @@ type stepBox struct {
 
 // newStepBox creates and opens a new step box with a consistent width.
 func newStepBox(target io.Writer, ui bool, title string) *stepBox {
-	box := &stepBox{
-		target: target,
-		ui:     ui,
-		width:  boxWidthFor(target),
+	return newPlainStepBox(target, ui, title)
+}
+
+func newStepBoxForSurface(surface stepSurface) *stepBox {
+	if surface == nil {
+		return nil
 	}
-	fmt.Fprintln(target)
-	fmt.Fprintln(target, box.separatorLine())
-	fmt.Fprintln(target)
-	fmt.Fprintln(target, style(box.ui, colorMagenta+colorBold, title))
-	return box
+	return &stepBox{
+		surface: surface,
+		target:  surface.writer(),
+		ui:      surface.ansiEnabled(),
+		width:   surface.contentWidth(),
+	}
 }
 
 // Close closes the step box if it is still open.
@@ -39,6 +43,7 @@ func (box *stepBox) Close() {
 	if box == nil || box.closed {
 		return
 	}
+	box.surface.close()
 	box.closed = true
 }
 
@@ -73,20 +78,7 @@ func (box *stepBox) ReplaceLastRenderedRow(rendered string) {
 		return
 	}
 
-	output, ok := box.target.(*os.File)
-	if !ok {
-		fmt.Fprintln(box.target, rendered)
-		return
-	}
-
-	fd := int(output.Fd())
-	if !term.IsTerminal(fd) {
-		fmt.Fprintln(box.target, rendered)
-		return
-	}
-
-	fmt.Fprint(box.target, "\033[1A\r\033[2K")
-	fmt.Fprintln(box.target, rendered)
+	box.surface.replaceLastRenderedRow(rendered)
 }
 
 // OutputLabel starts the system output section inside the box.
@@ -101,7 +93,7 @@ func (box *stepBox) OutputLabel() {
 
 // OutputLine prints a line of system output with leading padding and a subdued colour.
 func (box *stepBox) OutputLine(text string) {
-	fmt.Fprintln(box.target, "  "+style(box.ui, colorDim, text))
+	box.surface.writeRow("  " + style(box.ui, colorDim, text))
 }
 
 // EditCommand shows an editable line inside the box to adjust the proposed command.
@@ -187,11 +179,6 @@ func (box *stepBox) EditCommand(reader *bufio.Reader, stdin *os.File, initial st
 	}
 }
 
-// separatorLine renders a long, subdued line to separate blocks.
-func (box *stepBox) separatorLine() string {
-	return style(box.ui, colorDim, strings.Repeat("─", box.width))
-}
-
 // writePrefixed prints content with a fixed prefix and hard wrapping inside the box.
 func (box *stepBox) writePrefixed(prefixPlain string, prefixRendered string, text string, textColor string) {
 	available := box.innerWidth() - visibleWidth(prefixPlain)
@@ -216,7 +203,7 @@ func (box *stepBox) writePrefixed(prefixPlain string, prefixRendered string, tex
 
 // writeRow writes a row inside the box.
 func (box *stepBox) writeRow(rendered string) {
-	fmt.Fprintln(box.target, rendered)
+	box.surface.writeRow(rendered)
 }
 
 // renderEditableRow repaints a single editable row while keeping the cursor inside the box.
@@ -254,51 +241,11 @@ func (box *stepBox) renderEditableRow(prefixPlain string, prefixRendered string,
 
 	row := prefixRendered + style(box.ui, colorWhite, string(view))
 
-	fmt.Fprint(box.target, "\r\033[K")
-	fmt.Fprint(box.target, row)
-
 	moveLeft := len(view) - cursorInView
-	if moveLeft > 0 {
-		fmt.Fprintf(box.target, "\033[%dD", moveLeft)
-	}
+	box.surface.renderEditableRow(row, moveLeft)
 }
 
 // innerWidth returns the usable space between the box borders.
 func (box *stepBox) innerWidth() int {
 	return box.width
-}
-
-// wrapPlainText splits plain text into lines of a fixed visible width, respecting word boundaries.
-func wrapPlainText(text string, width int) []string {
-	if width <= 0 {
-		return []string{text}
-	}
-	if text == "" {
-		return []string{""}
-	}
-
-	words := strings.Fields(text)
-	if len(words) == 0 {
-		return []string{""}
-	}
-
-	lines := make([]string, 0)
-	current := words[0]
-
-	for _, word := range words[1:] {
-		if len([]rune(current))+1+len([]rune(word)) <= width {
-			current += " " + word
-		} else {
-			lines = append(lines, current)
-			// Hard-break words longer than width.
-			runes := []rune(word)
-			for len(runes) > width {
-				lines = append(lines, string(runes[:width]))
-				runes = runes[width:]
-			}
-			current = string(runes)
-		}
-	}
-	lines = append(lines, current)
-	return lines
 }

@@ -1,0 +1,81 @@
+package ui
+
+import (
+	"fmt"
+	"io"
+	"strings"
+
+	configpkg "shellia/internal/config"
+	"shellia/internal/core"
+)
+
+type plainRenderer struct {
+	target io.Writer
+	ansi   bool
+}
+
+type plainTurn struct {
+	target io.Writer
+	ansi   bool
+	closed bool
+}
+
+func newPlainRenderer(target io.Writer, ansi bool) rendererImpl {
+	return &plainRenderer{target: target, ansi: ansi}
+}
+
+func (renderer *plainRenderer) userTurn(mode core.InteractiveMode, text string) {
+	prompt := promptPrefix(renderer.ansi, mode)
+	printSubmittedPromptTo(renderer.target, renderer.ansi, prompt, []rune(text))
+	fmt.Fprint(renderer.target, "\r\n")
+}
+
+func (renderer *plainRenderer) beginShelliaTurn(cfg configpkg.Config, ctxInfo core.ContextInfo) turnImpl {
+	printHeaderTo(renderer.target, renderer.ansi, cfg, ctxInfo)
+	return &plainTurn{target: renderer.target, ansi: renderer.ansi}
+}
+
+func (turn *plainTurn) plan(cfg configpkg.Config, summary string, plans []core.CommandPlan, discovery bool) {
+	if turn == nil || turn.closed {
+		return
+	}
+	printPlanTo(turn.target, turn.ansi, cfg, summary, plans, discovery)
+}
+
+func (turn *plainTurn) beginStep(cfg configpkg.Config, index int, total int, plan core.CommandPlan) *stepBox {
+	if turn == nil || turn.closed {
+		return nil
+	}
+	return printCommandExecutionTo(turn.target, turn.ansi, cfg, index, total, plan)
+}
+
+func (turn *plainTurn) final(message string) {
+	if turn == nil || turn.closed {
+		return
+	}
+	printFinalResultTo(turn.target, turn.ansi, message)
+}
+
+func (turn *plainTurn) suspend() {}
+
+func (turn *plainTurn) resume() {}
+
+func (turn *plainTurn) close() {
+	if turn == nil {
+		return
+	}
+	turn.closed = true
+}
+
+func newPlainStepBox(target io.Writer, ansi bool, title string) *stepBox {
+	fmt.Fprintln(target)
+	fmt.Fprintln(target, style(ansi, colorDim, strings.Repeat("─", boxWidthFor(target))))
+	fmt.Fprintln(target)
+	fmt.Fprintln(target, style(ansi, colorMagenta+colorBold, title))
+	surface := newRowSurface(rowSurfaceSpec{
+		target: target,
+		ansi:   ansi,
+		width:  surfaceContentWidth(target, ""),
+	})
+	return newStepBoxForSurface(surface)
+}

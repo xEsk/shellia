@@ -68,6 +68,11 @@ func ReadInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout
 	return readInteractivePrompt(ui, reader, stdin, stdout, mode, cfg)
 }
 
+// ReadInteractivePromptWithRenderer reads a prompt and routes its submitted form through renderer.
+func ReadInteractivePromptWithRenderer(ui bool, reader *bufio.Reader, stdin *os.File, stdout io.Writer, mode interactiveMode, cfg config, renderer *Renderer) (string, error) {
+	return readInteractivePromptWithRenderer(ui, reader, stdin, stdout, mode, cfg, renderer)
+}
+
 // PrintWarningTo shows a non-fatal warning on the provided target.
 func PrintWarningTo(target io.Writer, ui bool, message string) {
 	printWarningTo(target, ui, message)

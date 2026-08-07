@@ -348,6 +348,11 @@ const skippedAfterFailureReason = "dependent on an earlier failed command"
 // executeCommands runs the sequential plan and returns its structured batch outcome.
 func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan, priorExecutions []commandExecution) (commandBatchResult, error) {
 	deps = deps.withDefaults()
+	if deps.Turn == nil {
+		renderer := newRenderer(deps.Stdout, presentation{Style: visualStylePlain, ANSI: ui})
+		deps.Turn = renderer.BeginShelliaTurn(cfg, *ctxInfo)
+		defer deps.Turn.Close()
+	}
 	reader := bufio.NewReader(confirmationInput{Reader: deps.Stdin})
 	batch := commandBatchResult{
 		Executions: make([]commandExecution, 0, len(plans)),
@@ -367,7 +372,7 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 			continue
 		}
 
-		box := printCommandExecutionTo(deps.Stdout, ui, cfg, index+1, len(plans), plan)
+		box := deps.Turn.BeginStep(cfg, index+1, len(plans), plan)
 		effectiveCommand := plan.Command
 		interactive := plan.Interactive
 
@@ -556,7 +561,7 @@ func skipCommand(deps RuntimeDeps, ui bool, cfg config, box *stepBox, turnID str
 		Reason:  reason,
 	}
 	if box == nil {
-		box = printCommandExecutionTo(deps.Stdout, ui, cfg, index+1, total, plan)
+		box = deps.Turn.BeginStep(cfg, index+1, total, plan)
 	}
 	box.Section("skipped", colorDim)
 	box.Text(reason, colorDim)

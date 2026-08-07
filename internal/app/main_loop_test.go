@@ -2098,6 +2098,47 @@ func TestRunInteractiveProcessesPromptThenExit(t *testing.T) {
 	}
 }
 
+// TestRunInteractiveRoutesPlainConversationThroughRenderer checks the app and
+// executor boundary share one semantic turn without changing plain ordering.
+func TestRunInteractiveRoutesPlainConversationThroughRenderer(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Current disk space observed","summary":"Cal consultar l'espai disponible.","commands":[{"command":"df -h /","purpose":"Mostrar l'espai lliure.","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Current disk space observed","summary":"Queden 419Gi lliures al disc arrel (/).","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	cfg.ShowSystemOutput = true
+	ctxInfo := loopTestContext(t)
+
+	output := captureMainLoopIO(t, "quant d'espai queda al disc?\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(_ context.Context, turnDeps runtimeDeps, _ bool, turnCfg config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
+			if turnDeps.Turn == nil {
+				t.Fatal("ExecuteCommands received nil Turn")
+			}
+			step := turnDeps.Turn.BeginStep(turnCfg, 1, 1, plans[0])
+			step.OutputLabel()
+			step.OutputLine("419Gi available")
+			step.Close()
+			return commandBatchResult{Executions: []commandExecution{{
+				Command:  plans[0].Command,
+				Purpose:  plans[0].Purpose,
+				ExitCode: 0,
+				Stdout:   capturedStream{Text: "419Gi available"},
+			}}}, nil
+		}
+		runInteractive(t.Context(), deps, false, cfg, &ctxInfo)
+	})
+
+	position := 0
+	for _, want := range []string{"you ›", "Shellia", "plan", "step 1/1", "system output", "Queden 419Gi lliures"} {
+		next := strings.Index(output[position:], want)
+		if next < 0 {
+			t.Fatalf("interactive output lacks ordered value %q: %q", want, output)
+		}
+		position += next + len(want)
+	}
+}
+
 // TestRunInteractiveModelCommandSwitchesWithoutLLM checks /model is handled locally.
 func TestRunInteractiveModelCommandSwitchesWithoutLLM(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")

@@ -590,6 +590,11 @@ const (
 
 // readInteractivePrompt shows a clear prompt and returns the entered text.
 func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout io.Writer, mode interactiveMode, cfg config) (string, error) {
+	return readInteractivePromptWithRenderer(ui, reader, stdin, stdout, mode, cfg, nil)
+}
+
+// readInteractivePromptWithRenderer renders submitted prompts through the selected presentation.
+func readInteractivePromptWithRenderer(ui bool, reader *bufio.Reader, stdin *os.File, stdout io.Writer, mode interactiveMode, cfg config, renderer *Renderer) (string, error) {
 	if stdin == nil {
 		stdin = os.Stdin
 	}
@@ -650,13 +655,11 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout
 			}
 			submitted := strings.TrimSpace(string(buffer))
 			clearEditablePromptTo(stdout, renderState)
-			printSubmittedPromptTo(stdout, ui, prompt, buffer)
-			fmt.Fprint(stdout, "\r\n")
+			renderSubmittedPrompt(stdout, ui, prompt, buffer, mode, renderer)
 			return submitted, nil
 		case 3:
 			clearEditablePromptTo(stdout, renderState)
-			printSubmittedPromptTo(stdout, ui, prompt, buffer)
-			fmt.Fprint(stdout, "\r\n")
+			renderSubmittedPrompt(stdout, ui, prompt, buffer, mode, renderer)
 			return "exit", nil
 		case 27:
 			result, err := applyPromptEscapeInput(stdin, fd, &buffer, &cursor, contentWidth, &affinity)
@@ -665,8 +668,7 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout
 			}
 			if result.exit {
 				clearEditablePromptTo(stdout, renderState)
-				printSubmittedPromptTo(stdout, ui, prompt, buffer)
-				fmt.Fprint(stdout, "\r\n")
+				renderSubmittedPrompt(stdout, ui, prompt, buffer, mode, renderer)
 				return "exit", nil
 			}
 		case 127, 8:
@@ -696,6 +698,15 @@ func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout
 
 		renderEditablePromptTo(stdout, ui, prompt, buffer, cursor, affinity, renderState, cfg)
 	}
+}
+
+func renderSubmittedPrompt(target io.Writer, ui bool, prompt string, buffer []rune, mode interactiveMode, renderer *Renderer) {
+	if renderer != nil && mode == interactiveModeAI {
+		renderer.UserTurn(mode, string(buffer))
+		return
+	}
+	printSubmittedPromptTo(target, ui, prompt, buffer)
+	fmt.Fprint(target, "\r\n")
 }
 
 // readFallbackPromptLine reads one prompt line when raw terminal editing is unavailable.

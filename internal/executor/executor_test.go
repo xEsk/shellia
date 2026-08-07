@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	uipkg "shellia/internal/ui"
 )
 
 // TestDetectInteractivePromptMatchesConfirmationPrompt checks that a trailing yes/no prompt is detected.
@@ -20,6 +24,61 @@ func TestDetectInteractivePromptMatchesConfirmationPrompt(t *testing.T) {
 	}
 	if prompt != "Are you sure you want to continue? [y/N]" {
 		t.Fatalf("detectInteractivePrompt() prompt = %q", prompt)
+	}
+}
+
+// TestExecuteCommandsUsesActiveTurn checks execution steps are created through
+// the renderer turn supplied by the app boundary.
+func TestExecuteCommandsUsesActiveTurn(t *testing.T) {
+	stdout, err := os.CreateTemp(t.TempDir(), "stdout")
+	if err != nil {
+		t.Fatalf("CreateTemp(stdout) error = %v", err)
+	}
+	t.Cleanup(func() { stdout.Close() }) //nolint:errcheck // best-effort test cleanup.
+
+	stdin, err := os.CreateTemp(t.TempDir(), "stdin")
+	if err != nil {
+		t.Fatalf("CreateTemp(stdin) error = %v", err)
+	}
+	t.Cleanup(func() { stdin.Close() }) //nolint:errcheck // best-effort test cleanup.
+
+	cfg := defaultConfig()
+	cfg.YesSafe = true
+	cfg.ShowSystemOutput = true
+	cfg.ShowCommandPopup = true
+	ctxInfo := loopTestContext(t)
+	renderer := uipkg.NewRenderer(stdout, uipkg.Presentation{Style: cfg.VisualStyle, ANSI: false})
+	turn := renderer.BeginShelliaTurn(cfg, ctxInfo)
+	defer turn.Close()
+	plan := commandPlan{
+		Command:        "printf '419Gi available\\n'",
+		Purpose:        "Mostrar l'espai lliure.",
+		Risk:           "safe",
+		Classification: classificationSafe,
+		LocalSafe:      true,
+	}
+
+	_, err = executeCommands(t.Context(), RuntimeDeps{
+		Stdin:  stdin,
+		Stdout: stdout,
+		Stderr: stdout,
+		Turn:   turn,
+	}, false, cfg, &ctxInfo, []commandPlan{plan}, nil)
+	if err != nil {
+		t.Fatalf("executeCommands() error = %v", err)
+	}
+	if _, err := stdout.Seek(0, io.SeekStart); err != nil {
+		t.Fatalf("Seek(stdout) error = %v", err)
+	}
+	data, err := io.ReadAll(stdout)
+	if err != nil {
+		t.Fatalf("ReadAll(stdout) error = %v", err)
+	}
+	output := string(data)
+	for _, want := range []string{"step 1/1", "system output", "419Gi available"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("executor output lacks %q: %q", want, output)
+		}
 	}
 }
 
