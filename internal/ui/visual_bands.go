@@ -3,9 +3,7 @@ package ui
 import (
 	"fmt"
 	"io"
-	"os"
-
-	"golang.org/x/term"
+	"strings"
 
 	configpkg "shellia/internal/config"
 	"shellia/internal/core"
@@ -30,10 +28,9 @@ type bandsTurn struct {
 }
 
 type bandsStepSurface struct {
-	target io.Writer
-	ansi   bool
-	width  int
-	closed bool
+	rows       *rowSurface
+	ansi       bool
+	totalWidth int
 }
 
 func newBandsRenderer(target io.Writer, ansi bool) rendererImpl {
@@ -43,20 +40,28 @@ func newBandsRenderer(target io.Writer, ansi bool) rendererImpl {
 	return &bandsRenderer{target: target, ansi: ansi}
 }
 
-func (renderer *bandsRenderer) userTurn(_ core.InteractiveMode, text string) {
+func (renderer *bandsRenderer) userTurn(mode core.InteractiveMode, text string) {
 	if renderer == nil {
 		return
 	}
 
+	width := boxWidthFor(renderer.target)
+	prompt := promptPrefix(renderer.ansi, mode)
+	prefix := "  " + prompt
+	contentWidth := width - visibleWidth(bandsMarker+" "+prefix)
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+
 	fmt.Fprintln(renderer.target)
-	fmt.Fprintln(renderer.target, bandsTurnRow(renderer.ansi, bandsUserBackground, colorCyan, style(renderer.ansi, colorCyan+colorBold, "Tu")))
-	for index, line := range wrapPlainText(text, surfaceContentWidth(renderer.target, bandsMarker+"     ")) {
+	fmt.Fprintln(renderer.target, bandsTurnRow(renderer.ansi, bandsUserBackground, colorCyan, style(renderer.ansi, colorCyan+colorBold, "Tu"), width))
+	for index, line := range wrapPromptRunes([]rune(text), contentWidth) {
 		if index == 0 {
-			line = style(renderer.ansi, colorCyan+colorBold, "you") + style(renderer.ansi, colorWhite, " › ") + style(renderer.ansi, colorWhite, line)
+			line = prefix + style(renderer.ansi, colorWhite, line)
 		} else {
-			line = "      " + style(renderer.ansi, colorWhite, line)
+			line = "  " + strings.Repeat(" ", visibleWidth(prompt)) + style(renderer.ansi, colorWhite, line)
 		}
-		fmt.Fprintln(renderer.target, bandsTurnRow(renderer.ansi, bandsUserBackground, colorCyan, "  "+line))
+		fmt.Fprintln(renderer.target, bandsTurnRow(renderer.ansi, bandsUserBackground, colorCyan, line, width))
 	}
 }
 
@@ -126,8 +131,9 @@ func (turn *bandsTurn) final(message string) {
 		return
 	}
 
+	turn.row("  " + style(turn.ansi, colorMagenta+colorBold, "Shellia"))
 	for _, line := range renderAnswerMarkdown(message, surfaceContentWidth(turn.target, bandsMarker+"     "), turn.ansi) {
-		turn.row("  " + line)
+		turn.row("    " + line)
 	}
 }
 
@@ -144,96 +150,110 @@ func (turn *bandsTurn) close() {
 }
 
 func (turn *bandsTurn) row(text string) {
-	fmt.Fprintln(turn.target, bandsTurnRow(turn.ansi, bandsShelliaBackground, colorMagenta, text))
+	fmt.Fprintln(turn.target, bandsTurnRow(turn.ansi, bandsShelliaBackground, colorMagenta, text, boxWidthFor(turn.target)))
 }
 
 func newBandsStepSurface(target io.Writer, ansi bool) *bandsStepSurface {
 	if target == nil {
 		target = io.Discard
 	}
+	totalWidth := boxWidthFor(target)
 	return &bandsStepSurface{
-		target: target,
-		ansi:   ansi,
-		width:  surfaceContentWidth(target, bandsMarker+"     "),
+		rows: newRowSurface(rowSurfaceSpec{
+			target: target,
+			ansi:   ansi,
+			width:  surfaceContentWidth(target, bandsMarker+"     "),
+		}),
+		ansi:       ansi,
+		totalWidth: totalWidth,
 	}
 }
 
 func (surface *bandsStepSurface) writer() io.Writer {
-	return surface.target
+	if surface == nil || surface.rows == nil {
+		return io.Discard
+	}
+	return surface.rows.writer()
 }
 
 func (surface *bandsStepSurface) ansiEnabled() bool {
-	return surface.ansi
+	return surface != nil && surface.ansi
 }
 
 func (surface *bandsStepSurface) contentWidth() int {
-	return surface.width
+	if surface == nil || surface.rows == nil {
+		return 1
+	}
+	return surface.rows.contentWidth()
 }
 
 func (surface *bandsStepSurface) writeRow(rendered string) {
-	if surface == nil || surface.closed {
+	if surface == nil || surface.rows == nil {
 		return
 	}
-	fmt.Fprintln(surface.target, bandsExecutionRow(surface.ansi, rendered))
+	surface.rows.writeRow(bandsExecutionRow(surface.ansi, rendered, surface.totalWidth))
 }
 
 func (surface *bandsStepSurface) replaceLastRenderedRow(rendered string) {
-	if surface == nil || surface.closed {
+	if surface == nil || surface.rows == nil {
 		return
 	}
-
-	output, ok := surface.target.(*os.File)
-	if !surface.ansi || !ok || !term.IsTerminal(int(output.Fd())) {
-		surface.writeRow(rendered)
+	row := bandsExecutionRow(surface.ansi, rendered, surface.totalWidth)
+	if !surface.ansi {
+		surface.rows.writeRow(row)
 		return
 	}
-	fmt.Fprint(surface.target, "\033[1A\r\033[2K")
-	surface.writeRow(rendered)
+	surface.rows.replaceLastRenderedRow(row)
 }
 
 func (surface *bandsStepSurface) renderEditableRow(rendered string, moveLeft int) {
-	if surface == nil || surface.closed {
+	if surface == nil || surface.rows == nil {
 		return
 	}
 	if !surface.ansi {
-		surface.writeRow(rendered)
+		surface.rows.writeRow(bandsExecutionRow(false, rendered, surface.totalWidth))
 		return
 	}
 
-	fmt.Fprint(surface.target, "\r\033[K", bandsExecutionRowStart(surface.ansi), rendered)
-	if moveLeft > 0 {
-		fmt.Fprintf(surface.target, "\033[%dD", moveLeft)
-	}
+	row := bandsExecutionRow(true, rendered, surface.totalWidth)
+	padding := bandsRowPadding(bandsMarker+"     "+rendered, surface.totalWidth)
+	surface.rows.renderEditableRow(row, moveLeft+padding)
 }
 
 func (surface *bandsStepSurface) close() {
-	if surface == nil || surface.closed {
+	if surface == nil || surface.rows == nil {
 		return
 	}
-	surface.closed = true
+	surface.rows.close()
 }
 
-func bandsTurnRow(ansi bool, background string, accent string, text string) string {
+func bandsTurnRow(ansi bool, background string, accent string, text string, width int) string {
 	if !ansi {
 		return bandsMarker + " " + text
 	}
-	return background + accent + bandsMarker + colorReset + background + " " + text + colorReset
+	return bandsANSIRow(background, accent, bandsMarker+" ", text, width)
 }
 
-func bandsExecutionRow(ansi bool, text string) string {
-	return bandsExecutionRowStart(ansi) + text + bandsExecutionRowEnd(ansi)
-}
-
-func bandsExecutionRowStart(ansi bool) string {
+func bandsExecutionRow(ansi bool, text string, width int) string {
 	if !ansi {
-		return bandsMarker + "     "
+		return bandsMarker + "     " + text
 	}
-	return bandsExecutionBackground + colorDim + bandsMarker + colorReset + bandsExecutionBackground + "     "
+	return bandsANSIRow(bandsExecutionBackground, colorDim, bandsMarker+"     ", text, width)
 }
 
-func bandsExecutionRowEnd(ansi bool) string {
-	if !ansi {
-		return ""
+func bandsANSIRow(background string, accent string, prefix string, text string, width int) string {
+	text = strings.ReplaceAll(text, colorReset, colorReset+background)
+	row := background + accent + prefix + colorReset + background + text
+	if padding := bandsRowPadding(prefix+text, width); padding > 0 {
+		row += strings.Repeat(" ", padding)
 	}
-	return colorReset
+	return row + colorReset
+}
+
+func bandsRowPadding(content string, width int) int {
+	padding := width - visibleWidth(content)
+	if padding < 0 {
+		return 0
+	}
+	return padding
 }
