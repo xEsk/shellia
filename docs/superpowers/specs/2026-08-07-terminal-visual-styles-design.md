@@ -15,6 +15,8 @@ Els estils no permetran configurar colors. Reutilitzaran la paleta actual i canv
 
 La feature continuarà sent scrollback-native. No introduirà una TUI de pantalla completa, alternate screen, bucle d’esdeveniments nou ni dependències noves.
 
+Cada estil serà un mòdul compilat, separat i substituïble darrere d’un contracte intern comú. Aquesta modularitat serà “plugin-like”, però no s’introduirà càrrega dinàmica, discovery, reflection, registre extern ni una API pública de plugins.
+
 ## 2. Problema i valor per a l’usuari
 
 La UI actual és agradable durant l’execució, però una conversa llarga és difícil de revisar perquè comparteixen massa pes, alineació i tractament:
@@ -40,7 +42,9 @@ La feature es considerarà correcta quan:
 6. pipes, redireccions i `TERM=dumb` degradin automàticament a `plain`;
 7. els outputs no interactius continuïn apareixent en temps real;
 8. els comandos interactius continuïn controlant el terminal sense prefixes, vores ni transformacions del seu output;
-9. cap estil canviï plans, riscos, confirmacions, execució, evidència, traces o memòria de sessió.
+9. cap estil canviï plans, riscos, confirmacions, execució, evidència, traces o memòria de sessió;
+10. cada estil tingui implementació i proves pròpies, sense condicionals sobre altres estils;
+11. pel que fa al renderer, afegir un estil compilat nou requereixi una implementació nova i una única entrada al selector, no editar els renderers existents.
 
 ## 4. Direcció visual
 
@@ -70,6 +74,8 @@ La signatura compartida dels estils nous és la superfície de torn: una identit
 - Separar només amb color: no resol la lectura amb `--no-color` ni en scrollback llarg.
 - Envoltar cada línia amb una caixa independent: fragmenta massa la conversa.
 - Convertir Shellia en una aplicació full-screen: trenca el model CLI-first, el scrollback i la composició amb altres eines Unix.
+- Centralitzar els quatre estils en un renderer gegant ple de branques: acobla variants que han de poder evolucionar independentment.
+- Crear un sistema de plugins dinàmics: afegeix infraestructura, compatibilitat i superfície pública que aquesta feature no necessita.
 
 ## 5. Contracte de configuració
 
@@ -175,6 +181,46 @@ La implementació es limitarà als límits existents:
 - `internal/executor`: connexió de l’output no interactiu amb la superfície existent i suspensió per a PTY interactiu;
 - `README.md`: documentació de la clau i els valors.
 
+### 9.1 Contracte intern de renderer
+
+`internal/ui` definirà un contracte intern petit orientat a semàntica de presentació, no a detalls de negoci. El contracte cobrirà les operacions que varien visualment:
+
+- obrir i tancar un torn d’usuari o de Shellia;
+- presentar un pla o bloc informatiu;
+- obrir, alimentar i tancar una execució;
+- escriure labels, línies d’output i resposta final;
+- suspendre i reprendre la superfície al voltant d’un handoff PTY.
+
+El contracte rebrà contingut ja decidit pel workflow i metadades visuals acotades. No rebrà autoritat per classificar risc, decidir confirmacions, modificar comandos ni interpretar outputs.
+
+La selecció de la implementació es farà una sola vegada mitjançant una factory o selector exhaustiu. Fora d’aquest punt no hi haurà switches globals per `plain`, `guide`, `bands` o `cards`.
+
+### 9.2 Separació física dels estils
+
+L’organització prevista és:
+
+```text
+internal/ui/
+  visual_renderer.go
+  visual_surface.go
+  visual_plain.go
+  visual_guide.go
+  visual_bands.go
+  visual_cards.go
+```
+
+Els noms exactes es podran adaptar a les convencions descobertes durant la implementació, però es mantindran aquestes responsabilitats:
+
+- `visual_renderer.go`: contracte intern, selector únic i tipus semàntics mínims;
+- `visual_surface.go`: primitives compartides de width, padding, ANSI, wrapping i escriptura incremental;
+- un fitxer per estil: només geometria i decisions visuals d’aquell estil.
+
+`plain` encapsularà el comportament actual en lloc de quedar com una acumulació de casos especials. `guide`, `bands` i `cards` no s’importaran ni es cridaran entre ells.
+
+Les proves seguiran la mateixa separació, amb un fitxer focalitzat per estil i proves comunes de contracte reutilitzades com a suite compartida.
+
+### 9.3 Reutilització de primitives existents
+
 Es reutilitzaran:
 
 - `renderPanel` per a plans i blocs informatius;
@@ -183,7 +229,9 @@ Es reutilitzaran:
 - `prefixedWriter` per al streaming línia per línia;
 - `runtimeDeps` per evitar dependències directes de globals en proves.
 
-No s’introduiran quatre renderers independents amb contingut duplicat. Les mateixes primitives semàntiques —torn, pla, execució, output i resposta— rebran una política visual segons l’estil efectiu.
+La separació modular no duplicarà contingut ni lògica de negoci. Les mateixes primitives semàntiques —torn, pla, execució, output i resposta— alimentaran qualsevol renderer. Cada implementació serà independent en geometria, però compartirà les utilitats mecàniques i el contracte.
+
+No es farà un refactor general de tot `internal/ui`. Només es mouran o extrauran les peces necessàries per establir el contracte i encapsular els paths afectats per aquesta feature.
 
 ## 10. Flux de dades
 
@@ -191,11 +239,12 @@ No s’introduiran quatre renderers independents amb contingut duplicat. Les mat
 2. El default explícit és `plain`.
 3. `runApp` determina si l’stdout real és un TTY utilitzable.
 4. Es deriva l’estil efectiu i la capacitat ANSI segons la matriu definida.
-5. El prompt interactiu reimprimeix el text enviat amb la superfície d’usuari seleccionada.
-6. `runTurn` obre una superfície de Shellia abans del primer pla o resposta.
-7. Plans, passos, confirmacions, outputs i resposta final passen pels renderers existents dins d’aquesta superfície.
-8. El resultat terminal tanca la superfície, inclosos errors i cancel·lacions.
-9. El següent prompt inicia un torn nou.
+5. El selector crea una única implementació de renderer per a l’estil efectiu.
+6. El prompt interactiu reimprimeix el text enviat amb la superfície d’usuari seleccionada.
+7. `runTurn` obre una superfície de Shellia abans del primer pla o resposta.
+8. Plans, passos, confirmacions, outputs i resposta final passen pel contracte comú dins d’aquesta superfície.
+9. El resultat terminal tanca la superfície, inclosos errors i cancel·lacions.
+10. El següent prompt inicia un torn nou.
 
 L’estil no entra al prompt del model, l’estat de workflow, la memòria de sessió ni les traces de decisió.
 
@@ -244,7 +293,10 @@ Qualsevol implementació que necessiti modificar contractes del planner, workflo
 - els renderers amb `--no-color` no generen escapes propis de Shellia però conserven geometria;
 - wrapping amb rails i vores a diferents amplades;
 - resposta Markdown, command boxes, session banner i prompts continuen alineats;
-- targetes es tanquen una sola vegada en tots els resultats terminals.
+- targetes es tanquen una sola vegada en tots els resultats terminals;
+- la suite comuna del contracte passa per als quatre renderers;
+- cada renderer es prova des del seu propi fitxer sense dependre d’un altre estil;
+- el selector és exhaustiu i concentra l’únic mapping entre valor configurat i implementació.
 
 ### 13.3 Streaming
 
@@ -276,12 +328,13 @@ L’ordre recomanat d’implementació és:
 
 1. contracte de configuració i presentació efectiva;
 2. regressió de `plain`;
-3. superfície comuna de torn;
-4. `guide`;
-5. `bands`;
-6. `cards` incremental;
-7. degradació `--no-color`, no-TTY i PTY;
-8. documentació i matriu final de proves.
+3. contracte intern, selector únic i suite comuna;
+4. extracció de `plain` com a implementació aïllada;
+5. `guide`;
+6. `bands`;
+7. `cards` incremental;
+8. degradació `--no-color`, no-TTY i PTY;
+9. documentació i matriu final de proves.
 
 ## 15. Stop Gates d’implementació
 
@@ -293,7 +346,10 @@ Cal aturar i revisar el disseny si:
 4. `--no-color` necessita filtrar output del procés fill;
 5. l’estil entra en prompts, workflow, traces de decisió o política de seguretat;
 6. cal afegir una dependència de TUI full-screen;
-7. la implementació duplica contingut o lògica de negoci en quatre renderers complets.
+7. la implementació duplica contingut o lògica de negoci en quatre renderers complets;
+8. una variant necessita modificar el fitxer d’una altra variant;
+9. apareixen condicionals d’estil fora del selector o de la implementació propietària;
+10. el contracte visual creix fins a absorbir decisions del workflow, executor o safety.
 
 ## 16. Decisió final
 
