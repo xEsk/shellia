@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/term"
 	configpkg "shellia/internal/config"
@@ -50,7 +51,7 @@ func (renderer *cardsRenderer) userTurn(mode core.InteractiveMode, text string) 
 	width := boxWidthFor(renderer.target)
 	fmt.Fprintln(renderer.target)
 	fmt.Fprintln(renderer.target, cardsBorderLine(renderer.ansi, colorCyan, "Tu", width, true))
-	cardsWriteWrappedRow(
+	cardsWriteSubmittedRows(
 		renderer.target,
 		renderer.ansi,
 		colorCyan,
@@ -249,8 +250,10 @@ func (surface *cardsStepSurface) writeRow(rendered string) {
 	if !surface.canWrite() {
 		return
 	}
-	nested, _ := cardsFormattedRow(surface.turn.ansi, colorDim, surface.width, rendered)
-	surface.turn.writeRow(nested)
+	for _, row := range cardsWrapRenderedRows(rendered, surface.contentWidth()) {
+		nested, _ := cardsFormattedRow(surface.turn.ansi, colorDim, surface.width, row)
+		surface.turn.writeRow(nested)
+	}
 }
 
 func (surface *cardsStepSurface) replaceLastRenderedRow(rendered string) {
@@ -344,6 +347,104 @@ func cardsWriteWrappedRow(target io.Writer, ansi bool, borderColor string, width
 		row, _ := cardsFormattedRow(ansi, borderColor, width, prefix+line)
 		fmt.Fprintln(target, row)
 	}
+}
+
+func cardsWriteSubmittedRows(target io.Writer, ansi bool, borderColor string, width int, prefixRendered string, prefixPlain string, text string) {
+	available := cardsContentWidth(width) - visibleWidth(prefixPlain)
+	if available < 1 {
+		available = 1
+	}
+	lines := cardsWrapSubmittedText(text, available)
+	for index, line := range lines {
+		prefix := strings.Repeat(" ", visibleWidth(prefixPlain))
+		if index == 0 {
+			prefix = prefixRendered
+		}
+		row, _ := cardsFormattedRow(ansi, borderColor, width, prefix+line)
+		fmt.Fprintln(target, row)
+	}
+}
+
+func cardsWrapSubmittedText(text string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+	physicalLines := strings.Split(text, "\n")
+	lines := make([]string, 0, len(physicalLines))
+	for _, physicalLine := range physicalLines {
+		runes := []rune(physicalLine)
+		if len(runes) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+		for len(runes) > width {
+			lines = append(lines, string(runes[:width]))
+			runes = runes[width:]
+		}
+		lines = append(lines, string(runes))
+	}
+	return lines
+}
+
+func cardsWrapRenderedRows(rendered string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+	if visibleWidth(rendered) <= width {
+		return []string{rendered}
+	}
+
+	lines := make([]string, 0, (visibleWidth(rendered)/width)+1)
+	var current strings.Builder
+	visible := 0
+	activeStyle := ""
+	for offset := 0; offset < len(rendered); {
+		if sequence, size := cardsANSISequence(rendered[offset:]); size > 0 {
+			current.WriteString(sequence)
+			if strings.HasSuffix(sequence, "m") {
+				if sequence == colorReset {
+					activeStyle = ""
+				} else {
+					activeStyle += sequence
+				}
+			}
+			offset += size
+			continue
+		}
+
+		_, size := utf8.DecodeRuneInString(rendered[offset:])
+		if size == 0 {
+			break
+		}
+		if visible == width {
+			if activeStyle != "" {
+				current.WriteString(colorReset)
+			}
+			lines = append(lines, current.String())
+			current.Reset()
+			current.WriteString(activeStyle)
+			visible = 0
+		}
+		current.WriteString(rendered[offset : offset+size])
+		visible++
+		offset += size
+	}
+	if current.Len() > 0 {
+		lines = append(lines, current.String())
+	}
+	return lines
+}
+
+func cardsANSISequence(text string) (string, int) {
+	if len(text) < 3 || text[0] != '\033' || text[1] != '[' {
+		return "", 0
+	}
+	for index := 2; index < len(text); index++ {
+		if text[index] >= '@' && text[index] <= '~' {
+			return text[:index+1], index + 1
+		}
+	}
+	return "", 0
 }
 
 func cardsFormattedRow(ansi bool, borderColor string, width int, rendered string) (string, int) {

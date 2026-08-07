@@ -2,9 +2,12 @@ package ui
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/creack/pty"
 	"shellia/internal/core"
 )
 
@@ -90,6 +93,67 @@ func TestCardsRendererNoColorKeepsBordersWithoutANSI(t *testing.T) {
 	}
 }
 
+func TestCardsRendererPreservesSubmittedPromptWhitespace(t *testing.T) {
+	var out bytes.Buffer
+	renderer := &Renderer{impl: newCardsRenderer(&out, false)}
+	renderer.UserTurn(core.InteractiveModeAI, "  first  line\n\n    indented  text  ")
+
+	rows := cardsUserContentRows(t, out.String())
+	if len(rows) != 3 {
+		t.Fatalf("user content row count = %d, want 3:\n%s", len(rows), out.String())
+	}
+	if !strings.HasPrefix(rows[0], "you ›   first  line") {
+		t.Fatalf("first submitted row lost whitespace: %q", rows[0])
+	}
+	if strings.TrimSpace(rows[1]) != "" {
+		t.Fatalf("submitted blank line = %q, want blank", rows[1])
+	}
+	if !strings.HasPrefix(rows[2], "          indented  text  ") {
+		t.Fatalf("indented submitted row lost whitespace: %q", rows[2])
+	}
+}
+
+func TestCardsRendererWrapsStreamedOutputWithinTerminalWidth(t *testing.T) {
+	const terminalWidth = 48
+	payload := strings.Repeat("0123456789", 6)
+	for _, ansi := range []bool{false, true} {
+		t.Run(map[bool]string{false: "no ANSI", true: "ANSI"}[ansi], func(t *testing.T) {
+			output := renderCardsAtTerminalWidth(t, terminalWidth, ansi, func(renderer *Renderer) {
+				turn := renderer.BeginShelliaTurn(testConfig(), core.ContextInfo{})
+				step := turn.BeginStep(testConfig(), 1, 1, testPlan())
+				step.OutputLabel()
+				step.OutputLine(payload)
+				step.Close()
+				turn.Close()
+			})
+
+			var renderedPayload strings.Builder
+			payloadRows := 0
+			for _, rawLine := range strings.Split(output, "\n") {
+				line := strings.TrimSuffix(stripANSISequences(rawLine), "\r")
+				if visibleWidth(line) > terminalWidth {
+					t.Fatalf("visible line width = %d, want <= %d: %q\n%s", visibleWidth(line), terminalWidth, line, output)
+				}
+				if !strings.Contains(line, "0123456789") {
+					continue
+				}
+				payloadRows++
+				if !strings.HasPrefix(line, "│ │ ") || !strings.HasSuffix(line, " │ │") {
+					t.Fatalf("stream continuation lacks nested rails: %q\n%s", line, output)
+				}
+				content := strings.TrimSuffix(strings.TrimPrefix(line, "│ │ "), " │ │")
+				renderedPayload.WriteString(strings.TrimSpace(content))
+			}
+			if payloadRows < 2 {
+				t.Fatalf("payload row count = %d, want at least 2:\n%s", payloadRows, output)
+			}
+			if renderedPayload.String() != payload {
+				t.Fatalf("wrapped payload = %q, want %q", renderedPayload.String(), payload)
+			}
+		})
+	}
+}
+
 func TestCardsRendererClosesFinalOnlyAndEarlyTurns(t *testing.T) {
 	t.Run("final without step", func(t *testing.T) {
 		var out bytes.Buffer
@@ -144,4 +208,57 @@ func TestCardsRendererSuspendResumeCreatesClosedContinuation(t *testing.T) {
 	if out.String() != closed {
 		t.Fatal("repeated Close changed resumed card output")
 	}
+}
+
+func cardsUserContentRows(t *testing.T, output string) []string {
+	t.Helper()
+	lines := strings.Split(stripANSISequences(output), "\n")
+	rows := make([]string, 0)
+	for _, line := range lines {
+		line = strings.TrimSuffix(line, "\r")
+		if !strings.HasPrefix(line, "│ ") || !strings.HasSuffix(line, " │") {
+			continue
+		}
+		rows = append(rows, strings.TrimSuffix(strings.TrimPrefix(line, "│ "), " │"))
+	}
+	return rows
+}
+
+func renderCardsAtTerminalWidth(t *testing.T, width int, ansi bool, render func(*Renderer)) string {
+	t.Helper()
+	master, slave, err := pty.Open()
+	if err != nil {
+		t.Fatalf("pty.Open() error = %v", err)
+	}
+	t.Cleanup(func() { master.Close() }) //nolint:errcheck // best-effort test cleanup.
+	if err := pty.Setsize(slave, &pty.Winsize{Cols: uint16(width), Rows: 24}); err != nil {
+		slave.Close() //nolint:errcheck // best-effort cleanup after setup failure.
+		t.Fatalf("pty.Setsize() error = %v", err)
+	}
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	readDone := make(chan readResult, 1)
+	go func() {
+		data, err := io.ReadAll(master)
+		readDone <- readResult{data: data, err: err}
+	}()
+
+	renderer := &Renderer{impl: newCardsRenderer(slave, ansi), ansi: ansi}
+	render(renderer)
+	if err := slave.Close(); err != nil {
+		t.Fatalf("slave.Close() error = %v", err)
+	}
+	var result readResult
+	select {
+	case result = <-readDone:
+	case <-time.After(250 * time.Millisecond):
+		master.Close() //nolint:errcheck // force the PTY reader to return after collecting output.
+		result = <-readDone
+	}
+	if result.err != nil && len(result.data) == 0 {
+		t.Fatalf("io.ReadAll(pty) error = %v", result.err)
+	}
+	return string(result.data)
 }
