@@ -79,6 +79,7 @@ type Config struct {
 	NoColor          bool
 	Verbose          bool
 	ShowCommandPopup bool
+	VisualStyle      VisualStyle
 
 	// Context options control which local facts are sent to the model and shown by /context.
 	IncludeUser               bool
@@ -142,10 +143,11 @@ type FileConfig struct {
 
 	// [ui]
 	UI struct {
-		Verbose          *bool `toml:"verbose"`
-		NoColor          *bool `toml:"no_color"`
-		ShowSystemOutput *bool `toml:"show_system_output"`
-		ShowCommandPopup *bool `toml:"show_command_popup"`
+		Verbose          *bool  `toml:"verbose"`
+		NoColor          *bool  `toml:"no_color"`
+		ShowSystemOutput *bool  `toml:"show_system_output"`
+		ShowCommandPopup *bool  `toml:"show_command_popup"`
+		Style            string `toml:"style"`
 	} `toml:"ui"`
 
 	// [context]
@@ -191,6 +193,7 @@ func defaultConfig() Config {
 		// [ui]
 		ShowSystemOutput: true,
 		ShowCommandPopup: true,
+		VisualStyle:      VisualStylePlain,
 
 		// [context]
 		IncludeUser:               true,
@@ -264,6 +267,9 @@ func applyFileConfig(cfg *Config, fileCfg FileConfig) {
 	}
 	if fileCfg.UI.ShowCommandPopup != nil {
 		cfg.ShowCommandPopup = *fileCfg.UI.ShowCommandPopup
+	}
+	if strings.TrimSpace(fileCfg.UI.Style) != "" {
+		cfg.VisualStyle = normalizeVisualStyle(fileCfg.UI.Style, cfg.VisualStyle)
 	}
 	if fileCfg.Context.IncludeUser != nil {
 		cfg.IncludeUser = *fileCfg.Context.IncludeUser
@@ -580,6 +586,9 @@ max_observation_entries = 4
 truncation_strategy = "mixed"
 
 [ui]
+# Terminal visual structure: plain, guide, bands or cards.
+style = "plain"
+
 # Print extra information such as resolved instructions and session state on each turn.
 verbose = false
 

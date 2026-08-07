@@ -65,3 +65,8 @@ func NormalizeCommandEngineMode(value string, fallback CommandEngineMode) Comman
 func NormalizeConfirmationDefault(value string, fallback ConfirmationDefault) ConfirmationDefault {
 	return normalizeConfirmationDefault(value, fallback)
 }
+
+// NormalizeVisualStyle validates the configurable terminal visual style.
+func NormalizeVisualStyle(value string, fallback VisualStyle) VisualStyle {
+	return normalizeVisualStyle(value, fallback)
+}

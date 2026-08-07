@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 
+	"golang.org/x/term"
 	executorpkg "shellia/internal/executor"
 )
 
@@ -22,6 +23,7 @@ type runtimeDeps struct {
 	HTTPClient           *http.Client
 	ExecuteCommands      commandRunner
 	ExecuteManualCommand manualCommandRunner
+	StdoutIsTerminal     func(*os.File) bool
 	Trace                *traceLogger
 }
 
@@ -34,6 +36,7 @@ func defaultRuntimeDeps() runtimeDeps {
 		HTTPClient:           &http.Client{},
 		ExecuteCommands:      executeCommands,
 		ExecuteManualCommand: executeManualCommand,
+		StdoutIsTerminal:     stdoutIsTerminal,
 	}
 }
 
@@ -58,7 +61,15 @@ func (deps runtimeDeps) withDefaults() runtimeDeps {
 	if deps.ExecuteManualCommand == nil {
 		deps.ExecuteManualCommand = defaults.ExecuteManualCommand
 	}
+	if deps.StdoutIsTerminal == nil {
+		deps.StdoutIsTerminal = defaults.StdoutIsTerminal
+	}
 	return deps
+}
+
+// stdoutIsTerminal reports whether the injected output file is a terminal.
+func stdoutIsTerminal(file *os.File) bool {
+	return file != nil && term.IsTerminal(int(file.Fd()))
 }
 
 func executorDeps(deps runtimeDeps) executorpkg.RuntimeDeps {
