@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	configpkg "shellia/internal/config"
 )
 
 // nonTerminalStdin returns a temporary file usable as non-TTY stdin in prompt tests.
@@ -44,6 +46,38 @@ func TestStepBoxCloseAvoidsDoubleSpacing(t *testing.T) {
 	singleGap := "  hello\n\n" + separator
 	if !strings.Contains(buffer.String(), singleGap) {
 		t.Fatalf("step box output does not contain the expected single blank gap before the separator: %q", buffer.String())
+	}
+}
+
+// TestStepBoxLifecycleRowsStayInsideCardsAndCloseOnce checks lifecycle rows
+// remain owned by the active step and repeated closes emit no extra geometry.
+func TestStepBoxLifecycleRowsStayInsideCardsAndCloseOnce(t *testing.T) {
+	var output bytes.Buffer
+	turn := newTestTurn(&output, configpkg.VisualStyleCards, false)
+	box := turn.BeginStep(testConfig(), 1, 1, testPlan())
+	for _, status := range []string{"confirmation", "skipped", "completed", "timed out"} {
+		box.Section(status, colorDim)
+	}
+
+	for _, line := range strings.Split(output.String(), "\n") {
+		for _, status := range []string{"confirmation", "skipped", "completed", "timed out"} {
+			if strings.Contains(line, status) && !strings.HasPrefix(line, "│ │ ") {
+				t.Fatalf("status %q escaped the active card step: %q", status, line)
+			}
+		}
+	}
+	box.Close()
+	closedStep := output.String()
+	box.Close()
+	if output.String() != closedStep {
+		t.Fatalf("second StepBox.Close changed output: %q", output.String())
+	}
+
+	turn.Close()
+	closedTurn := output.String()
+	turn.Close()
+	if output.String() != closedTurn {
+		t.Fatalf("second Turn.Close changed output: %q", output.String())
 	}
 }
 

@@ -583,9 +583,16 @@ func executeManualCommand(ctx context.Context, deps RuntimeDeps, ui bool, cfg co
 	var box *stepBox
 	switch renderMode {
 	case manualRenderInline:
-		box = newStepBox(deps.Stdout, ui, "shell")
-		box.Spacer()
-		box.Command(command)
+		if deps.Turn != nil {
+			box = deps.Turn.BeginStep(cfg, 1, 1, commandPlan{
+				Command: command,
+				Purpose: "Manual shell command",
+			})
+		} else {
+			box = newStepBox(deps.Stdout, ui, "shell")
+			box.Spacer()
+			box.Command(command)
+		}
 	case manualRenderInteractive:
 		printInteractiveCommandStartTo(deps.Stdout, ui)
 	case manualRenderDirect, manualRenderShellInteractive:
@@ -684,6 +691,10 @@ func executeOneCommand(ctx context.Context, request commandRunRequest) (commandR
 			box.Section("interactive session", colorYellow)
 			box.Text("Shellia will resume when the command exits.", colorDim)
 			box.Close()
+		}
+		if deps.Turn != nil {
+			deps.Turn.Suspend()
+			defer deps.Turn.Resume()
 		}
 		output, exitCode, hadOutput, err := executeInteractiveCommand(cmdCtx, deps, cfg, ctxInfo, shellPath, command)
 		return commandRunResult{

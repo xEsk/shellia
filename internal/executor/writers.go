@@ -28,16 +28,16 @@ func (writer *prefixedWriter) Write(data []byte) (int, error) {
 
 	writer.buffer += string(data)
 	for len(writer.buffer) > 0 {
+		newlineIndex := strings.IndexByte(writer.buffer, '\n')
+		if newlineIndex == -1 {
+			return len(data), nil
+		}
+
 		if !writer.started {
 			if writer.box != nil {
 				writer.box.OutputLabel()
 			}
 			writer.started = true
-		}
-
-		newlineIndex := strings.IndexByte(writer.buffer, '\n')
-		if newlineIndex == -1 {
-			return len(data), nil
 		}
 
 		chunk := strings.TrimSuffix(writer.buffer[:newlineIndex+1], "\n")
@@ -56,8 +56,14 @@ func (writer *prefixedWriter) Flush() error {
 		return nil
 	}
 
-	if !writer.started || writer.buffer == "" {
+	if writer.buffer == "" {
 		return nil
+	}
+	if !writer.started {
+		if writer.box != nil {
+			writer.box.OutputLabel()
+		}
+		writer.started = true
 	}
 	if writer.box != nil {
 		writer.box.OutputLine(writer.buffer)

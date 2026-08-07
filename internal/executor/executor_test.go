@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,8 +14,114 @@ import (
 	"time"
 	"unicode/utf8"
 
+	configpkg "shellia/internal/config"
 	uipkg "shellia/internal/ui"
 )
+
+// TestPrefixedWriterStreamsLinesAndFlushesPartial checks complete lines are
+// rendered immediately while a trailing partial line waits for Flush.
+func TestPrefixedWriterStreamsLinesAndFlushesPartial(t *testing.T) {
+	var output bytes.Buffer
+	cfg := defaultConfig()
+	cfg.VisualStyle = configpkg.VisualStyleCards
+	turn := uipkg.NewRenderer(&output, uipkg.Presentation{Style: cfg.VisualStyle}).BeginShelliaTurn(cfg, loopTestContext(t))
+	defer turn.Close()
+	box := turn.BeginStep(cfg, 1, 1, commandPlan{Command: "printf stream", Purpose: "stream output"})
+	writer := &prefixedWriter{box: box}
+
+	if _, err := writer.Write([]byte("one\ntwo")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	beforeFlush := output.String()
+	if !strings.Contains(beforeFlush, "one") {
+		t.Fatalf("complete line was not streamed before Flush: %q", beforeFlush)
+	}
+	if strings.Contains(beforeFlush, "two") {
+		t.Fatalf("partial line was rendered before Flush: %q", beforeFlush)
+	}
+
+	if err := writer.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	if !strings.Contains(output.String(), "two") {
+		t.Fatalf("partial line was not rendered by Flush: %q", output.String())
+	}
+}
+
+// TestPrefixedWriterDefersPartialOutputState checks a partial write is not
+// classified as visible output until it is flushed to the step surface.
+func TestPrefixedWriterDefersPartialOutputState(t *testing.T) {
+	box := newStepBox(io.Discard, false, "step 1/1")
+	writer := &prefixedWriter{box: box}
+
+	if _, err := writer.Write([]byte("partial")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if prefixedWritersHadOutput(writer) {
+		t.Fatal("prefixedWritersHadOutput() = true before partial line was flushed")
+	}
+	if err := writer.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	if !prefixedWritersHadOutput(writer) {
+		t.Fatal("prefixedWritersHadOutput() = false after partial line was flushed")
+	}
+}
+
+// TestPrefixedWriterPreservesSplitUTF8AndIndependentStreams checks chunk
+// boundaries do not corrupt UTF-8 and stdout/stderr can share one step.
+func TestPrefixedWriterPreservesSplitUTF8AndIndependentStreams(t *testing.T) {
+	var output bytes.Buffer
+	box := newStepBox(&output, false, "step 1/1")
+	stdout := &prefixedWriter{box: box}
+	stderr := &prefixedWriter{box: box}
+	payload := []byte("cafè ☕\n")
+
+	if _, err := stdout.Write(payload[:4]); err != nil {
+		t.Fatalf("stdout first Write() error = %v", err)
+	}
+	if _, err := stdout.Write(payload[4:]); err != nil {
+		t.Fatalf("stdout second Write() error = %v", err)
+	}
+	if _, err := stderr.Write([]byte("warning")); err != nil {
+		t.Fatalf("stderr Write() error = %v", err)
+	}
+	if err := stderr.Flush(); err != nil {
+		t.Fatalf("stderr Flush() error = %v", err)
+	}
+
+	rendered := output.String()
+	if !utf8.ValidString(rendered) {
+		t.Fatalf("rendered output is not valid UTF-8: %q", rendered)
+	}
+	for _, want := range []string{"cafè ☕", "warning"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered output lacks %q: %q", want, rendered)
+		}
+	}
+}
+
+// TestPrefixedWriterHiddenModeEmitsNothing checks hidden streams remain
+// invisible even after complete and partial writes are flushed.
+func TestPrefixedWriterHiddenModeEmitsNothing(t *testing.T) {
+	var output bytes.Buffer
+	box := newStepBox(&output, false, "step 1/1")
+	baseline := output.String()
+	writer := &prefixedWriter{box: box, hidden: true}
+
+	if _, err := writer.Write([]byte("secret\npartial")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := writer.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	if got := output.String(); got != baseline {
+		t.Fatalf("hidden writer changed output: got %q, want %q", got, baseline)
+	}
+	if prefixedWritersHadOutput(writer) {
+		t.Fatal("hidden writer reported visible output")
+	}
+}
 
 // TestDetectInteractivePromptMatchesConfirmationPrompt checks that a trailing yes/no prompt is detected.
 func TestDetectInteractivePromptMatchesConfirmationPrompt(t *testing.T) {
@@ -78,6 +185,162 @@ func TestExecuteCommandsUsesActiveTurn(t *testing.T) {
 	for _, want := range []string{"step 1/1", "system output", "419Gi available"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("executor output lacks %q: %q", want, output)
+		}
+	}
+}
+
+// TestExecuteManualCommandUsesActiveTurn checks inline manual commands use the
+// renderer-owned step surface when the app has supplied a turn.
+func TestExecuteManualCommandUsesActiveTurn(t *testing.T) {
+	stdout, err := os.CreateTemp(t.TempDir(), "stdout")
+	if err != nil {
+		t.Fatalf("CreateTemp(stdout) error = %v", err)
+	}
+	t.Cleanup(func() { stdout.Close() }) //nolint:errcheck // best-effort test cleanup.
+	stdin, err := os.CreateTemp(t.TempDir(), "stdin")
+	if err != nil {
+		t.Fatalf("CreateTemp(stdin) error = %v", err)
+	}
+	t.Cleanup(func() { stdin.Close() }) //nolint:errcheck // best-effort test cleanup.
+
+	cfg := defaultConfig()
+	cfg.VisualStyle = configpkg.VisualStyleCards
+	cfg.ShowSystemOutput = false
+	ctxInfo := loopTestContext(t)
+	turn := uipkg.NewRenderer(stdout, uipkg.Presentation{Style: cfg.VisualStyle}).BeginShelliaTurn(cfg, ctxInfo)
+	_, err = executeManualCommand(t.Context(), RuntimeDeps{
+		Stdin:  stdin,
+		Stdout: stdout,
+		Stderr: stdout,
+		Turn:   turn,
+	}, false, cfg, &ctxInfo, "printf manual", manualRenderInline)
+	if err != nil {
+		t.Fatalf("executeManualCommand() error = %v", err)
+	}
+	turn.Close()
+
+	output := string(readExecutorTestFile(t, stdout))
+	for _, want := range []string{"│ ┌─ step 1/1", "run › printf manual", "completed"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("manual command output lacks %q: %q", want, output)
+		}
+	}
+}
+
+// TestExecuteInteractiveCommandSuspendsCardsAroundRawPTY checks a real PTY is
+// written byte-for-byte outside renderer geometry and the turn is resumed on
+// both command failure and cancellation.
+func TestExecuteInteractiveCommandSuspendsCardsAroundRawPTY(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		marker  string
+		ansi    string
+		context func() (context.Context, context.CancelFunc)
+	}{
+		{
+			name:    "command error",
+			command: "printf '\\033[31mRAW-PTY\\033[0m\\n'; exit 7",
+			marker:  "RAW-PTY",
+			ansi:    "\033[31mRAW-PTY\033[0m",
+			context: func() (context.Context, context.CancelFunc) {
+				return context.WithCancel(t.Context())
+			},
+		},
+		{
+			name:    "cancellation",
+			command: "printf '\\033[32mRAW-CANCEL\\033[0m\\n'; exec sleep 5",
+			marker:  "RAW-CANCEL",
+			ansi:    "\033[32mRAW-CANCEL\033[0m",
+			context: func() (context.Context, context.CancelFunc) {
+				return context.WithTimeout(t.Context(), 150*time.Millisecond)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdout, err := os.CreateTemp(t.TempDir(), "stdout")
+			if err != nil {
+				t.Fatalf("CreateTemp(stdout) error = %v", err)
+			}
+			t.Cleanup(func() { stdout.Close() }) //nolint:errcheck // best-effort test cleanup.
+			stdin, err := os.CreateTemp(t.TempDir(), "stdin")
+			if err != nil {
+				t.Fatalf("CreateTemp(stdin) error = %v", err)
+			}
+			t.Cleanup(func() { stdin.Close() }) //nolint:errcheck // best-effort test cleanup.
+
+			cfg := defaultConfig()
+			cfg.VisualStyle = configpkg.VisualStyleCards
+			ctxInfo := loopTestContext(t)
+			turn := uipkg.NewRenderer(stdout, uipkg.Presentation{Style: cfg.VisualStyle}).BeginShelliaTurn(cfg, ctxInfo)
+			box := turn.BeginStep(cfg, 1, 1, commandPlan{Command: tt.command, Purpose: "raw PTY handoff", Interactive: true})
+			ctx, cancel := tt.context()
+			defer cancel()
+
+			result, runErr := executeOneCommand(ctx, commandRunRequest{
+				Deps: RuntimeDeps{
+					Stdin:  stdin,
+					Stdout: stdout,
+					Stderr: stdout,
+					Turn:   turn,
+				},
+				Config:      cfg,
+				ContextInfo: ctxInfo,
+				Box:         box,
+				Command:     tt.command,
+				Interactive: true,
+			})
+			if runErr == nil {
+				t.Fatal("executeOneCommand() error = nil, want command failure")
+			}
+			if !strings.Contains(result.Output.Stdout.Text, tt.ansi) {
+				t.Fatalf("captured PTY stdout lacks raw ANSI bytes: %q", result.Output.Stdout.Text)
+			}
+			turn.Final("done")
+			turn.Close()
+
+			assertRawPTYHandoff(t, readExecutorTestFile(t, stdout), tt.marker, tt.ansi)
+		})
+	}
+}
+
+func readExecutorTestFile(t *testing.T, file *os.File) []byte {
+	t.Helper()
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		t.Fatalf("Seek(%s) error = %v", file.Name(), err)
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		t.Fatalf("ReadAll(%s) error = %v", file.Name(), err)
+	}
+	return data
+}
+
+func assertRawPTYHandoff(t *testing.T, output []byte, marker string, rawANSI string) {
+	t.Helper()
+	rawIndex := bytes.Index(output, []byte(rawANSI))
+	if rawIndex == -1 {
+		t.Fatalf("PTY output lacks exact raw bytes %q: %q", rawANSI, output)
+	}
+	if bytes.LastIndex(output[:rawIndex], []byte("\n└")) == -1 {
+		t.Fatalf("renderer card was not closed before PTY output: %q", output)
+	}
+	continuedIndex := bytes.Index(output[rawIndex:], []byte("Shellia · continued"))
+	if continuedIndex == -1 {
+		t.Fatalf("renderer turn was not resumed after PTY output: %q", output)
+	}
+
+	lineStart := bytes.LastIndexByte(output[:rawIndex], '\n') + 1
+	lineEndOffset := bytes.IndexByte(output[rawIndex:], '\n')
+	if lineEndOffset == -1 {
+		t.Fatalf("PTY marker %q has no complete output line: %q", marker, output)
+	}
+	rawLine := output[lineStart : rawIndex+lineEndOffset]
+	for _, geometry := range [][]byte{[]byte("│"), []byte("▌"), []byte("┌"), []byte("└")} {
+		if bytes.Contains(rawLine, geometry) {
+			t.Fatalf("raw PTY line contains renderer geometry %q: %q", geometry, rawLine)
 		}
 	}
 }
