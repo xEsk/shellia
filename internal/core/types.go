@@ -49,23 +49,88 @@ type ObservationMemory struct {
 
 // SessionState stores lightweight follow-up memory for an interactive session.
 type SessionState struct {
-	LastRetryInstruction string
-	PendingIntent        string
-	LastCreatedFiles     []string
-	LastRuntimeHint      string
-	LastReferencedFile   string
-	LastObservations     []ObservationMemory
-	LastSuggestedCommand string
+	LastRetryInstruction     string
+	PendingIntent            string
+	LastCreatedFiles         []string
+	LastRuntimeHint          string
+	LastReferencedFile       string
+	LastObservations         []ObservationMemory
+	LastObservationObjective string
+	LastBlockerKind          string
+	LastBlockerReason        string
+	PendingProposal          PendingProposal
 }
+
+// PendingProposal stores an executable objective offered by a capability answer.
+type PendingProposal struct {
+	Objective string
+	Summary   string
+}
+
+// TurnOutcome identifies how a Shellia turn ended.
+type TurnOutcome string
+
+const (
+	TurnOutcomeCompleted       TurnOutcome = "completed"
+	TurnOutcomeBlocked         TurnOutcome = "blocked"
+	TurnOutcomePlanned         TurnOutcome = "planned"
+	TurnOutcomeDeclined        TurnOutcome = "declined"
+	TurnOutcomeCancelled       TurnOutcome = "cancelled"
+	TurnOutcomeTimeout         TurnOutcome = "timeout"
+	TurnOutcomePlanningLimit   TurnOutcome = "planning_limit"
+	TurnOutcomeStructuralError TurnOutcome = "structural_error"
+	TurnOutcomeNoProgress      TurnOutcome = "no_progress"
+)
+
+// RepeatReason identifies an explicit causal reason for repeating a successful command.
+type RepeatReason string
+
+const (
+	RepeatReasonUserRequested     RepeatReason = "user_requested"
+	RepeatReasonRetry             RepeatReason = "retry"
+	RepeatReasonVerifyAfterChange RepeatReason = "verify_after_change"
+	RepeatReasonPollChangedState  RepeatReason = "poll_changed_state"
+)
+
+// AllowsSuccessfulRepeat reports whether the closed reason set admits an exact prior success.
+func (reason RepeatReason) AllowsSuccessfulRepeat() bool {
+	switch reason {
+	case RepeatReasonUserRequested, RepeatReasonRetry, RepeatReasonVerifyAfterChange, RepeatReasonPollChangedState:
+		return true
+	default:
+		return false
+	}
+}
+
+// RepeatReasonRequired explains why an exact successful command was not admitted again.
+const RepeatReasonRequired = "successful command requires an explicit repeat_reason"
 
 // TurnResult is the normalized outcome of one Shellia turn.
 type TurnResult struct {
-	Result     string
-	Summary    string
-	Actionable bool
-	Plans      []CommandPlan
-	Executions []CommandExecution
-	Skipped    []SkippedCommand
+	Result        string
+	Summary       string
+	Outcome       TurnOutcome
+	BlockerKind   string
+	BlockerReason string
+	Plans         []CommandPlan
+	Executions    []CommandExecution
+	Skipped       []SkippedCommand
+	Proposal      PendingProposal
+}
+
+// WorkflowAttempt stores compact causal metadata shared with the next planning decision.
+type WorkflowAttempt struct {
+	ID               int
+	Round            int
+	PlannedCommand   string
+	EffectiveCommand string
+	Purpose          string
+	Outcome          string
+	ExitCode         int
+	EvidenceBefore   int
+	EvidenceAfter    int
+	RepeatReason     RepeatReason
+	RelatedAttemptID int
 }
 
 // CommandPlan is the combined result of LLM planning and local safety classification.
@@ -77,12 +142,10 @@ type CommandPlan struct {
 	Classification       string
 	LocalSafe            bool
 	IndependentOnFailure bool
+	RepeatReason         RepeatReason
 	Interactive          bool
 	InteractiveReason    string
 }
-
-// SkippedDuplicateSuccessReason explains why a completed command was not run again.
-const SkippedDuplicateSuccessReason = "already completed successfully in this turn"
 
 // SkippedCommand stores a command omitted from execution and the reason why.
 type SkippedCommand struct {
@@ -106,6 +169,7 @@ type CommandExecution struct {
 	Stdout   CapturedStream
 	Stderr   CapturedStream
 	ExitCode int
+	TimedOut bool
 }
 
 // CapturedStream represents the captured part of a stream, with truncation information.

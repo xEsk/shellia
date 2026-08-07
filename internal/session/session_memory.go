@@ -1,11 +1,6 @@
 package session
 
-import (
-	"regexp"
-	"strings"
-)
-
-var backtickCommandPattern = regexp.MustCompile("`([^`]+)`")
+import "strings"
 
 // updateSessionState stores durable session memory after a successful or actionable partial turn.
 func updateSessionState(state *sessionState, instruction string, turn turnResult, cfg config) {
@@ -14,15 +9,28 @@ func updateSessionState(state *sessionState, instruction string, turn turnResult
 	}
 
 	rememberInstructionContext(state, instruction)
-
-	if shouldPromotePendingIntent(instruction, turn) {
-		state.PendingIntent = strings.TrimSpace(instruction)
+	if turn.Outcome == turnOutcomeCompleted && strings.TrimSpace(turn.Proposal.Objective) != "" {
+		state.PendingProposal = pendingProposal{
+			Objective: strings.TrimSpace(turn.Proposal.Objective),
+			Summary:   strings.TrimSpace(turn.Proposal.Summary),
+		}
+	} else if turn.Outcome != "" {
+		state.PendingProposal = pendingProposal{}
 	}
 
-	if suggested := detectSuggestedCommand(turn); suggested != "" {
-		state.LastSuggestedCommand = suggested
-	} else if turn.Actionable {
-		state.LastSuggestedCommand = ""
+	switch turn.Outcome {
+	case turnOutcomeCompleted:
+		state.PendingIntent = ""
+		state.LastBlockerKind = ""
+		state.LastBlockerReason = ""
+	case turnOutcomeBlocked:
+		state.PendingIntent = strings.TrimSpace(instruction)
+		state.LastBlockerKind = strings.TrimSpace(turn.BlockerKind)
+		state.LastBlockerReason = strings.TrimSpace(turn.BlockerReason)
+	default:
+		if shouldPromotePendingIntent(instruction, turn) {
+			state.PendingIntent = strings.TrimSpace(instruction)
+		}
 	}
 
 	if hint := detectRuntimeHint(instruction, turn); hint != "" {
@@ -39,7 +47,16 @@ func updateSessionState(state *sessionState, instruction string, turn turnResult
 		state.LastReferencedFile = referenced[len(referenced)-1]
 	}
 
-	state.LastObservations = collectObservationMemory(turn.Executions, cfg.MemoryObservationChars, cfg.MaxObservationEntries, cfg.TruncationStrategy)
+	if len(turn.Executions) > 0 {
+		state.LastObservationObjective = ""
+	}
+	if observations := collectObservationMemory(turn.Executions, cfg.MemoryObservationChars, cfg.MaxObservationEntries, cfg.TruncationStrategy); len(observations) > 0 {
+		state.LastObservations = observations
+		state.LastObservationObjective = strings.TrimSpace(instruction)
+	} else if turn.Outcome == turnOutcomeCompleted {
+		state.LastObservations = nil
+		state.LastObservationObjective = ""
+	}
 }
 
 // updateSessionStateFromExecution updates reusable session memory after a manual shell command.
@@ -47,6 +64,7 @@ func updateSessionStateFromExecution(state *sessionState, command string, execut
 	if state == nil {
 		return
 	}
+	state.LastObservationObjective = ""
 
 	rememberInstructionContext(state, command)
 
@@ -62,9 +80,9 @@ func updateSessionStateFromExecution(state *sessionState, command string, execut
 
 	if observations := collectObservationMemory([]commandExecution{execution}, cfg.MemoryObservationChars, cfg.MaxObservationEntries, cfg.TruncationStrategy); len(observations) > 0 {
 		state.LastObservations = observations
+		state.LastObservationObjective = ""
 	}
 
-	state.LastSuggestedCommand = ""
 }
 
 // rememberUnfinishedInstruction keeps enough memory when a turn fails or is cancelled.
@@ -93,18 +111,41 @@ func rememberInstructionContext(state *sessionState, instruction string) {
 
 // resolveInstructionForPlanning preserves the user's text; the planning model
 // resolves intent and follow-up references from the session memory in the prompt.
-func resolveInstructionForPlanning(instruction string, _ sessionState) string {
+func resolveInstructionForPlanning(instruction string, state sessionState) string {
 	instruction = strings.TrimSpace(instruction)
 	if instruction == "" {
 		return instruction
 	}
+	if strings.TrimSpace(state.PendingProposal.Objective) != "" && isProposalAcceptance(instruction) {
+		return strings.TrimSpace(state.PendingProposal.Objective)
+	}
 	return instruction
+}
+
+// isProposalAcceptance recognizes only short, unequivocal acceptance phrases.
+func isProposalAcceptance(instruction string) bool {
+	switch normalizeForMemory(instruction) {
+	case "si", "sí", "yes", "fes ho", "endavant", "executa ho", "d acord", "ok", "okay":
+		return true
+	default:
+		return false
+	}
+}
+
+// isProposalDecline recognizes only short, unequivocal refusal phrases.
+func isProposalDecline(instruction string) bool {
+	switch normalizeForMemory(instruction) {
+	case "no", "no gràcies", "ara no", "cancel·la", "cancella":
+		return true
+	default:
+		return false
+	}
 }
 
 // shouldPromotePendingIntent keeps the latest meaningful instruction available
 // for the planning model, which decides later whether it is still relevant.
-func shouldPromotePendingIntent(instruction string, _ turnResult) bool {
-	return strings.TrimSpace(instruction) != ""
+func shouldPromotePendingIntent(instruction string, turn turnResult) bool {
+	return strings.TrimSpace(instruction) != "" && turn.Outcome != turnOutcomeCompleted
 }
 
 // detectRuntimeHint stores the latest runtime/container context when present.
@@ -201,47 +242,6 @@ func normalizeForMemory(text string) string {
 		":", " ", ";", " ", "?", " ", "!", " ", "-", " ",
 	)
 	return strings.Join(strings.Fields(strings.ToLower(replacer.Replace(text))), " ")
-}
-
-// detectSuggestedCommand extracts the last shell command Shellia suggested in a
-// non-actionable answer so short follow-ups can accept it explicitly.
-func detectSuggestedCommand(turn turnResult) string {
-	for _, source := range []string{turn.Result, turn.Summary} {
-		matches := backtickCommandPattern.FindAllStringSubmatch(source, -1)
-		for _, match := range matches {
-			if len(match) < 2 {
-				continue
-			}
-			command := strings.TrimSpace(match[1])
-			if looksLikeShellCommand(command) {
-				return command
-			}
-		}
-	}
-	return ""
-}
-
-// looksLikeShellCommand applies a lightweight heuristic to backticked text to
-// avoid storing arbitrary prose as a suggested command.
-func looksLikeShellCommand(text string) bool {
-	text = strings.TrimSpace(text)
-	if text == "" || strings.Contains(text, "\n") {
-		return false
-	}
-
-	tokens := strings.Fields(text)
-	if len(tokens) == 0 {
-		return false
-	}
-
-	commandRoots := map[string]bool{
-		"brew": true, "git": true, "docker": true, "ls": true, "pwd": true, "cat": true,
-		"find": true, "rg": true, "grep": true, "touch": true, "mkdir": true, "rm": true,
-		"mv": true, "cp": true, "python": true, "python3": true, "php": true, "node": true,
-		"npm": true, "pnpm": true, "yarn": true, "go": true,
-	}
-
-	return commandRoots[tokens[0]]
 }
 
 // collectObservationMemory stores a compact reusable digest of the last observed outputs.

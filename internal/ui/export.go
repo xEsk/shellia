@@ -118,11 +118,6 @@ func PrintFinalResultTo(target io.Writer, ui bool, message string) {
 	printFinalResultTo(target, ui, message)
 }
 
-// PrintPlanOnlyGuidanceTo explains how to continue when a plan cannot be fully resolved yet.
-func PrintPlanOnlyGuidanceTo(target io.Writer, ui bool, response llmResponse, confirmPlanOnly bool) {
-	printPlanOnlyGuidanceTo(target, ui, response, confirmPlanOnly)
-}
-
 // PrintPlanTo presents the summary and commands proposed by the model on the provided target.
 func PrintPlanTo(target io.Writer, ui bool, cfg config, summary string, plans []commandPlan, discovery bool) {
 	printPlanTo(target, ui, cfg, summary, plans, discovery)
@@ -148,21 +143,6 @@ func PromptPlanningLimitContinuation(target io.Writer, ui bool, stdin *os.File, 
 	return promptPlanningLimitContinuation(target, ui, stdin, limit)
 }
 
-// OpenResultPanelTo opens the streamed result panel on the provided target.
-func OpenResultPanelTo(target io.Writer, ui bool) {
-	openResultPanelTo(target, ui)
-}
-
-// CloseResultPanelTo closes the streamed result panel on the provided target.
-func CloseResultPanelTo(target io.Writer, ui bool) {
-	closeResultPanelTo(target, ui)
-}
-
-// RenderAnswerBlock renders the Shellia answer with consistent wrapping.
-func RenderAnswerBlock(target io.Writer, ui bool, message string, state *answerRenderState) error {
-	return renderAnswerBlock(target, ui, message, state)
-}
-
 // ThinkingIndicator tracks an active thinking animation.
 type ThinkingIndicator = thinkingIndicator
 
@@ -176,44 +156,6 @@ func (indicator *thinkingIndicator) Stop() {
 	if indicator != nil {
 		indicator.stop()
 	}
-}
-
-// ResultWriter streams summary content into the result panel.
-type ResultWriter = resultWriter
-
-// NewResultWriter creates a result writer with a started thinking indicator.
-func NewResultWriter(ui bool, target io.Writer) *ResultWriter {
-	return &resultWriter{ui: ui, target: target, thinking: startThinkingIndicator(ui, target)}
-}
-
-// StopThinking stops the writer's thinking indicator.
-func (writer *resultWriter) StopThinking() {
-	writer.stopThinking()
-}
-
-// WroteAnything reports whether any streamed content reached the terminal.
-func (writer *resultWriter) WroteAnything() bool {
-	return writer != nil && writer.wroteAnything
-}
-
-// MarkWroteAnything marks the writer as having rendered content.
-func (writer *resultWriter) MarkWroteAnything() {
-	if writer != nil {
-		writer.wroteAnything = true
-	}
-}
-
-// AnswerState returns the writer's render state.
-func (writer *resultWriter) AnswerState() *answerRenderState {
-	if writer == nil {
-		return nil
-	}
-	return &writer.state
-}
-
-// PlanOnlyResult builds the stored result for plan-only turns.
-func PlanOnlyResult(summary string, response llmResponse) string {
-	return planOnlyResult(summary, response)
 }
 
 // PrintCommandExecutionTo presents the active command inside a step box.

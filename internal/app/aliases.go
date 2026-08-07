@@ -22,13 +22,17 @@ type (
 	ConfirmationDefault = configpkg.ConfirmationDefault
 
 	truncationStrategy     = core.TruncationStrategy
+	turnOutcome            = core.TurnOutcome
+	repeatReason           = core.RepeatReason
 	contextInfo            = core.ContextInfo
 	historyEntry           = core.HistoryEntry
 	interactiveMode        = core.InteractiveMode
 	interactiveCommand     = interactivepkg.Command
 	observationMemory      = core.ObservationMemory
+	pendingProposal        = core.PendingProposal
 	sessionState           = core.SessionState
 	turnResult             = core.TurnResult
+	workflowAttempt        = core.WorkflowAttempt
 	commandPlan            = core.CommandPlan
 	commandExecution       = core.CommandExecution
 	commandBatchResult     = core.CommandBatchResult
@@ -37,14 +41,13 @@ type (
 	interactivePromptError = executorpkg.InteractivePromptError
 	traceLogger            = tracepkg.Logger
 
-	llmPromptRequest       = llmpkg.PromptRequest
-	discoveryPromptRequest = llmpkg.DiscoveryPromptRequest
-	llmResponse            = llmpkg.Response
-	chatCompletionRequest  = llmpkg.ChatCompletionRequest
-	chatMessage            = llmpkg.ChatMessage
-	responseFormat         = llmpkg.ResponseFormat
-	llmHTTPStatusError     = llmpkg.HTTPStatusError
-	capturedStream         = core.CapturedStream
+	llmPromptRequest      = llmpkg.PromptRequest
+	llmResponse           = llmpkg.Response
+	chatCompletionRequest = llmpkg.ChatCompletionRequest
+	chatMessage           = llmpkg.ChatMessage
+	responseFormat        = llmpkg.ResponseFormat
+	llmHTTPStatusError    = llmpkg.HTTPStatusError
+	capturedStream        = core.CapturedStream
 )
 
 const (
@@ -69,10 +72,24 @@ const (
 	truncationEnd   = core.TruncationEnd
 	truncationMixed = core.TruncationMixed
 
-	interactiveModeAI             = core.InteractiveModeAI
-	interactiveModeShell          = core.InteractiveModeShell
-	defaultPlanningMaxRounds      = 4
-	skippedDuplicateSuccessReason = core.SkippedDuplicateSuccessReason
+	turnOutcomeCompleted          = core.TurnOutcomeCompleted
+	turnOutcomeBlocked            = core.TurnOutcomeBlocked
+	turnOutcomePlanned            = core.TurnOutcomePlanned
+	turnOutcomeDeclined           = core.TurnOutcomeDeclined
+	turnOutcomeCancelled          = core.TurnOutcomeCancelled
+	turnOutcomeTimeout            = core.TurnOutcomeTimeout
+	turnOutcomePlanningLimit      = core.TurnOutcomePlanningLimit
+	turnOutcomeStructuralError    = core.TurnOutcomeStructuralError
+	turnOutcomeNoProgress         = core.TurnOutcomeNoProgress
+	repeatReasonUserRequested     = core.RepeatReasonUserRequested
+	repeatReasonRetry             = core.RepeatReasonRetry
+	repeatReasonVerifyAfterChange = core.RepeatReasonVerifyAfterChange
+	repeatReasonPollChangedState  = core.RepeatReasonPollChangedState
+	repeatReasonRequired          = core.RepeatReasonRequired
+
+	interactiveModeAI        = core.InteractiveModeAI
+	interactiveModeShell     = core.InteractiveModeShell
+	defaultPlanningMaxRounds = 4
 
 	interactiveCommandNone    = interactivepkg.CommandNone
 	interactiveCommandUnknown = interactivepkg.CommandUnknown
@@ -131,26 +148,20 @@ var (
 	clearScreenTo                   = uipkg.ClearScreenTo
 	printHeaderTo                   = uipkg.PrintHeaderTo
 	printFinalResultTo              = uipkg.PrintFinalResultTo
-	printPlanOnlyGuidanceTo         = uipkg.PrintPlanOnlyGuidanceTo
 	printPlanTo                     = uipkg.PrintPlanTo
 	promptPlanExecution             = uipkg.PromptPlanExecution
 	printRawPromptsTo               = uipkg.PrintRawPromptsTo
 	printSectionTo                  = uipkg.PrintSectionTo
 	promptPlanningLimitContinuation = uipkg.PromptPlanningLimitContinuation
-	openResultPanelTo               = uipkg.OpenResultPanelTo
-	closeResultPanelTo              = uipkg.CloseResultPanelTo
-	renderAnswerBlock               = uipkg.RenderAnswerBlock
 	startThinkingIndicator          = uipkg.StartThinkingIndicator
-	newResultWriter                 = uipkg.NewResultWriter
-	planOnlyResult                  = uipkg.PlanOnlyResult
 
-	getContext           = executorpkg.GetContext
-	staticFallbackAnswer = executorpkg.StaticFallbackAnswer
+	getContext = executorpkg.GetContext
 
 	updateSessionState              = sessionpkg.UpdateState
 	updateSessionStateFromExecution = sessionpkg.UpdateStateFromExecution
 	rememberUnfinishedInstruction   = sessionpkg.RememberUnfinishedInstruction
 	resolveInstructionForPlanning   = sessionpkg.ResolveInstructionForPlanning
+	isProposalDecline               = sessionpkg.IsProposalDecline
 
 	openSessionTrace      = tracepkg.OpenSession
 	setTraceVersion       = tracepkg.SetVersion
@@ -158,13 +169,9 @@ var (
 	withTraceTurnID       = tracepkg.WithTurnID
 	setUIVersion          = uipkg.SetVersion
 
-	buildLLMPrompts                = llmpkg.BuildPrompts
-	buildDiscoveryRepairLLMPrompts = llmpkg.BuildDiscoveryRepairPrompts
-	callPlanningPrompt             = llmpkg.CallPlanningPrompt
-	parseResponse                  = llmpkg.ParseResponse
-	normalizePlan                  = llmpkg.NormalizePlan
-	shouldRetryWithDiscoveryRepair = llmpkg.ShouldRetryWithDiscoveryRepair
-	streamSummarizeExecutions      = llmpkg.StreamSummarizeExecutions
-	doLLMRequest                   = llmpkg.DoRequest
-	doLLMStream                    = llmpkg.DoStream
+	buildLLMPrompts    = llmpkg.BuildPrompts
+	callPlanningPrompt = llmpkg.CallPlanningPrompt
+	parseResponse      = llmpkg.ParseResponse
+	normalizePlan      = llmpkg.NormalizePlan
+	doLLMRequest       = llmpkg.DoRequest
 )

@@ -13,11 +13,16 @@ type (
 	commandPlan        = core.CommandPlan
 	capturedStream     = core.CapturedStream
 	observationMemory  = core.ObservationMemory
+	pendingProposal    = core.PendingProposal
 	truncationStrategy = core.TruncationStrategy
 )
 
 const (
-	truncationStart = core.TruncationStart
-	truncationEnd   = core.TruncationEnd
-	truncationMixed = core.TruncationMixed
+	turnOutcomeCompleted       = core.TurnOutcomeCompleted
+	turnOutcomeBlocked         = core.TurnOutcomeBlocked
+	turnOutcomeTimeout         = core.TurnOutcomeTimeout
+	turnOutcomeStructuralError = core.TurnOutcomeStructuralError
+	truncationStart            = core.TruncationStart
+	truncationEnd              = core.TruncationEnd
+	truncationMixed            = core.TruncationMixed
 )

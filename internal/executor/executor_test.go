@@ -348,73 +348,6 @@ func TestApplySessionStateIgnoresFailedCommand(t *testing.T) {
 	}
 }
 
-// TestStaticFallbackAnswer checks summarization fallback output from command executions.
-func TestStaticFallbackAnswer(t *testing.T) {
-	cases := []struct {
-		name       string
-		summary    string
-		executions []commandExecution
-		skipped    []skippedCommand
-		want       string
-	}{
-		{name: "no executions", summary: "Nothing to run.", want: "Nothing to run."},
-		{
-			name:       "successful stdout",
-			summary:    "Listed files.",
-			executions: []commandExecution{{Command: "pwd", Purpose: "Print cwd", ExitCode: 0, Stdout: capturedStream{Text: "/tmp/project"}}},
-			want:       "/tmp/project",
-		},
-		{
-			name:       "successful no output",
-			summary:    "Created marker.",
-			executions: []commandExecution{{Command: "touch marker", Purpose: "Create marker", ExitCode: 0}},
-			want:       "Create marker done.",
-		},
-		{
-			name:       "failed with output",
-			summary:    "Command failed.",
-			executions: []commandExecution{{Command: "ls missing", Purpose: "List file", ExitCode: 2, Stderr: capturedStream{Text: "No such file"}}},
-			want:       "No such file\nThe command `ls missing` failed with exit code 2.",
-		},
-		{
-			name:       "failed without output",
-			summary:    "Command failed.",
-			executions: []commandExecution{{Command: "false", Purpose: "Fail", ExitCode: 1}},
-			want:       "The command `false` failed with exit code 1.",
-		},
-		{
-			name:    "recovered turn preserves failure and skipped omission",
-			summary: "Recovery completed.",
-			executions: []commandExecution{
-				{Command: "false", Purpose: "Fail", ExitCode: 7, Stderr: capturedStream{Text: "initial failure"}},
-				{Command: "pwd", Purpose: "Recover", ExitCode: 0, Stdout: capturedStream{Text: "/tmp/project"}},
-			},
-			skipped: []skippedCommand{{Command: "touch blocked", Purpose: "Blocked", Reason: skippedAfterFailureReason}},
-			want:    "initial failure\nThe command `false` failed with exit code 7. 1 command(s) were skipped and not executed.",
-		},
-		{
-			name:    "skipped work prevents synthesized success",
-			summary: "Partial work.",
-			skipped: []skippedCommand{{Command: "touch blocked", Purpose: "Blocked", Reason: skippedAfterFailureReason}},
-			want:    "Partial work.\nSome commands were skipped and were not executed.",
-		},
-		{
-			name:    "skipped work with empty summary",
-			summary: "  \n\t",
-			skipped: []skippedCommand{{Command: "touch blocked", Purpose: "Blocked", Reason: skippedAfterFailureReason}},
-			want:    "Some commands were skipped and were not executed.",
-		},
-	}
-
-	for _, tt := range cases {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := staticFallbackAnswer(tt.summary, tt.executions, tt.skipped); got != tt.want {
-				t.Fatalf("staticFallbackAnswer() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 // TestExecuteCommandsContinuesOnlyIndependentStepsAfterFailure checks dependent commands are skipped after an ordinary failure.
 func TestExecuteCommandsContinuesOnlyIndependentStepsAfterFailure(t *testing.T) {
 	cfg := defaultConfig()
@@ -501,7 +434,7 @@ func TestExecuteCommandsSkipsDuplicateSuccessfulCommandInBatch(t *testing.T) {
 	if len(batch.Executions) != 1 || batch.Executions[0].Command != plans[0].Command {
 		t.Fatalf("executions = %#v, want first command only", batch.Executions)
 	}
-	if len(batch.Skipped) != 1 || batch.Skipped[0].Command != plans[1].Command || batch.Skipped[0].Reason != "already completed successfully in this turn" {
+	if len(batch.Skipped) != 1 || batch.Skipped[0].Command != plans[1].Command || batch.Skipped[0].Reason != repeatReasonRequired {
 		t.Fatalf("skipped = %#v, want duplicate success skip", batch.Skipped)
 	}
 	if batch.HadOrdinaryFailure || batch.HadTimeout {
@@ -513,8 +446,100 @@ func TestExecuteCommandsSkipsDuplicateSuccessfulCommandInBatch(t *testing.T) {
 		t.Fatalf("duplicate command was confirmed or started")
 	}
 	skippedEvents := traceEventsByName(events, "command_skipped")
-	if len(skippedEvents) != 1 || traceEventData(t, skippedEvents[0])["reason"] != "already completed successfully in this turn" {
+	if len(skippedEvents) != 1 || traceEventData(t, skippedEvents[0])["reason"] != repeatReasonRequired {
 		t.Fatalf("command_skipped events = %#v, want duplicate success reason", skippedEvents)
+	}
+}
+
+// TestExecuteCommandsConfirmsTypedRiskyRepeat checks repeat admission never bypasses normal confirmation.
+func TestExecuteCommandsConfirmsTypedRiskyRepeat(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.YesSafe = false
+	cfg.ShowSystemOutput = false
+	cfg.ShowCommandPopup = false
+	ctxInfo := loopTestContext(t)
+	marker := filepath.Join(t.TempDir(), "repeat-marker")
+	plans := []commandPlan{
+		{Command: "touch " + marker, Purpose: "Create marker", Risk: "medium", RequiresConfirmation: true},
+		{Command: "touch " + marker, Purpose: "Repeat marker creation", Risk: "medium", RequiresConfirmation: true, RepeatReason: repeatReasonUserRequested},
+	}
+	logger := openLoopTrace(t)
+	turnID := logger.StartTurn(nil)
+
+	var batch commandBatchResult
+	captureMainLoopIO(t, "y\ny\n", nil, func(deps RuntimeDeps) {
+		deps.Trace = logger
+		var err error
+		batch, err = executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
+		if err != nil {
+			t.Fatalf("executeCommands() error = %v", err)
+		}
+	})
+
+	if len(batch.Executions) != 2 || len(batch.Skipped) != 0 {
+		t.Fatalf("batch = %#v, want both confirmed executions", batch)
+	}
+	events := closeLoopTraceAndRead(t, logger)
+	if len(traceEventsByName(events, "command_confirmation")) != 2 || len(traceEventsByName(events, "command_start")) != 2 {
+		t.Fatalf("repeat did not traverse both confirmation paths")
+	}
+}
+
+// TestExecuteCommandsAllowsEditedDuplicateWithReason checks final effective-command admission uses the typed cause.
+func TestExecuteCommandsAllowsEditedDuplicateWithReason(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.YesSafe = false
+	cfg.ShowSystemOutput = false
+	cfg.ShowCommandPopup = false
+	ctxInfo := loopTestContext(t)
+	plans := []commandPlan{{
+		Command:      "printf proposed",
+		Purpose:      "Repeat edited inspection",
+		RepeatReason: repeatReasonUserRequested,
+	}}
+	prior := []commandExecution{{Command: "printf prior", ExitCode: 0}}
+
+	var batch commandBatchResult
+	captureMainLoopIO(t, "e\nprintf prior\ny\n", nil, func(deps RuntimeDeps) {
+		var err error
+		batch, err = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, prior)
+		if err != nil {
+			t.Fatalf("executeCommands() error = %v", err)
+		}
+	})
+
+	if len(batch.Executions) != 1 || batch.Executions[0].Command != "printf prior" || len(batch.Skipped) != 0 {
+		t.Fatalf("batch = %#v, want admitted edited repeat", batch)
+	}
+}
+
+// TestExecuteCommandsReconfirmsRiskyEditedCommand checks an edit cannot inherit confirmation for a different command.
+func TestExecuteCommandsReconfirmsRiskyEditedCommand(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.YesSafe = false
+	cfg.ShowSystemOutput = false
+	cfg.ShowCommandPopup = false
+	ctxInfo := loopTestContext(t)
+	marker := filepath.Join(t.TempDir(), "must-remain")
+	if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	plans := []commandPlan{{Command: "printf original", Purpose: "Edit command"}}
+
+	var batch commandBatchResult
+	var runErr error
+	captureMainLoopIO(t, "e\nrm "+marker+"\n", nil, func(deps RuntimeDeps) {
+		batch, runErr = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, nil)
+	})
+
+	if !errors.Is(runErr, errAborted) {
+		t.Fatalf("executeCommands() error = %v, want confirmation abort", runErr)
+	}
+	if len(batch.Executions) != 0 {
+		t.Fatalf("batch.Executions = %#v, want no edited execution", batch.Executions)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("edited command ran without confirmation: %v", err)
 	}
 }
 
@@ -616,6 +641,9 @@ func TestExecuteCommandsTracksTimeoutWithoutOrdinaryFailure(t *testing.T) {
 	}
 	if len(batch.Executions) != 2 || len(batch.Skipped) != 1 {
 		t.Fatalf("batch = %#v, want 2 executions and 1 skip", batch)
+	}
+	if !batch.Executions[0].TimedOut || batch.Executions[1].TimedOut {
+		t.Fatalf("execution timeout metadata = %#v, want only the first execution timed out", batch.Executions)
 	}
 	if _, err := os.Stat(dependent); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("dependent marker error = %v, want os.ErrNotExist", err)
@@ -769,7 +797,7 @@ func TestExecuteCommandsTraceRecordsEditedCommand(t *testing.T) {
 	logger := openLoopTrace(t)
 	turnID := logger.StartTurn(nil)
 
-	captureMainLoopIO(t, "e\nprintf edited\n", nil, func(deps RuntimeDeps) {
+	captureMainLoopIO(t, "e\nprintf edited\ny\n", nil, func(deps RuntimeDeps) {
 		deps.Trace = logger
 		plans := []commandPlan{{
 			Command:        "printf original",
@@ -789,8 +817,8 @@ func TestExecuteCommandsTraceRecordsEditedCommand(t *testing.T) {
 
 	events := closeLoopTraceAndRead(t, logger)
 	confirmations := traceEventsByName(events, "command_confirmation")
-	if len(confirmations) != 1 {
-		t.Fatalf("command_confirmation events = %d, want 1", len(confirmations))
+	if len(confirmations) != 2 {
+		t.Fatalf("command_confirmation events = %d, want edit and edited-command confirmation", len(confirmations))
 	}
 	confirmationData := traceEventData(t, confirmations[0])
 	if confirmationData["decision"] != "edit" {
@@ -798,6 +826,10 @@ func TestExecuteCommandsTraceRecordsEditedCommand(t *testing.T) {
 	}
 	if confirmationData["command"] != "printf original" || confirmationData["edited_command"] != "printf edited" {
 		t.Fatalf("confirmation data = %#v, want original and edited commands", confirmationData)
+	}
+	editedConfirmation := traceEventData(t, confirmations[1])
+	if editedConfirmation["decision"] != "run" || editedConfirmation["command"] != "printf edited" {
+		t.Fatalf("edited confirmation data = %#v, want explicit run of edited command", editedConfirmation)
 	}
 
 	starts := traceEventsByName(events, "command_start")
@@ -807,6 +839,9 @@ func TestExecuteCommandsTraceRecordsEditedCommand(t *testing.T) {
 	startData := traceEventData(t, starts[0])
 	if startData["command"] != "printf edited" || startData["original_command"] != "printf original" {
 		t.Fatalf("command_start data = %#v, want effective and original commands", startData)
+	}
+	if startData["classification"] == classificationSafe || startData["requires_confirmation"] != true {
+		t.Fatalf("command_start data = %#v, want edited command's stricter local safety", startData)
 	}
 }
 

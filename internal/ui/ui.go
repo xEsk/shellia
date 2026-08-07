@@ -239,37 +239,6 @@ func planStepLines(target io.Writer, ui bool, cfg config, plans []commandPlan) [
 	return lines
 }
 
-// printPlanOnlyGuidanceTo explains how to continue when the plan cannot be fully resolved yet.
-func printPlanOnlyGuidanceTo(target io.Writer, ui bool, response llmResponse, confirmPlanOnly bool) {
-	if response.RequiresObservation {
-		reason := fallbackValue(response.ObservationReason, "Some later commands depend on the real output from the commands above.")
-		renderPanel(target, ui, "next step", colorCyan, []string{
-			style(ui, colorWhite+colorBold, "No commands were executed."),
-			style(ui, colorWhite, "Run the command or commands above, review the output, and continue with the branch described here."),
-			style(ui, colorDim, reason),
-		})
-		return
-	}
-
-	if response.RequiresInput {
-		reason := fallbackValue(response.InputReason, "A required detail is missing before exact commands can be planned.")
-		renderPanel(target, ui, "missing detail", colorYellow, []string{
-			style(ui, colorWhite+colorBold, "No commands were executed."),
-			style(ui, colorDim, reason),
-		})
-		return
-	}
-
-	msg := "Run the steps above to complete the task."
-	if confirmPlanOnly {
-		msg = "Run the steps above to complete the task, or confirm below to let Shellia execute them."
-	}
-	renderPanel(target, ui, "next step", colorCyan, []string{
-		style(ui, colorWhite+colorBold, "No commands were executed."),
-		style(ui, colorWhite, msg),
-	})
-}
-
 // buildConfirmRow builds the styled "• confirm <question> <options>: <answer>" row.
 // Pass an empty answer when rendering the initial prompt before input is collected.
 func buildConfirmRow(ui bool, question, options, answer string) string {
@@ -401,18 +370,6 @@ func logPlanningLimitChoice(box *stepBox, limit int, run bool) {
 	}
 	question := fmt.Sprintf("Reached planning round limit %d. Continue planning?", limit)
 	box.ReplaceLastRenderedRow(buildConfirmRow(box.ui, question, renderPlanExecutionOptions(box.ui), choice))
-}
-
-// planOnlyResult returns the session result text recorded for a non-executing plan turn.
-func planOnlyResult(summary string, response llmResponse) string {
-	switch {
-	case response.RequiresObservation && strings.TrimSpace(response.ObservationReason) != "":
-		return strings.TrimSpace(summary + " " + response.ObservationReason)
-	case response.RequiresInput && strings.TrimSpace(response.InputReason) != "":
-		return strings.TrimSpace(summary + " " + response.InputReason)
-	default:
-		return strings.TrimSpace(summary)
-	}
 }
 
 // printHeader shows a compact header with the global session state.
@@ -559,106 +516,9 @@ func printFinalResult(ui bool, message string) {
 func printFinalResultTo(target io.Writer, ui bool, message string) {
 	fmt.Fprintln(target)
 	fmt.Fprintln(target, shelliaBrand(ui, false))
-	renderAnswerBlock(target, ui, message, nil)
+	renderAnswerBlock(target, ui, message)
 	fmt.Fprintln(target)
 	printSeparator(target, ui)
-}
-
-// openResultPanel opens the streaming result block.
-func openResultPanel(ui bool) {
-	openResultPanelTo(os.Stdout, ui)
-}
-
-// openResultPanelTo opens the streaming result block on the provided target.
-func openResultPanelTo(target io.Writer, ui bool) {
-	fmt.Fprintln(target)
-	printSeparator(target, ui)
-	fmt.Fprintln(target)
-	fmt.Fprintln(target, shelliaBrand(ui, false))
-}
-
-// closeResultPanel visually closes the streaming result.
-func closeResultPanel(ui bool) {
-	closeResultPanelTo(os.Stdout, ui)
-}
-
-// closeResultPanelTo visually closes the streaming result on the provided target.
-func closeResultPanelTo(target io.Writer, ui bool) {
-	fmt.Fprint(target, styleEnd(ui))
-	fmt.Fprintln(target)
-	fmt.Fprintln(target)
-	printSeparator(target, ui)
-}
-
-// resultWriter wraps os.Stdout to prefix each line with a subtle result indent.
-// wroteAnything tracks whether any content has been sent to the terminal,
-// regardless of whether lineStart is currently true or false.
-type resultWriter struct {
-	ui            bool
-	target        io.Writer
-	wroteAnything bool
-	buffer        strings.Builder
-	state         answerRenderState
-	thinking      *thinkingIndicator
-}
-
-func (writer *resultWriter) Write(data []byte) (int, error) {
-	if writer.thinking != nil {
-		writer.thinking.stop()
-		writer.thinking = nil
-	}
-
-	if _, err := writer.buffer.Write(data); err != nil {
-		return 0, err
-	}
-
-	if len(layoutAnswerLines(writer.buffer.String(), answerContentWidth(writer.ui))) > 0 {
-		writer.wroteAnything = true
-		target := writer.target
-		if target == nil {
-			target = os.Stdout
-		}
-		if err := renderAnswerBlock(target, writer.ui, writer.buffer.String(), &writer.state); err != nil {
-			return 0, err
-		}
-	}
-
-	return len(data), nil
-}
-
-func (writer *resultWriter) stopThinking() {
-	if writer == nil || writer.thinking == nil {
-		return
-	}
-	writer.thinking.stop()
-	writer.thinking = nil
-}
-
-type answerRenderState struct {
-	rows int
-}
-
-// clearRenderedAnswer clears the previously rendered Shellia answer block.
-func clearRenderedAnswer(target io.Writer, state *answerRenderState) {
-	if state == nil || state.rows == 0 {
-		return
-	}
-
-	fmt.Fprint(target, "\r")
-	if state.rows > 1 {
-		fmt.Fprintf(target, "\033[%dA", state.rows-1)
-	}
-	for index := range state.rows {
-		fmt.Fprint(target, "\033[2K")
-		if index < state.rows-1 {
-			fmt.Fprint(target, "\033[1B\r")
-		}
-	}
-	if state.rows > 1 {
-		fmt.Fprintf(target, "\033[%dA", state.rows-1)
-	}
-	fmt.Fprint(target, "\r")
-	state.rows = 0
 }
 
 // answerContentWidth returns the available content width for Shellia answers.
@@ -695,9 +555,8 @@ func layoutAnswerLines(message string, width int) []string {
 }
 
 // renderAnswerBlock renders the Shellia answer with consistent left padding and word wrapping.
-func renderAnswerBlock(target io.Writer, ui bool, message string, state *answerRenderState) error {
+func renderAnswerBlock(target io.Writer, ui bool, message string) error {
 	lines := renderAnswerMarkdown(message, answerContentWidth(ui), ui)
-	clearRenderedAnswer(target, state)
 	if len(lines) == 0 {
 		return nil
 	}
@@ -714,9 +573,6 @@ func renderAnswerBlock(target io.Writer, ui bool, message string, state *answerR
 		}
 	}
 
-	if state != nil {
-		state.rows = len(lines)
-	}
 	return nil
 }
 

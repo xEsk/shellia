@@ -19,14 +19,11 @@ import (
 
 type loopLLMResponse struct {
 	content           string
-	stream            bool
-	raw               bool
 	status            int
 	cancellationStart chan struct{}
 }
 
 type loopLLMRequest struct {
-	stream        bool
 	body          string
 	authorization string
 }
@@ -37,17 +34,11 @@ type loopLLMClient struct {
 	requests  []loopLLMRequest
 }
 
-type errorBodyTransport struct{}
-
 type contextErrorTransport struct{}
 
 type blockingContextTransport struct {
 	started chan struct{}
 	once    sync.Once
-}
-
-type errorReadCloser struct {
-	err error
 }
 
 func (transport *blockingContextTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -83,7 +74,6 @@ func (fake *loopLLMClient) RoundTrip(r *http.Request) (*http.Response, error) {
 	fake.mu.Lock()
 	index := len(fake.requests)
 	fake.requests = append(fake.requests, loopLLMRequest{
-		stream:        request.Stream,
 		body:          string(body),
 		authorization: r.Header.Get("Authorization"),
 	})
@@ -102,24 +92,6 @@ func (fake *loopLLMClient) RoundTrip(r *http.Request) (*http.Response, error) {
 		<-r.Context().Done()
 		return nil, r.Context().Err()
 	}
-	if response.stream {
-		if response.raw {
-			return loopHTTPResponse(r, http.StatusOK, response.content, map[string]string{"Content-Type": "text/event-stream"}), nil
-		}
-
-		chunk := map[string]any{
-			"choices": []map[string]any{
-				{"delta": map[string]any{"content": response.content}},
-			},
-		}
-		encoded, err := json.Marshal(chunk)
-		if err != nil {
-			return nil, err
-		}
-		body := fmt.Sprintf("data: %s\n\ndata: [DONE]\n\n", encoded)
-		return loopHTTPResponse(r, http.StatusOK, body, map[string]string{"Content-Type": "text/event-stream"}), nil
-	}
-
 	payload := map[string]any{
 		"choices": []map[string]any{
 			{"message": map[string]any{"content": response.content}},
@@ -137,30 +109,10 @@ func (fake *loopLLMClient) HTTPClient() *http.Client {
 	return &http.Client{Transport: fake}
 }
 
-// RoundTrip returns a failed response whose body cannot be read.
-func (transport errorBodyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	return &http.Response{
-		StatusCode: http.StatusBadRequest,
-		Header:     make(http.Header),
-		Body:       errorReadCloser{err: errors.New("broken error body")},
-		Request:    r,
-	}, nil
-}
-
 // RoundTrip waits for request cancellation and returns the context cause.
 func (transport contextErrorTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	<-r.Context().Done()
 	return nil, r.Context().Err()
-}
-
-// Read always fails to simulate a provider/socket error while reading the error body.
-func (body errorReadCloser) Read(p []byte) (int, error) {
-	return 0, body.err
-}
-
-// Close implements io.Closer for errorReadCloser.
-func (body errorReadCloser) Close() error {
-	return nil
 }
 
 // loopHTTPResponse builds a minimal HTTP response for the fake LLM transport.
@@ -187,18 +139,6 @@ func (fake *loopLLMClient) requestCount() int {
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	return len(fake.requests)
-}
-
-// requestStreams returns whether each fake LLM request asked for streaming.
-func (fake *loopLLMClient) requestStreams() []bool {
-	fake.mu.Lock()
-	defer fake.mu.Unlock()
-
-	streams := make([]bool, 0, len(fake.requests))
-	for _, request := range fake.requests {
-		streams = append(streams, request.stream)
-	}
-	return streams
 }
 
 // requestBodies returns the JSON request bodies captured by the fake transport.
@@ -293,52 +233,48 @@ func commandNames(plans []commandPlan) []string {
 	return commands
 }
 
-// TestFilterPreviouslySuccessfulPlansKeepsFailedRetries checks only prior
-// successful executions suppress matching proposals.
-func TestFilterPreviouslySuccessfulPlansKeepsFailedRetries(t *testing.T) {
-	plans := []commandPlan{{Command: "pwd"}, {Command: "false"}, {Command: "ls"}}
-	executions := []commandExecution{{Command: "pwd", ExitCode: 0}, {Command: "false", ExitCode: 1}}
-
-	kept, redundant := filterPreviouslySuccessfulPlans(plans, executions)
-	if got := commandNames(kept); !reflect.DeepEqual(got, []string{"false", "ls"}) {
-		t.Fatalf("kept = %v, want failed retry and new command", got)
-	}
-	if got := commandNames(redundant); !reflect.DeepEqual(got, []string{"pwd"}) {
-		t.Fatalf("redundant = %v, want successful command", got)
-	}
-}
-
-// TestFilterPreviouslySuccessfulPlansTrimsEffectiveCommands checks command
-// identity uses trimmed effective execution and proposed command strings.
-func TestFilterPreviouslySuccessfulPlansTrimsEffectiveCommands(t *testing.T) {
-	plans := []commandPlan{{Command: "  pwd\t"}}
-	executions := []commandExecution{{Command: "\n pwd ", ExitCode: 0}}
-
-	kept, redundant := filterPreviouslySuccessfulPlans(plans, executions)
-	if len(kept) != 0 || !reflect.DeepEqual(commandNames(redundant), []string{"  pwd\t"}) {
-		t.Fatalf("kept = %#v, redundant = %#v, want trimmed successful match", kept, redundant)
+func TestOneShotExitCodeForOutcome(t *testing.T) {
+	for _, tt := range []struct {
+		outcome turnOutcome
+		want    int
+	}{
+		{outcome: turnOutcomeCompleted, want: 0},
+		{outcome: turnOutcomePlanned, want: 0},
+		{outcome: turnOutcomeDeclined, want: 0},
+		{outcome: turnOutcomeBlocked, want: 1},
+		{outcome: turnOutcomeStructuralError, want: 1},
+		{outcome: turnOutcomeNoProgress, want: 1},
+		{outcome: turnOutcomePlanningLimit, want: 1},
+		{outcome: turnOutcomeTimeout, want: 1},
+	} {
+		if got := oneShotExitCode(tt.outcome); got != tt.want {
+			t.Errorf("oneShotExitCode(%q) = %d, want %d", tt.outcome, got, tt.want)
+		}
 	}
 }
 
-// TestFilterPreviouslySuccessfulPlansKeepsSkippedCommands checks commands
-// absent from real executions remain eligible for a later attempt.
-func TestFilterPreviouslySuccessfulPlansKeepsSkippedCommands(t *testing.T) {
-	plans := []commandPlan{{Command: "touch blocked"}}
-	executions := []commandExecution{{Command: "false", ExitCode: 1}}
+func TestRunAppReturnsNonZeroForBlockedOneShot(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"action":"blocked","objective_mode":"act","success_criteria":"Service restarted","summary":"I need the service name.","blocker_kind":"missing_input","blocker_reason":"Specify the service.","commands":[]}`})
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("SHELLIA_BASE_URL", fake.URL())
+	t.Setenv("SHELLIA_MODEL", "test-model")
+	t.Setenv("SHELLIA_API_KEY", "test-key")
 
-	kept, redundant := filterPreviouslySuccessfulPlans(plans, executions)
-	if !reflect.DeepEqual(commandNames(kept), []string{"touch blocked"}) || len(redundant) != 0 {
-		t.Fatalf("kept = %#v, redundant = %#v, want skipped command retryable", kept, redundant)
-	}
+	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+		if code := runApp(t.Context(), []string{"restart it"}, deps); code != 1 {
+			t.Fatalf("runApp() code = %d, want 1 for blocked one-shot", code)
+		}
+	})
 }
 
 // TestRunTurnSkipsCommandEditedIntoPriorSuccessfulEffectiveCommand checks the
 // executor rechecks effective identity after editing and reports a real skip.
 func TestRunTurnSkipsCommandEditedIntoPriorSuccessfulEffectiveCommand(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"summary":"Inspect once.","requires_observation":true,"commands":[{"command":"printf prior","purpose":"Capture prior output","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"summary":"Inspect another value.","commands":[{"command":"printf proposed","purpose":"Capture another output","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: "Kept the first result.", stream: true},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect once.","commands":[{"command":"printf prior","purpose":"Capture prior output","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect another value.","commands":[{"command":"printf proposed","purpose":"Capture another output","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Kept the first result.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -359,7 +295,7 @@ func TestRunTurnSkipsCommandEditedIntoPriorSuccessfulEffectiveCommand(t *testing
 	if len(result.Executions) != 1 || result.Executions[0].Command != "printf prior" {
 		t.Fatalf("executions = %#v, want first effective command only", result.Executions)
 	}
-	if len(result.Skipped) != 1 || result.Skipped[0].Command != "printf prior" || result.Skipped[0].Reason != "already completed successfully in this turn" {
+	if len(result.Skipped) != 1 || result.Skipped[0].Command != "printf prior" || result.Skipped[0].Reason != repeatReasonRequired {
 		t.Fatalf("skipped = %#v, want edited duplicate outcome", result.Skipped)
 	}
 	if fake.requestCount() != 3 {
@@ -384,7 +320,7 @@ func TestSwitchInteractiveModelAppliesAndPersistsDefault(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"summary":"Model switched.","commands":[]}`,
+		content: `{"action":"complete","objective_mode":"explain","success_criteria":"Test answer provided","summary":"Model switched.","completion_basis":{"type":"model_knowledge"},"commands":[]}`,
 	})
 
 	cfg := defaultConfig()
@@ -437,7 +373,7 @@ func TestSwitchInteractiveModelAppliesAndPersistsDefault(t *testing.T) {
 func TestRunAppTraceWritesSingleSessionFile(t *testing.T) {
 	traceDir := t.TempDir()
 	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"summary":"No command needed.","commands":[]}`,
+		content: `{"action":"complete","objective_mode":"explain","success_criteria":"Test answer provided","summary":"No command needed.","completion_basis":{"type":"model_knowledge"},"commands":[]}`,
 	})
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
@@ -789,7 +725,7 @@ func TestCallPlanningPromptKeepsResponseFormatWithKey(t *testing.T) {
 // TestRunTurnPrintsRawPrompt checks --raw-prompt exposes the exact model prompt pair.
 func TestRunTurnPrintsRawPrompt(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"summary":"No command needed.","commands":[]}`,
+		content: `{"action":"complete","objective_mode":"explain","success_criteria":"Test answer provided","summary":"No command needed.","completion_basis":{"type":"model_knowledge"},"commands":[]}`,
 	})
 	cfg := loopTestConfig(fake.URL())
 	cfg.RawPrompt = true
@@ -804,9 +740,10 @@ func TestRunTurnPrintsRawPrompt(t *testing.T) {
 	required := []string{
 		"Raw LLM prompt",
 		"system:",
-		"You are Shellia's planning layer.",
-		"Decision process:",
+		"You are Shellia's goal-oriented planning layer.",
+		"return exactly one decision",
 		"user:",
+		"Execution authority: allowed",
 		"User instruction:\nanswer directly",
 	}
 	for _, snippet := range required {
@@ -819,7 +756,7 @@ func TestRunTurnPrintsRawPrompt(t *testing.T) {
 // TestRunTurnReturnsFinalAnswerWithoutCommands checks the answer-only path of the main turn loop.
 func TestRunTurnReturnsFinalAnswerWithoutCommands(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"summary":"No command needed.","commands":[]}`,
+		content: `{"action":"complete","objective_mode":"explain","success_criteria":"Test answer provided","summary":"No command needed.","completion_basis":{"type":"model_knowledge"},"commands":[]}`,
 	})
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -833,8 +770,8 @@ func TestRunTurnReturnsFinalAnswerWithoutCommands(t *testing.T) {
 		}
 	})
 
-	if result.Actionable {
-		t.Fatalf("runTurn() Actionable = true, want false")
+	if result.Outcome != turnOutcomeCompleted {
+		t.Fatalf("runTurn() Outcome = %q, want completed", result.Outcome)
 	}
 	if result.Result != "No command needed." {
 		t.Fatalf("runTurn() Result = %q, want %q", result.Result, "No command needed.")
@@ -850,7 +787,7 @@ func TestRunTurnReturnsFinalAnswerWithoutCommands(t *testing.T) {
 // TestRunTurnTraceRecordsFinalAnswerWithoutCommands checks empty plans are diagnosable.
 func TestRunTurnTraceRecordsFinalAnswerWithoutCommands(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"summary":"No command needed.","commands":[]}`,
+		content: `{"action":"complete","objective_mode":"explain","success_criteria":"Test answer provided","summary":"No command needed.","completion_basis":{"type":"model_knowledge"},"commands":[]}`,
 	})
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -883,18 +820,18 @@ func TestRunTurnTraceRecordsFinalAnswerWithoutCommands(t *testing.T) {
 		t.Fatalf("shellia_decision events = %d, want 1", len(decisionEvents))
 	}
 	decisionData := traceEventData(t, decisionEvents[0])
-	if decisionData["decision"] != "final_answer_without_commands" {
-		t.Fatalf("decision = %#v, want final_answer_without_commands", decisionData["decision"])
+	if decisionData["decision"] != "complete" {
+		t.Fatalf("decision = %#v, want complete", decisionData["decision"])
 	}
 }
 
-// TestRunTurnExecutesSafePlanAndStreamsSummary checks planning, execution, and final summarization.
-func TestRunTurnExecutesSafePlanAndStreamsSummary(t *testing.T) {
+// TestRunTurnExecutesSafePlanAndCompletes checks execution evidence feeds the next decision.
+func TestRunTurnExecutesSafePlanAndCompletes(t *testing.T) {
 	fake := newLoopLLMClient(t,
 		loopLLMResponse{
-			content: `{"summary":"Print a marker.","commands":[{"command":"echo shellia-loop","purpose":"Print marker","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+			content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Print a marker.","commands":[{"command":"echo shellia-loop","purpose":"Print marker","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
 		},
-		loopLLMResponse{content: "Printed shellia-loop.", stream: true},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Printed shellia-loop.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -908,8 +845,8 @@ func TestRunTurnExecutesSafePlanAndStreamsSummary(t *testing.T) {
 		}
 	})
 
-	if !result.Actionable {
-		t.Fatalf("runTurn() Actionable = false, want true")
+	if result.Outcome != turnOutcomeCompleted {
+		t.Fatalf("runTurn() Outcome = %q, want completed", result.Outcome)
 	}
 	if len(result.Executions) != 1 {
 		t.Fatalf("runTurn() executions = %d, want 1", len(result.Executions))
@@ -924,10 +861,6 @@ func TestRunTurnExecutesSafePlanAndStreamsSummary(t *testing.T) {
 		t.Fatalf("runTurn() Result = %q, want %q", result.Result, "Printed shellia-loop.")
 	}
 
-	streams := fake.requestStreams()
-	if len(streams) != 2 || streams[0] || !streams[1] {
-		t.Fatalf("request streams = %#v, want []bool{false, true}", streams)
-	}
 }
 
 // TestRunTurnPropagatesParentCancellationDuringSummary checks Ctrl+C is not
@@ -936,7 +869,7 @@ func TestRunTurnPropagatesParentCancellationDuringSummary(t *testing.T) {
 	summaryStarted := make(chan struct{})
 	fake := newLoopLLMClient(t,
 		loopLLMResponse{
-			content: `{"summary":"Print a marker.","commands":[{"command":"echo shellia-loop","purpose":"Print marker","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+			content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Print a marker.","commands":[{"command":"echo shellia-loop","purpose":"Print marker","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
 		},
 		loopLLMResponse{cancellationStart: summaryStarted},
 	)
@@ -970,47 +903,24 @@ func TestRunTurnPropagatesParentCancellationDuringSummary(t *testing.T) {
 		if !errors.Is(outcome.err, context.Canceled) {
 			t.Fatalf("runTurn() error = %v, want context.Canceled", outcome.err)
 		}
-		if !outcome.result.Actionable || len(outcome.result.Executions) != 1 {
-			t.Fatalf("runTurn() result = %#v, want actionable completed execution", outcome.result)
+		if len(outcome.result.Executions) != 1 {
+			t.Fatalf("runTurn() result = %#v, want partial execution", outcome.result)
+		}
+		if outcome.result.Outcome != turnOutcomeCancelled {
+			t.Fatalf("runTurn() outcome = %q, want cancelled", outcome.result.Outcome)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("runTurn() did not return after cancellation")
 	}
 }
 
-// TestRunTurnKeepsFallbackForRecoverableSummaryErrors checks provider failures
-// still produce a result from the completed command execution.
-func TestRunTurnKeepsFallbackForRecoverableSummaryErrors(t *testing.T) {
+// TestRunTurnTraceRecordsFollowUpDecision checks the decision after execution is traced.
+func TestRunTurnTraceRecordsFollowUpDecision(t *testing.T) {
 	fake := newLoopLLMClient(t,
 		loopLLMResponse{
-			content: `{"summary":"Print a marker.","commands":[{"command":"echo shellia-loop","purpose":"Print marker","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+			content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Print a marker.","commands":[{"command":"echo shellia-loop","purpose":"Print marker","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
 		},
-		loopLLMResponse{content: "data: {bad json}\n\n", stream: true, raw: true},
-	)
-	cfg := loopTestConfig(fake.URL())
-	ctxInfo := loopTestContext(t)
-
-	var result turnResult
-	captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		var err error
-		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "print marker"))
-		if err != nil {
-			t.Fatalf("runTurn() error = %v", err)
-		}
-	})
-
-	if result.Result != "shellia-loop" {
-		t.Fatalf("runTurn() Result = %q, want fallback answer", result.Result)
-	}
-}
-
-// TestRunTurnTraceRecordsSummaryPromptAndResponse checks final responses are traced.
-func TestRunTurnTraceRecordsSummaryPromptAndResponse(t *testing.T) {
-	fake := newLoopLLMClient(t,
-		loopLLMResponse{
-			content: `{"summary":"Print a marker.","commands":[{"command":"echo shellia-loop","purpose":"Print marker","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
-		},
-		loopLLMResponse{content: "Printed shellia-loop.", stream: true},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Printed shellia-loop.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -1032,32 +942,28 @@ func TestRunTurnTraceRecordsSummaryPromptAndResponse(t *testing.T) {
 	})
 
 	events := closeLoopTraceAndRead(t, logger)
-	var summaryPrompts int
-	var summaryResponses int
+	var planningPrompts int
+	var planningResponses int
 	for _, event := range events {
-		if event["phase"] != "summary" {
+		if event["phase"] != "planning" {
 			continue
 		}
 		switch event["event"] {
 		case "llm_prompt":
-			summaryPrompts++
+			planningPrompts++
 		case "llm_response":
-			summaryResponses++
-			data := traceEventData(t, event)
-			if data["raw_response"] != "Printed shellia-loop." {
-				t.Fatalf("summary raw_response = %#v, want streamed answer", data["raw_response"])
-			}
+			planningResponses++
 		}
 	}
-	if summaryPrompts != 1 || summaryResponses != 1 {
-		t.Fatalf("summary events = prompts %d responses %d, want 1 and 1", summaryPrompts, summaryResponses)
+	if planningPrompts != 2 || planningResponses != 2 {
+		t.Fatalf("planning events = prompts %d responses %d, want 2 and 2", planningPrompts, planningResponses)
 	}
 }
 
 // TestRunTurnDeclinesPlanWithoutExecuting checks a rejected plan does not run or summarize commands.
 func TestRunTurnDeclinesPlanWithoutExecuting(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"summary":"Print a marker.","commands":[{"command":"echo shellia-loop","purpose":"Print marker","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+		content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Print a marker.","commands":[{"command":"echo shellia-loop","purpose":"Print marker","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
 	})
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -1080,7 +986,7 @@ func TestRunTurnDeclinesPlanWithoutExecuting(t *testing.T) {
 	if executed {
 		t.Fatalf("ExecuteCommands was called after declining the plan")
 	}
-	if result.Actionable || len(result.Plans) != 1 || len(result.Executions) != 0 {
+	if result.Outcome != turnOutcomeDeclined || len(result.Plans) != 1 || len(result.Executions) != 0 {
 		t.Fatalf("runTurn() result = %#v, want declined plan without executions", result)
 	}
 	if fake.requestCount() != 1 {
@@ -1094,7 +1000,7 @@ func TestRunTurnDeclinesPlanWithoutExecuting(t *testing.T) {
 // TestRunTurnPlanOnlyPrintsCommandsWithoutExecuting checks -p style turns stop after planning.
 func TestRunTurnPlanOnlyPrintsCommandsWithoutExecuting(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"summary":"Create a marker file.","commands":[{"command":"touch marker.txt","purpose":"Create marker","risk":"medium","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}`,
+		content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Create a marker file.","commands":[{"command":"touch marker.txt","purpose":"Create marker","risk":"medium","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}`,
 	})
 	cfg := loopTestConfig(fake.URL())
 	cfg.PlanOnly = true
@@ -1118,7 +1024,7 @@ func TestRunTurnPlanOnlyPrintsCommandsWithoutExecuting(t *testing.T) {
 	if executed {
 		t.Fatalf("ExecuteCommands was called in plan-only mode")
 	}
-	if !result.Actionable || len(result.Plans) != 1 || len(result.Executions) != 0 {
+	if result.Outcome != turnOutcomePlanned || len(result.Plans) != 1 || len(result.Executions) != 0 {
 		t.Fatalf("runTurn() result = %#v, want one planned command and no executions", result)
 	}
 	if !strings.Contains(output, "touch marker.txt") {
@@ -1134,28 +1040,22 @@ func TestRunTurnPlanOnlyPrintsCommandsWithoutExecuting(t *testing.T) {
 	}
 }
 
-// TestRunTurnPlanOnlyExecutesAcceptedPlan checks /plan can run the exact accepted plan.
-func TestRunTurnPlanOnlyExecutesAcceptedPlan(t *testing.T) {
-	fake := newLoopLLMClient(t,
-		loopLLMResponse{
-			content: `{"summary":"Create a marker file.","commands":[{"command":"touch marker.txt","purpose":"Create marker","risk":"medium","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}`,
-		},
-		loopLLMResponse{content: "Created marker file.", stream: true},
-	)
+// TestRunTurnPlanOnlyCannotReachExecutor checks plan-only authority is final
+// even when the model returns an executable command plan.
+func TestRunTurnPlanOnlyCannotReachExecutor(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{
+		content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Create a marker file.","commands":[{"command":"touch marker.txt","purpose":"Create marker","risk":"medium","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}`,
+	})
 	cfg := loopTestConfig(fake.URL())
 	cfg.PlanOnly = true
 	ctxInfo := loopTestContext(t)
-	var gotPlans []commandPlan
+	executed := false
 
 	var result turnResult
-	output := captureMainLoopIO(t, "y\n", fake.HTTPClient(), func(deps runtimeDeps) {
+	output := captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
 		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
-			gotPlans = append([]commandPlan{}, plans...)
-			return commandBatchResult{Executions: []commandExecution{{
-				Command:  plans[0].Command,
-				Purpose:  plans[0].Purpose,
-				ExitCode: 0,
-			}}}, nil
+			executed = true
+			return commandBatchResult{}, errors.New("executor reached in plan-only mode")
 		}
 
 		var err error
@@ -1165,173 +1065,51 @@ func TestRunTurnPlanOnlyExecutesAcceptedPlan(t *testing.T) {
 		}
 	})
 
-	if len(gotPlans) != 1 || gotPlans[0].Command != "touch marker.txt" {
-		t.Fatalf("ExecuteCommands plans = %#v, want planned touch command", gotPlans)
+	if executed {
+		t.Fatal("ExecuteCommands was called in plan-only mode")
 	}
-	if !result.Actionable || len(result.Executions) != 1 {
-		t.Fatalf("runTurn() result = %#v, want executed plan", result)
+	if result.Outcome != turnOutcomePlanned || len(result.Plans) != 1 || len(result.Executions) != 0 {
+		t.Fatalf("runTurn() result = %#v, want planned outcome without executions", result)
 	}
-	if fake.requestCount() != 2 {
-		t.Fatalf("LLM requests = %d, want 2", fake.requestCount())
-	}
-	if !strings.Contains(output, "Created marker file.") {
-		t.Fatalf("accepted plan output does not contain streamed summary: %q", output)
-	}
-}
-
-// TestRunTurnPlanOnlyExplainsObservationDependency checks unresolved follow-up plans explain the dependency.
-func TestRunTurnPlanOnlyExplainsObservationDependency(t *testing.T) {
-	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"summary":"First inspect the repo.","requires_observation":true,"observation_reason":"The next command depends on which package manager appears in the output.","commands":[{"command":"ls","purpose":"Inspect files","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
-	})
-	cfg := loopTestConfig(fake.URL())
-	cfg.PlanOnly = true
-	ctxInfo := loopTestContext(t)
-
-	output := captureMainLoopIO(t, "no\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "install deps")); err != nil {
-			t.Fatalf("runTurn() error = %v", err)
-		}
-	})
-
-	if !strings.Contains(output, "The next command depends on which package manager appears in the output.") {
-		t.Fatalf("plan-only output does not explain observation dependency: %q", output)
-	}
-	if !strings.Contains(output, "next step") {
-		t.Fatalf("plan-only output does not label observation guidance as next step: %q", output)
-	}
-}
-
-// TestRunTurnPlanOnlySkipsDiscoveryRepair checks /plan does not retry with discovery prompts.
-func TestRunTurnPlanOnlySkipsDiscoveryRepair(t *testing.T) {
-	fake := newLoopLLMClient(t,
-		loopLLMResponse{
-			content: `{"summary":"Need the target container.","requires_input":true,"input_reason":"No Docker container or image was specified.","commands":[]}`,
-		},
-		loopLLMResponse{
-			content: `{"summary":"Unexpected repair.","commands":[{"command":"docker ps","purpose":"Inspect Docker","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
-		},
-	)
-	cfg := loopTestConfig(fake.URL())
-	cfg.PlanOnly = true
-	ctxInfo := loopTestContext(t)
-
-	output := captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
-		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "run php in docker")); err != nil {
-			t.Fatalf("runTurn() error = %v", err)
-		}
-	})
-
 	if fake.requestCount() != 1 {
 		t.Fatalf("LLM requests = %d, want 1", fake.requestCount())
 	}
-	if !strings.Contains(output, "missing detail") {
-		t.Fatalf("plan-only output does not show missing detail guidance: %q", output)
-	}
-	if strings.Contains(output, "Unexpected repair") || strings.Contains(output, "docker ps") {
-		t.Fatalf("plan-only output used discovery repair response: %q", output)
+	if !strings.Contains(output, "touch marker.txt") {
+		t.Fatalf("plan-only output does not contain command: %q", output)
 	}
 }
 
-// TestRunTurnUsesDiscoveryRepairForRecoverableEmptyPlan checks empty input responses get one discovery retry.
-func TestRunTurnUsesDiscoveryRepairForRecoverableEmptyPlan(t *testing.T) {
-	fake := newLoopLLMClient(t,
-		loopLLMResponse{
-			content: `{"summary":"Need the installed tool.","requires_input":true,"input_reason":"The install source is unknown.","commands":[]}`,
-		},
-		loopLLMResponse{
-			content: `{"summary":"Checking the local tool path.","requires_observation":false,"observation_reason":"","commands":[{"command":"command -v shellia","purpose":"Find shellia binary","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
-		},
-		loopLLMResponse{content: "Found the shellia binary.", stream: true},
-	)
+// TestRunTurnPlanOnlyReturnsBlockerWithoutExecuting checks /plan keeps its immutable authority on blocked decisions.
+func TestRunTurnPlanOnlyReturnsBlockerWithoutExecuting(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{
+		content: `{"action":"blocked","objective_mode":"act","success_criteria":"Test objective completed","summary":"Need the target container.","blocker_kind":"missing_input","blocker_reason":"No Docker container or image was specified.","commands":[]}`,
+	})
 	cfg := loopTestConfig(fake.URL())
+	cfg.PlanOnly = true
 	ctxInfo := loopTestContext(t)
+	executed := false
 
-	var gotPlans []commandPlan
 	var result turnResult
-	output := captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
-			gotPlans = append([]commandPlan{}, plans...)
-			return commandBatchResult{Executions: []commandExecution{{
-				Command:  plans[0].Command,
-				Purpose:  plans[0].Purpose,
-				ExitCode: 0,
-				Stdout:   capturedStream{Text: "/usr/local/bin/shellia"},
-			}}}, nil
+	output := captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan, []commandExecution) (commandBatchResult, error) {
+			executed = true
+			return commandBatchResult{}, nil
 		}
-
 		var err error
-		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "update shellia"))
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "run php in docker"))
 		if err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
 	})
 
-	if len(gotPlans) != 1 || gotPlans[0].Command != "command -v shellia" {
-		t.Fatalf("ExecuteCommands plans = %#v, want discovery command", gotPlans)
+	if executed {
+		t.Fatal("ExecuteCommands was called for a blocked /plan decision")
 	}
-	if !result.Actionable || len(result.Executions) != 1 {
-		t.Fatalf("runTurn() result = %#v, want executed discovery plan", result)
+	if result.Outcome != turnOutcomeBlocked || result.BlockerKind != "missing_input" {
+		t.Fatalf("runTurn() result = %#v, want missing_input blocker", result)
 	}
-	if fake.requestCount() != 3 {
-		t.Fatalf("LLM requests = %d, want initial, repair, and summary requests", fake.requestCount())
-	}
-	bodies := fake.requestBodies()
-	if len(bodies) < 2 || !strings.Contains(bodies[1], "Discovery repair mode") {
-		t.Fatalf("repair request body = %#v, want discovery repair prompt", bodies)
-	}
-	if !strings.Contains(output, "Found the shellia binary.") {
-		t.Fatalf("runTurn() output missing final summary: %q", output)
-	}
-}
-
-// TestRunTurnTraceRecordsDiscoveryRepair checks repair prompts are tagged separately.
-func TestRunTurnTraceRecordsDiscoveryRepair(t *testing.T) {
-	fake := newLoopLLMClient(t,
-		loopLLMResponse{
-			content: `{"summary":"Need the installed tool.","requires_input":true,"input_reason":"The install source is unknown.","commands":[]}`,
-		},
-		loopLLMResponse{
-			content: `{"summary":"Checking the local tool path.","commands":[{"command":"command -v shellia","purpose":"Find shellia binary","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
-		},
-		loopLLMResponse{content: "Found the shellia binary.", stream: true},
-	)
-	cfg := loopTestConfig(fake.URL())
-	ctxInfo := loopTestContext(t)
-	logger := openLoopTrace(t)
-
-	captureMainLoopIO(t, "yes\n", fake.HTTPClient(), func(deps runtimeDeps) {
-		deps.Trace = logger
-		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
-			return commandBatchResult{Executions: []commandExecution{{
-				Command:  plans[0].Command,
-				Purpose:  plans[0].Purpose,
-				ExitCode: 0,
-				Stdout:   capturedStream{Text: "/usr/local/bin/shellia"},
-			}}}, nil
-		}
-		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "update shellia")); err != nil {
-			t.Fatalf("runTurn() error = %v", err)
-		}
-	})
-
-	events := closeLoopTraceAndRead(t, logger)
-	var planningPrompt bool
-	var repairPrompt bool
-	var repairResponse bool
-	for _, event := range events {
-		if event["event"] == "llm_prompt" && event["phase"] == "planning" {
-			planningPrompt = true
-		}
-		if event["event"] == "llm_prompt" && event["phase"] == "discovery_repair" {
-			repairPrompt = true
-		}
-		if event["event"] == "llm_response" && event["phase"] == "discovery_repair" {
-			repairResponse = true
-		}
-	}
-	if !planningPrompt || !repairPrompt || !repairResponse {
-		t.Fatalf("trace phases planning=%t repair_prompt=%t repair_response=%t", planningPrompt, repairPrompt, repairResponse)
+	if fake.requestCount() != 1 || !strings.Contains(output, "No Docker container or image was specified.") {
+		t.Fatalf("requests = %d, output = %q", fake.requestCount(), output)
 	}
 }
 
@@ -1340,10 +1118,10 @@ func TestRunTurnTraceRecordsDiscoveryRepair(t *testing.T) {
 func TestRunTurnUsesBoundedExplicitGitObservation(t *testing.T) {
 	fake := newLoopLLMClient(t,
 		loopLLMResponse{
-			content: `{"summary":"Inspect current repository state.","requires_observation":true,"commands":[{"command":"git status --short","purpose":"Inspect Git status","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+			content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect current repository state.","commands":[{"command":"git status --short","purpose":"Inspect Git status","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
 		},
 		loopLLMResponse{
-			content: `{"summary":"Repository state inspected.","commands":[]}`,
+			content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Repository state inspected.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`,
 		},
 	)
 	cfg := loopTestConfig(fake.URL())
@@ -1394,9 +1172,9 @@ func TestRunTurnUsesBoundedExplicitGitObservation(t *testing.T) {
 // grounded input for one confirmed recovery planning round.
 func TestRunTurnReplansOnceAfterOrdinaryFailure(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"summary":"Run initial batch.","commands":[{"command":"false","purpose":"Trigger failure","risk":"safe","requires_confirmation":false,"independent_on_failure":false,"interactive":false,"interactive_reason":""},{"command":"touch blocked","purpose":"Blocked dependent step","risk":"safe","requires_confirmation":false,"independent_on_failure":false,"interactive":false,"interactive_reason":""},{"command":"pwd","purpose":"Independent inspection","risk":"safe","requires_confirmation":false,"independent_on_failure":true,"interactive":false,"interactive_reason":""}]}`},
-		loopLLMResponse{content: `{"summary":"Run recovery.","commands":[{"command":"git status --short","purpose":"Verify repository state","risk":"safe","requires_confirmation":false,"independent_on_failure":false,"interactive":false,"interactive_reason":""}]}`},
-		loopLLMResponse{content: "Recovery completed.", stream: true},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Run initial batch.","commands":[{"command":"false","purpose":"Trigger failure","risk":"safe","requires_confirmation":false,"independent_on_failure":false,"interactive":false,"interactive_reason":""},{"command":"touch blocked","purpose":"Blocked dependent step","risk":"safe","requires_confirmation":false,"independent_on_failure":false,"interactive":false,"interactive_reason":""},{"command":"pwd","purpose":"Independent inspection","risk":"safe","requires_confirmation":false,"independent_on_failure":true,"interactive":false,"interactive_reason":""}]}`},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Run recovery.","commands":[{"command":"git status --short","purpose":"Verify repository state","risk":"safe","requires_confirmation":false,"independent_on_failure":false,"interactive":false,"interactive_reason":""}]}`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Recovery completed.","completion_basis":{"type":"current_observation","evidence_revision":2,"attempt_ids":[4]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = true
@@ -1435,16 +1213,16 @@ func TestRunTurnReplansOnceAfterOrdinaryFailure(t *testing.T) {
 
 	bodies := fake.requestBodies()
 	if len(bodies) != 3 {
-		t.Fatalf("request count = %d, want two planning requests and one summary", len(bodies))
+		t.Fatalf("request count = %d, want three workflow decisions", len(bodies))
 	}
 	for _, snippet := range []string{"Exit code: 7", "initial failure", "Independent inspection", "Skipped commands from the current task:", "touch blocked", "dependent on an earlier failed command"} {
 		if !strings.Contains(bodies[1], snippet) {
 			t.Fatalf("recovery prompt missing %q: %q", snippet, bodies[1])
 		}
 	}
-	for _, snippet := range []string{"Skipped commands", "touch blocked", "dependent on an earlier failed command", "were not executed"} {
+	for _, snippet := range []string{"Skipped commands", "touch blocked", "dependent on an earlier failed command"} {
 		if !strings.Contains(bodies[2], snippet) {
-			t.Fatalf("summary prompt missing %q: %q", snippet, bodies[2])
+			t.Fatalf("completion prompt missing %q: %q", snippet, bodies[2])
 		}
 	}
 	if strings.Count(output, "Execute this plan? [y/n]: yes") != 2 {
@@ -1468,8 +1246,8 @@ func TestRunTurnReplansOnceAfterOrdinaryFailure(t *testing.T) {
 	}
 
 	plannerEvents := traceEventsByName(events, "planner_result")
-	if len(plannerEvents) != 2 {
-		t.Fatalf("planner_result events = %d, want 2", len(plannerEvents))
+	if len(plannerEvents) != 3 {
+		t.Fatalf("planner_result events = %d, want 3", len(plannerEvents))
 	}
 	commands, ok := traceEventData(t, plannerEvents[0])["commands"].([]any)
 	if !ok || len(commands) != 3 {
@@ -1486,10 +1264,10 @@ func TestRunTurnReplansOnceAfterOrdinaryFailure(t *testing.T) {
 // mixed proposals show, confirm, and execute only commands that have not succeeded.
 func TestRunTurnFiltersSuccessfulCorrectionsButRetriesFailures(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"summary":"Run failing command.","commands":[{"command":"false","purpose":"Trigger failure","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"summary":"Apply correction and retry.","commands":[{"command":"touch corrected","purpose":"Apply correction","risk":"safe","requires_confirmation":false,"independent_on_failure":true},{"command":"false","purpose":"Retry failure","risk":"safe","requires_confirmation":false,"independent_on_failure":true}]}`},
-		loopLLMResponse{content: `{"summary":"Retry the remaining failure.","commands":[{"command":"touch corrected","purpose":"Apply correction","risk":"safe","requires_confirmation":false,"independent_on_failure":true},{"command":"false","purpose":"Retry failure","risk":"safe","requires_confirmation":false,"independent_on_failure":true}]}`},
-		loopLLMResponse{content: `{"summary":"Retries exhausted after grounded outcomes.","commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Run failing command.","commands":[{"command":"false","purpose":"Trigger failure","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Apply correction and retry.","commands":[{"command":"touch corrected","purpose":"Apply correction","risk":"safe","requires_confirmation":false,"independent_on_failure":true},{"command":"false","purpose":"Retry failure","risk":"safe","requires_confirmation":false,"independent_on_failure":true}]}`},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Retry the remaining failure.","commands":[{"command":"touch corrected","purpose":"Apply correction","risk":"safe","requires_confirmation":false,"independent_on_failure":true},{"command":"false","purpose":"Retry failure","risk":"safe","requires_confirmation":false,"independent_on_failure":true}]}`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Retries exhausted after grounded outcomes.","completion_basis":{"type":"current_observation","evidence_revision":3,"attempt_ids":[5]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = true
@@ -1560,9 +1338,9 @@ func TestRunTurnFiltersSuccessfulCorrectionsButRetriesFailures(t *testing.T) {
 // not create more than one follow-up planning request for a batch.
 func TestRunTurnMultipleFailuresTriggerOneRecoveryRound(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"summary":"Run failures.","commands":[{"command":"false","purpose":"First failure","risk":"safe","requires_confirmation":false},{"command":"exit 2","purpose":"Second failure","risk":"safe","requires_confirmation":false,"independent_on_failure":true}]}`},
-		loopLLMResponse{content: `{"summary":"Recover once.","commands":[{"command":"pwd","purpose":"Recover","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: "Recovered once.", stream: true},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Run failures.","commands":[{"command":"false","purpose":"First failure","risk":"safe","requires_confirmation":false},{"command":"exit 2","purpose":"Second failure","risk":"safe","requires_confirmation":false,"independent_on_failure":true}]}`},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Recover once.","commands":[{"command":"pwd","purpose":"Recover","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Recovered once.","completion_basis":{"type":"current_observation","evidence_revision":2,"attempt_ids":[3]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -1597,8 +1375,8 @@ func TestRunTurnMultipleFailuresTriggerOneRecoveryRound(t *testing.T) {
 // execution while retaining every execution returned by the runner.
 func TestRunTurnTimeoutDoesNotReplan(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"summary":"Run timeout batch.","requires_observation":true,"commands":[{"command":"slow","purpose":"Timed operation","risk":"safe","requires_confirmation":false},{"command":"pwd","purpose":"Independent inspection","risk":"safe","requires_confirmation":false,"independent_on_failure":true}]}`},
-		loopLLMResponse{content: "Stopped after timeout.", stream: true},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Run timeout batch.","commands":[{"command":"slow","purpose":"Timed operation","risk":"safe","requires_confirmation":false},{"command":"pwd","purpose":"Independent inspection","risk":"safe","requires_confirmation":false,"independent_on_failure":true}]}`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Stopped after timeout.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -1624,26 +1402,26 @@ func TestRunTurnTimeoutDoesNotReplan(t *testing.T) {
 		}
 	})
 
-	if fake.requestCount() != 2 || len(result.Executions) != 2 {
-		t.Fatalf("requests = %d, result = %#v, want planning/summary and both executions", fake.requestCount(), result)
+	if fake.requestCount() != 1 || result.Outcome != turnOutcomeTimeout || len(result.Executions) != 2 {
+		t.Fatalf("requests = %d, result = %#v, want one decision and timeout with both executions", fake.requestCount(), result)
 	}
 	events := closeLoopTraceAndRead(t, logger)
 	exclusionCount := 0
 	for _, event := range traceEventsByName(events, "shellia_decision") {
 		data := traceEventData(t, event)
-		if data["decision"] == "execution_failure_replan_excluded" && data["reason"] == "timeout" {
+		if data["decision"] == "timeout" {
 			exclusionCount++
 		}
 	}
 	if exclusionCount != 1 {
-		t.Fatalf("timeout execution_failure_replan_excluded events = %d, want 1", exclusionCount)
+		t.Fatalf("timeout decisions = %d, want 1", exclusionCount)
 	}
 }
 
 // TestRunTurnCancellationDoesNotReplan checks cancellation returns immediately
 // and records why execution failure recovery was excluded.
 func TestRunTurnCancellationDoesNotReplan(t *testing.T) {
-	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"summary":"Run commands.","commands":[{"command":"pwd","purpose":"Completed inspection","risk":"safe","requires_confirmation":false},{"command":"wait","purpose":"Cancelled step","risk":"safe","requires_confirmation":false}]}`})
+	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Run commands.","commands":[{"command":"pwd","purpose":"Completed inspection","risk":"safe","requires_confirmation":false},{"command":"wait","purpose":"Cancelled step","risk":"safe","requires_confirmation":false}]}`})
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
 	ctxInfo := loopTestContext(t)
@@ -1668,7 +1446,7 @@ func TestRunTurnCancellationDoesNotReplan(t *testing.T) {
 	if fake.requestCount() != 1 {
 		t.Fatalf("LLM requests = %d, want initial planning only", fake.requestCount())
 	}
-	if !result.Actionable || len(result.Executions) != 1 || len(result.Skipped) != 1 {
+	if result.Outcome != turnOutcomeCancelled || len(result.Executions) != 1 || len(result.Skipped) != 1 {
 		t.Fatalf("runTurn() result = %#v, want actionable partial cancellation result", result)
 	}
 	events := closeLoopTraceAndRead(t, logger)
@@ -1687,7 +1465,7 @@ func TestRunTurnCancellationDoesNotReplan(t *testing.T) {
 // TestRunTurnStructuralExecutionErrorReturnsPartialResult checks a runner error
 // stops immediately without discarding real attempts or skipped commands.
 func TestRunTurnStructuralExecutionErrorReturnsPartialResult(t *testing.T) {
-	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"summary":"Run batch.","commands":[{"command":"pwd","purpose":"Inspect","risk":"safe","requires_confirmation":false},{"command":"later","purpose":"Later step","risk":"safe","requires_confirmation":false}]}`})
+	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Run batch.","commands":[{"command":"pwd","purpose":"Inspect","risk":"safe","requires_confirmation":false},{"command":"later","purpose":"Later step","risk":"safe","requires_confirmation":false}]}`})
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
 	ctxInfo := loopTestContext(t)
@@ -1708,8 +1486,11 @@ func TestRunTurnStructuralExecutionErrorReturnsPartialResult(t *testing.T) {
 		}
 	})
 
-	if fake.requestCount() != 1 || !result.Actionable || len(result.Executions) != 1 || len(result.Skipped) != 1 {
+	if fake.requestCount() != 1 || len(result.Executions) != 1 || len(result.Skipped) != 1 {
 		t.Fatalf("requests = %d, result = %#v, want one plan and partial result", fake.requestCount(), result)
+	}
+	if result.Outcome != turnOutcomeStructuralError {
+		t.Fatalf("result.Outcome = %q, want structural_error", result.Outcome)
 	}
 }
 
@@ -1717,7 +1498,7 @@ func TestRunTurnStructuralExecutionErrorReturnsPartialResult(t *testing.T) {
 // model request retains the batch that required that request.
 func TestRunTurnLaterPlanningErrorReturnsPartialResult(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"summary":"Inspect first.","requires_observation":true,"commands":[{"command":"pwd","purpose":"Inspect","risk":"safe","requires_confirmation":false},{"command":"later","purpose":"Later step","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect first.","commands":[{"command":"pwd","purpose":"Inspect","risk":"safe","requires_confirmation":false},{"command":"later","purpose":"Later step","risk":"safe","requires_confirmation":false}]}`},
 		loopLLMResponse{status: http.StatusBadRequest, content: "bad follow-up request"},
 	)
 	cfg := loopTestConfig(fake.URL())
@@ -1739,8 +1520,11 @@ func TestRunTurnLaterPlanningErrorReturnsPartialResult(t *testing.T) {
 		}
 	})
 
-	if fake.requestCount() != 2 || !result.Actionable || len(result.Executions) != 1 || len(result.Skipped) != 1 {
+	if fake.requestCount() != 2 || len(result.Executions) != 1 || len(result.Skipped) != 1 {
 		t.Fatalf("requests = %d, result = %#v, want partial result after failed follow-up", fake.requestCount(), result)
+	}
+	if result.Outcome != turnOutcomeBlocked || result.BlockerKind != "unavailable" {
+		t.Fatalf("result terminal cause = %#v, want blocked/unavailable", result)
 	}
 }
 
@@ -1748,8 +1532,8 @@ func TestRunTurnLaterPlanningErrorReturnsPartialResult(t *testing.T) {
 // read a later plan confirmation does not erase earlier outcomes.
 func TestRunTurnRecoveryConfirmationErrorReturnsPartialResult(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false},{"command":"later","purpose":"Later step","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"summary":"Recover.","commands":[{"command":"pwd","purpose":"Recover","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false},{"command":"later","purpose":"Later step","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Recover.","commands":[{"command":"pwd","purpose":"Recover","risk":"safe","requires_confirmation":false}]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = true
@@ -1774,7 +1558,7 @@ func TestRunTurnRecoveryConfirmationErrorReturnsPartialResult(t *testing.T) {
 		}
 	})
 
-	if !result.Actionable || len(result.Executions) != 1 || len(result.Skipped) != 1 {
+	if len(result.Executions) != 1 || len(result.Skipped) != 1 {
 		t.Fatalf("result = %#v, want partial result after confirmation error", result)
 	}
 }
@@ -1782,7 +1566,7 @@ func TestRunTurnRecoveryConfirmationErrorReturnsPartialResult(t *testing.T) {
 // TestRunTurnPlanningLimitPromptErrorReturnsPartialResult checks the existing
 // limit prompt's error path preserves accumulated execution state.
 func TestRunTurnPlanningLimitPromptErrorReturnsPartialResult(t *testing.T) {
-	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false},{"command":"later","purpose":"Later step","risk":"safe","requires_confirmation":false}]}`})
+	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false},{"command":"later","purpose":"Later step","risk":"safe","requires_confirmation":false}]}`})
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
 	cfg.PlanningMaxRounds = 1
@@ -1807,24 +1591,24 @@ func TestRunTurnPlanningLimitPromptErrorReturnsPartialResult(t *testing.T) {
 		}
 	})
 
-	if !result.Actionable || len(result.Executions) != 1 || len(result.Skipped) != 1 {
+	if len(result.Executions) != 1 || len(result.Skipped) != 1 {
 		t.Fatalf("result = %#v, want partial result after planning-limit error", result)
 	}
 }
 
-// TestRunTurnOrdinaryFailureOverridesTimeoutExclusion checks mixed batches use
-// the ordinary-failure recovery path even when a timeout also occurred.
-func TestRunTurnOrdinaryFailureOverridesTimeoutExclusion(t *testing.T) {
+// TestRunTurnMixedFailureWithTimeoutDoesNotReplan checks timeout remains terminal for mixed batches.
+func TestRunTurnMixedFailureWithTimeoutDoesNotReplan(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"summary":"Run mixed failures.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false},{"command":"slow","purpose":"Timeout","risk":"safe","requires_confirmation":false,"independent_on_failure":true}]}`},
-		loopLLMResponse{content: `{"summary":"Recover mixed batch.","commands":[{"command":"pwd","purpose":"Recover","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: "Recovered mixed batch.", stream: true},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Run mixed failures.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false},{"command":"slow","purpose":"Timeout","risk":"safe","requires_confirmation":false,"independent_on_failure":true}]}`},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Recover mixed batch.","commands":[{"command":"pwd","purpose":"Recover","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Recovered mixed batch.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
 	ctxInfo := loopTestContext(t)
 	calls := 0
 
+	var result turnResult
 	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
 		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			calls++
@@ -1840,13 +1624,15 @@ func TestRunTurnOrdinaryFailureOverridesTimeoutExclusion(t *testing.T) {
 			}
 			return commandBatchResult{Executions: []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 0}}}, nil
 		}
-		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "recover mixed failures")); err != nil {
+		var err error
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "recover mixed failures"))
+		if err != nil {
 			t.Fatalf("runTurn() error = %v", err)
 		}
 	})
 
-	if calls != 2 || fake.requestCount() != 3 {
-		t.Fatalf("execution calls = %d, LLM requests = %d, want one recovery batch", calls, fake.requestCount())
+	if calls != 1 || fake.requestCount() != 1 || result.Outcome != turnOutcomeTimeout {
+		t.Fatalf("execution calls = %d, LLM requests = %d, result = %#v, want terminal timeout", calls, fake.requestCount(), result)
 	}
 }
 
@@ -1854,9 +1640,9 @@ func TestRunTurnOrdinaryFailureOverridesTimeoutExclusion(t *testing.T) {
 // repair retains partial execution and shares the normal planning-limit path.
 func TestRunTurnInteractiveRepairUsesPlanningLimit(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"summary":"Run prompt-prone command.","commands":[{"command":"prompting-command","purpose":"Attempt command","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"summary":"Repair prompt use.","commands":[{"command":"pwd","purpose":"Recover non-interactively","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: "Recovered from interactive prompt.", stream: true},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Run prompt-prone command.","commands":[{"command":"prompting-command","purpose":"Attempt command","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Repair prompt use.","commands":[{"command":"pwd","purpose":"Recover non-interactively","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Recovered from interactive prompt.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -1893,28 +1679,33 @@ func TestRunTurnFailureRecoveryUsesPlanningLimit(t *testing.T) {
 		input        string
 		responses    []loopLLMResponse
 		wantRequests int
+		wantCalls    int
 		wantResult   string
+		wantOutcome  turnOutcome
 	}{
 		{
 			name:  "accepted",
-			input: "y\n",
+			input: "y\ny\n",
 			responses: []loopLLMResponse{
-				{content: `{"summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false},{"command":"blocked","purpose":"Skip","risk":"safe","requires_confirmation":false}]}`},
-				{content: `{"summary":"Recover.","commands":[{"command":"pwd","purpose":"Recover","risk":"safe","requires_confirmation":false}]}`},
-				{content: "Recovered after extension.", stream: true},
+				{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false},{"command":"blocked","purpose":"Skip","risk":"safe","requires_confirmation":false}]}`},
+				{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Recover.","commands":[{"command":"pwd","purpose":"Recover","risk":"safe","requires_confirmation":false}]}`},
+				{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Recovered after extension.","completion_basis":{"type":"current_observation","evidence_revision":2,"attempt_ids":[3]},"commands":[]}`},
 			},
 			wantRequests: 3,
+			wantCalls:    2,
 			wantResult:   "Recovered after extension.",
+			wantOutcome:  turnOutcomeCompleted,
 		},
 		{
 			name:  "declined",
 			input: "n\n",
 			responses: []loopLLMResponse{
-				{content: `{"summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false},{"command":"blocked","purpose":"Skip","risk":"safe","requires_confirmation":false}]}`},
-				{content: "Stopped with partial outcomes.", stream: true},
+				{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false},{"command":"blocked","purpose":"Skip","risk":"safe","requires_confirmation":false}]}`},
 			},
-			wantRequests: 2,
-			wantResult:   "Stopped with partial outcomes.",
+			wantRequests: 1,
+			wantCalls:    1,
+			wantResult:   "Fail first.",
+			wantOutcome:  turnOutcomePlanningLimit,
 		},
 	}
 
@@ -1949,7 +1740,7 @@ func TestRunTurnFailureRecoveryUsesPlanningLimit(t *testing.T) {
 				}
 			})
 
-			if fake.requestCount() != tt.wantRequests || result.Result != tt.wantResult || len(result.Executions) != calls || len(result.Skipped) != 1 {
+			if fake.requestCount() != tt.wantRequests || calls != tt.wantCalls || result.Result != tt.wantResult || result.Outcome != tt.wantOutcome || len(result.Executions) != calls || len(result.Skipped) != 1 {
 				t.Fatalf("requests = %d, calls = %d, result = %#v", fake.requestCount(), calls, result)
 			}
 
@@ -1964,13 +1755,10 @@ func TestRunTurnFailureRecoveryUsesPlanningLimit(t *testing.T) {
 				case "planning_limit_continuation":
 					if data["trigger"] == "execution_failure" {
 						foundLimitContinuation = true
+						foundLimitDecline = data["accepted"] == false
 					}
 				case "continue_after_execution_failure":
 					foundFailureContinuation = true
-				case "execution_failure_replan_excluded":
-					if data["reason"] == "planning_limit_declined" {
-						foundLimitDecline = true
-					}
 				}
 			}
 			if !foundLimitContinuation {
@@ -1990,8 +1778,8 @@ func TestRunTurnFailureRecoveryUsesPlanningLimit(t *testing.T) {
 // final answer remains actionable and carries executions and skips.
 func TestRunTurnPreservesBatchWhenRecoveryPlanIsEmpty(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"summary":"Inspect.","requires_observation":true,"commands":[{"command":"pwd","purpose":"Inspect","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"summary":"Nothing else to run.","commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect.","commands":[{"command":"pwd","purpose":"Inspect","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Nothing else to run.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -2012,7 +1800,7 @@ func TestRunTurnPreservesBatchWhenRecoveryPlanIsEmpty(t *testing.T) {
 		}
 	})
 
-	if !result.Actionable || len(result.Executions) != 1 || len(result.Skipped) != 1 || result.Result != "Nothing else to run." {
+	if result.Outcome != turnOutcomeCompleted || len(result.Executions) != 1 || len(result.Skipped) != 1 || result.Result != "Nothing else to run." {
 		t.Fatalf("result = %#v, want actionable accumulated batch", result)
 	}
 }
@@ -2021,8 +1809,8 @@ func TestRunTurnPreservesBatchWhenRecoveryPlanIsEmpty(t *testing.T) {
 // plan does not discard outcomes already produced in the turn.
 func TestRunTurnPreservesBatchWhenRecoveryPlanIsDeclined(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false},{"command":"blocked","purpose":"Skip","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"summary":"Proposed recovery.","commands":[{"command":"pwd","purpose":"Recover","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false},{"command":"blocked","purpose":"Skip","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Proposed recovery.","commands":[{"command":"pwd","purpose":"Recover","risk":"safe","requires_confirmation":false}]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = true
@@ -2044,7 +1832,7 @@ func TestRunTurnPreservesBatchWhenRecoveryPlanIsDeclined(t *testing.T) {
 		}
 	})
 
-	if !result.Actionable || len(result.Executions) != 1 || len(result.Skipped) != 1 {
+	if result.Outcome != turnOutcomeDeclined || len(result.Executions) != 1 || len(result.Skipped) != 1 {
 		t.Fatalf("result = %#v, want accumulated actionable batch", result)
 	}
 	if !strings.Contains(output, "Plan not executed.") {
@@ -2056,9 +1844,9 @@ func TestRunTurnPreservesBatchWhenRecoveryPlanIsDeclined(t *testing.T) {
 // rounds traverse the same plan-level and command-level confirmation paths.
 func TestRunTurnRecoveryUsesPlanAndCommandConfirmations(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"summary":"Recover.","commands":[{"command":"pwd","purpose":"Recover safely","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: "Recovered with confirmation.", stream: true},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Recover.","commands":[{"command":"pwd","purpose":"Recover safely","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Recovered with confirmation.","completion_basis":{"type":"current_observation","evidence_revision":2,"attempt_ids":[2]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = true
@@ -2096,9 +1884,9 @@ func TestRunTurnSafeRecoveryHonorsYesSafe(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := newLoopLLMClient(t,
-				loopLLMResponse{content: `{"summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false}]}`},
-				loopLLMResponse{content: `{"summary":"Recover.","commands":[{"command":"pwd","purpose":"Recover safely","risk":"safe","requires_confirmation":false}]}`},
-				loopLLMResponse{content: "Recovered safely.", stream: true},
+				loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false}]}`},
+				loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Recover.","commands":[{"command":"pwd","purpose":"Recover safely","risk":"safe","requires_confirmation":false}]}`},
+				loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Recovered safely.","completion_basis":{"type":"current_observation","evidence_revision":2,"attempt_ids":[2]},"commands":[]}`},
 			)
 			cfg := loopTestConfig(fake.URL())
 			cfg.AskConfirmPlan = false
@@ -2132,9 +1920,9 @@ func TestRunTurnRiskyRecoveryRequiresConfirmationWithYesSafe(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 	marker := "recovered-marker"
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"summary":"Recover.","commands":[{"command":"touch recovered-marker","purpose":"Create recovery marker","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: "Created recovery marker.", stream: true},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Fail first.","commands":[{"command":"false","purpose":"Fail","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Recover.","commands":[{"command":"touch recovered-marker","purpose":"Create recovery marker","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Created recovery marker.","completion_basis":{"type":"current_observation","evidence_revision":2,"attempt_ids":[2]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -2166,13 +1954,13 @@ func TestRunTurnRiskyRecoveryRequiresConfirmationWithYesSafe(t *testing.T) {
 func TestRunTurnCanContinueAfterPlanningRoundLimit(t *testing.T) {
 	fake := newLoopLLMClient(t,
 		loopLLMResponse{
-			content: `{"summary":"Inspect the first fact.","requires_observation":true,"commands":[{"command":"echo first","purpose":"Inspect first fact","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+			content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect the first fact.","commands":[{"command":"echo first","purpose":"Inspect first fact","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
 		},
 		loopLLMResponse{
-			content: `{"summary":"Inspect the second fact.","requires_observation":true,"commands":[{"command":"echo second","purpose":"Inspect second fact","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+			content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect the second fact.","commands":[{"command":"echo second","purpose":"Inspect second fact","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
 		},
 		loopLLMResponse{
-			content: `{"summary":"Done after extra planning.","commands":[]}`,
+			content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Done after extra planning.","completion_basis":{"type":"current_observation","evidence_revision":2,"attempt_ids":[2]},"commands":[]}`,
 		},
 	)
 	cfg := loopTestConfig(fake.URL())
@@ -2221,9 +2009,8 @@ func TestRunTurnCanContinueAfterPlanningRoundLimit(t *testing.T) {
 func TestRunTurnSummarizesWhenPlanningRoundLimitIsDeclined(t *testing.T) {
 	fake := newLoopLLMClient(t,
 		loopLLMResponse{
-			content: `{"summary":"Inspect one fact.","requires_observation":true,"commands":[{"command":"echo first","purpose":"Inspect first fact","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
+			content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect one fact.","commands":[{"command":"echo first","purpose":"Inspect first fact","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
 		},
-		loopLLMResponse{content: "Stopped after the observed fact.", stream: true},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -2248,11 +2035,11 @@ func TestRunTurnSummarizesWhenPlanningRoundLimitIsDeclined(t *testing.T) {
 		}
 	})
 
-	if result.Result != "Stopped after the observed fact." {
-		t.Fatalf("result = %q, want streamed summary", result.Result)
+	if result.Result != "Inspect one fact." || result.Outcome != turnOutcomePlanningLimit {
+		t.Fatalf("result = %#v, want planning-limit outcome with last summary", result)
 	}
-	if fake.requestCount() != 2 {
-		t.Fatalf("LLM requests = %d, want planning and summary", fake.requestCount())
+	if fake.requestCount() != 1 {
+		t.Fatalf("LLM requests = %d, want one workflow decision", fake.requestCount())
 	}
 	if !strings.Contains(output, "SHELLIA_PLANNING_MAX_ROUNDS") {
 		t.Fatalf("output missing env override guidance: %q", output)
@@ -2262,10 +2049,10 @@ func TestRunTurnSummarizesWhenPlanningRoundLimitIsDeclined(t *testing.T) {
 	}
 }
 
-// TestRunTurnPlanOnlyUsesDedicatedSystemPrompt checks /plan sends the plan-only prompt contract.
-func TestRunTurnPlanOnlyUsesDedicatedSystemPrompt(t *testing.T) {
+// TestRunTurnPlanOnlyDeclaresImmutableAuthority checks /plan uses the shared workflow contract with no execution authority.
+func TestRunTurnPlanOnlyDeclaresImmutableAuthority(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"summary":"Create a marker file.","commands":[{"command":"touch marker.txt","purpose":"Preparation: create marker","risk":"medium","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}`,
+		content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Create a marker file.","commands":[{"command":"touch marker.txt","purpose":"Preparation: create marker","risk":"medium","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}`,
 	})
 	cfg := loopTestConfig(fake.URL())
 	cfg.PlanOnly = true
@@ -2281,15 +2068,17 @@ func TestRunTurnPlanOnlyUsesDedicatedSystemPrompt(t *testing.T) {
 	if len(bodies) != 1 {
 		t.Fatalf("LLM request bodies = %d, want 1", len(bodies))
 	}
-	if !strings.Contains(bodies[0], "non-executing plan mode") {
-		t.Fatalf("plan-only request did not use dedicated system prompt: %q", bodies[0])
+	for _, snippet := range []string{"Shellia's goal-oriented planning layer", "Execution authority: plan_only; commands may be shown but must not be executed."} {
+		if !strings.Contains(bodies[0], snippet) {
+			t.Fatalf("plan-only request missing %q: %q", snippet, bodies[0])
+		}
 	}
 }
 
 // TestRunInteractiveProcessesPromptThenExit checks that the interactive loop runs one AI turn and exits cleanly.
 func TestRunInteractiveProcessesPromptThenExit(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"summary":"Interactive answer.","commands":[]}`,
+		content: `{"action":"complete","objective_mode":"explain","success_criteria":"Test answer provided","summary":"Interactive answer.","completion_basis":{"type":"model_knowledge"},"commands":[]}`,
 	})
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -2353,7 +2142,7 @@ func TestRunInteractiveModelCommandSwitchesWithoutLLM(t *testing.T) {
 // TestRunInteractivePlanCommandPlansWithoutExecuting checks /plan is scoped to one prompt.
 func TestRunInteractivePlanCommandPlansWithoutExecuting(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"summary":"Create a marker file.","commands":[{"command":"touch marker.txt","purpose":"Create marker","risk":"medium","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}`,
+		content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Create a marker file.","commands":[{"command":"touch marker.txt","purpose":"Create marker","risk":"medium","requires_confirmation":true,"interactive":false,"interactive_reason":""}]}`,
 	})
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -2382,7 +2171,8 @@ func TestRunInteractivePlanCommandPlansWithoutExecuting(t *testing.T) {
 func TestRunInteractiveRetryCommandRepeatsLastFailedInstruction(t *testing.T) {
 	fake := newLoopLLMClient(t,
 		loopLLMResponse{content: `not json`},
-		loopLLMResponse{content: `{"summary":"No command needed.","commands":[]}`},
+		loopLLMResponse{content: `still not json`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"explain","success_criteria":"Test answer provided","summary":"No command needed.","completion_basis":{"type":"model_knowledge"},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -2391,8 +2181,8 @@ func TestRunInteractiveRetryCommandRepeatsLastFailedInstruction(t *testing.T) {
 		runInteractive(t.Context(), deps, false, cfg, &ctxInfo)
 	})
 
-	if fake.requestCount() != 2 {
-		t.Fatalf("LLM requests = %d, want 2", fake.requestCount())
+	if fake.requestCount() != 3 {
+		t.Fatalf("LLM requests = %d, want structural attempt, repair, and retry", fake.requestCount())
 	}
 	for index, body := range fake.requestBodies() {
 		if !strings.Contains(body, "User instruction:\\nbuild it") {
@@ -2411,8 +2201,8 @@ func TestRunInteractiveRetryCommandRepeatsLastFailedInstruction(t *testing.T) {
 // turn remains retryable while its real execution reaches session memory.
 func TestRunInteractiveCancellationRemembersPartialObservations(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"summary":"Inspect once.","commands":[{"command":"pwd","purpose":"Inspect before cancellation","risk":"safe","requires_confirmation":false},{"command":"wait","purpose":"Cancelled step","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"summary":"Retry received partial context.","commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect once.","commands":[{"command":"pwd","purpose":"Inspect before cancellation","risk":"safe","requires_confirmation":false},{"command":"wait","purpose":"Cancelled step","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Retry received partial context.","completion_basis":{"type":"prior_session_evidence"},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -2436,7 +2226,7 @@ func TestRunInteractiveCancellationRemembersPartialObservations(t *testing.T) {
 		t.Fatalf("execution calls = %d, LLM requests = %d, want one cancelled execution and one retry plan", calls, fake.requestCount())
 	}
 	retryBody := fake.requestBodies()[1]
-	for _, snippet := range []string{"last_retry_instruction: inspect once", "Recent reusable observations:", "Inspect before cancellation", "observed-before-cancel"} {
+	for _, snippet := range []string{"last_retry_instruction: inspect once", "Recent reusable observations:", "Inspect before cancellation", "observed-before-cancel", "Prior session evidence: eligible for this same-objective retry."} {
 		if !strings.Contains(retryBody, snippet) {
 			t.Fatalf("retry prompt missing %q: %q", snippet, retryBody)
 		}
@@ -2452,8 +2242,8 @@ func TestRunInteractiveCancellationRemembersPartialObservations(t *testing.T) {
 // TestRunInteractiveNewCommandClearsPromptContext checks /new resets conversational memory.
 func TestRunInteractiveNewCommandClearsPromptContext(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"summary":"First answer.","commands":[]}`},
-		loopLLMResponse{content: `{"summary":"Second answer.","commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"explain","success_criteria":"Test answer provided","summary":"First answer.","completion_basis":{"type":"model_knowledge"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"explain","success_criteria":"Test answer provided","summary":"Second answer.","completion_basis":{"type":"model_knowledge"},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -2494,67 +2284,5 @@ func TestRunInteractiveIgnoresEmptyPrompt(t *testing.T) {
 
 	if fake.requestCount() != 0 {
 		t.Fatalf("LLM requests = %d, want 0", fake.requestCount())
-	}
-}
-
-// TestDoLLMStreamReturnsMalformedChunkError checks corrupt SSE payloads are not skipped silently.
-func TestDoLLMStreamReturnsMalformedChunkError(t *testing.T) {
-	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: "data: {bad json}\n\n",
-		stream:  true,
-		raw:     true,
-	})
-	cfg := loopTestConfig(fake.URL())
-
-	var output strings.Builder
-	result, err := doLLMStream(t.Context(), fake.HTTPClient(), cfg, chatCompletionRequest{Model: cfg.Model}, &output)
-	if err == nil {
-		t.Fatalf("doLLMStream() error = nil, want malformed chunk error")
-	}
-	if !strings.Contains(err.Error(), "invalid llm stream chunk") {
-		t.Fatalf("doLLMStream() error = %q, want invalid chunk message", err.Error())
-	}
-	if result != "" || output.String() != "" {
-		t.Fatalf("doLLMStream() result/output = %q/%q, want both empty", result, output.String())
-	}
-}
-
-// TestDoLLMStreamPropagatesContextCancellation checks streaming calls preserve cancellation identity.
-func TestDoLLMStreamPropagatesContextCancellation(t *testing.T) {
-	cfg := loopTestConfig("http://shellia.test")
-	client := &http.Client{Transport: contextErrorTransport{}}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-
-	var output strings.Builder
-	_, err := doLLMStream(ctx, client, cfg, chatCompletionRequest{Model: cfg.Model}, &output)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("doLLMStream() error = %v, want context.Canceled", err)
-	}
-	if output.String() != "" {
-		t.Fatalf("doLLMStream() output = %q, want empty output", output.String())
-	}
-}
-
-// TestDoLLMStreamReportsErrorBodyReadFailure checks failed stream diagnostics include body read errors.
-func TestDoLLMStreamReportsErrorBodyReadFailure(t *testing.T) {
-	cfg := loopTestConfig("http://shellia.test")
-	var output strings.Builder
-	client := &http.Client{Transport: errorBodyTransport{}}
-	_, err := doLLMStream(t.Context(), client, cfg, chatCompletionRequest{Model: cfg.Model}, &output)
-	if err == nil {
-		t.Fatalf("doLLMStream() error = nil, want HTTP error")
-	}
-
-	message := err.Error()
-	if !strings.Contains(message, "llm request failed with status 400") {
-		t.Fatalf("doLLMStream() error = %q, want status", message)
-	}
-	if !strings.Contains(message, "cannot read error response body") || !strings.Contains(message, "broken error body") {
-		t.Fatalf("doLLMStream() error = %q, want body read failure", message)
-	}
-	var statusErr *llmHTTPStatusError
-	if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusBadRequest {
-		t.Fatalf("doLLMStream() error = %T %[1]v, want llmHTTPStatusError status 400", err)
 	}
 }

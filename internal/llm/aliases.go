@@ -5,7 +5,6 @@ import (
 	"shellia/internal/core"
 	safetypkg "shellia/internal/safety"
 	sessionpkg "shellia/internal/session"
-	tracepkg "shellia/internal/trace"
 )
 
 type (
@@ -13,19 +12,25 @@ type (
 	contextInfo        = core.ContextInfo
 	historyEntry       = core.HistoryEntry
 	observationMemory  = core.ObservationMemory
+	pendingProposal    = core.PendingProposal
 	sessionState       = core.SessionState
 	commandExecution   = core.CommandExecution
+	workflowAttempt    = core.WorkflowAttempt
 	skippedCommand     = core.SkippedCommand
 	capturedStream     = core.CapturedStream
 	commandPlan        = core.CommandPlan
+	repeatReason       = core.RepeatReason
 	truncationStrategy = core.TruncationStrategy
-	traceLogger        = tracepkg.Logger
 )
 
 const (
-	truncationStart = core.TruncationStart
-	truncationEnd   = core.TruncationEnd
-	truncationMixed = core.TruncationMixed
+	repeatReasonUserRequested     = core.RepeatReasonUserRequested
+	repeatReasonRetry             = core.RepeatReasonRetry
+	repeatReasonVerifyAfterChange = core.RepeatReasonVerifyAfterChange
+	repeatReasonPollChangedState  = core.RepeatReasonPollChangedState
+	truncationStart               = core.TruncationStart
+	truncationEnd                 = core.TruncationEnd
+	truncationMixed               = core.TruncationMixed
 )
 
 const classificationSafe = safetypkg.ClassificationSafe

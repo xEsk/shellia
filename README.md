@@ -9,13 +9,13 @@ It is designed for people who want to ask for work in plain language, see exactl
 Shellia is a local CLI tool that:
 
 - understands the current terminal context
-- asks an OpenAI-compatible model to propose shell commands
+- asks an OpenAI-compatible model to decide whether to execute, complete, or report a blocker
 - classifies command risk locally
 - shows a plan before execution
 - asks for confirmation when needed
 - executes commands in the current working directory
 - keeps short-term session memory in interactive mode
-- can re-plan after inspection steps when later commands depend on earlier output
+- re-evaluates the objective after every command batch until it is complete or blocked
 
 ## What Shellia is not
 
@@ -51,6 +51,8 @@ The goal of Shellia is simple:
 - Per-command confirmation
 - Optional auto-run of locally safe commands with `--yes-safe`
 - Real-time command output
+- Intent-aware decisions for actions, local observations, capability questions, and explanations
+- Causal completion checks that prevent a requested change from finishing as a mere explanation
 - Iterative planning when a later step depends on data that still needs to be observed first
 - Failure-aware replanning: ordinary command failures become bounded observations, while dependent later steps are skipped
 - Session memory for follow-ups such as “do the Docker thing from before”
@@ -61,12 +63,17 @@ Shellia follows this general flow:
 
 1. Detect local context.
 2. Send your instruction plus that context to a configurable LLM endpoint.
-3. Receive a structured plan.
-4. Re-classify every command locally with Shellia's own safety rules.
-5. Show the plan.
-6. Ask for confirmation when required.
-7. Execute commands in the current working directory.
-8. If needed, inspect real command output, re-plan, and continue with a better-informed next step.
+3. Receive one structured decision: execute, complete, or blocked.
+4. Lock the objective as an action, observation, capability question, or explanation.
+5. For execution decisions, re-classify every command locally with Shellia's own safety rules.
+6. Show the plan and command purposes.
+7. Ask for confirmation when required.
+8. Execute commands in the current working directory.
+9. Feed bounded evidence back into the same workflow and continue until causal evidence supports completion or a real blocker is reached.
+
+Requests for a current local value, such as “how much disk space is free?”, are observations and use the terminal. Explicit capability questions, such as “can you check how much disk space is free?”, do not execute immediately: Shellia explains the approach and can offer a structured follow-up objective. An unequivocal “yes” starts that objective as a new workflow with the same visible plan and safety confirmations as any other task.
+
+`--plan` and `/plan` use the same planning contract but have no execution authority: they show the first useful plan and never invoke the executor.
 
 In interactive mode, Shellia also keeps lightweight session memory so later prompts can refer to previous work.
 
@@ -312,7 +319,6 @@ command_mode            = "plain"
 capture_stdout_bytes     = 131072
 capture_stderr_bytes     = 262144
 observation_output_chars = 1200
-summary_output_chars     = 4000
 
 [ui]
 verbose            = false
@@ -368,7 +374,7 @@ Compatibility fallback variables:
 - `show_command_popup`
   - shows the slash-command popup while typing `/` when set to `true`
 - `show_system_output`
-  - shows live `system output` blocks in the terminal when set to `true`; captured output is still kept for planning and summaries when set to `false`
+  - shows live `system output` blocks in the terminal when set to `true`; captured output is still kept as bounded workflow evidence when set to `false`
 - `no_color`
   - disables ANSI colours
 - `verbose`
@@ -376,7 +382,7 @@ Compatibility fallback variables:
 
 ### Output capture controls
 
-Shellia streams command output live to the terminal, but it also keeps a bounded in-memory capture so later planning and summarization do not send huge logs to the model.
+Shellia streams command output live to the terminal, but it also keeps a bounded in-memory capture so later workflow decisions do not send huge logs to the model.
 
 These settings control that behavior:
 
@@ -385,9 +391,7 @@ These settings control that behavior:
 - `capture_stderr_bytes`
   - how many bytes of `stderr` Shellia keeps per command
 - `observation_output_chars`
-  - how much captured output is sent back to the model during iterative planning
-- `summary_output_chars`
-  - how much captured output is sent to the model for the final answer
+  - the shared budget for captured output sent back to the workflow model
 
 If output is truncated, Shellia marks it explicitly instead of pretending it captured everything.
 
@@ -499,6 +503,7 @@ In interactive mode, Shellia keeps a lightweight memory of:
 - recently created files
 - recent runtime hints such as Docker or PHP context
 - the last referenced file
+- a pending executable objective offered after a capability question
 
 This helps with follow-up prompts such as:
 

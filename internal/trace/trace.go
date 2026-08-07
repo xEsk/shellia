@@ -200,7 +200,6 @@ func traceSessionStartData(cfg config, ctxInfo contextInfo) map[string]any {
 		"plan_only":                   cfg.PlanOnly,
 		"yes_safe":                    cfg.YesSafe,
 		"ask_confirm_plan":            cfg.AskConfirmPlan,
-		"ask_confirm_plan_only":       cfg.AskConfirmPlanOnly,
 		"planning_max_rounds":         cfg.PlanningMaxRounds,
 		"include_session_memory":      cfg.IncludeSessionMemory,
 		"include_recent_observations": cfg.IncludeRecentObservations,
@@ -223,6 +222,7 @@ func traceExecutionData(execution commandExecution) map[string]any {
 		"command":   execution.Command,
 		"purpose":   execution.Purpose,
 		"exit_code": execution.ExitCode,
+		"timed_out": execution.TimedOut,
 		"stdout":    traceStreamData(execution.Stdout),
 		"stderr":    traceStreamData(execution.Stderr),
 	}

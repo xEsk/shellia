@@ -19,3 +19,8 @@ func RememberUnfinishedInstruction(state *sessionState, instruction string) {
 func ResolveInstructionForPlanning(instruction string, state sessionState) string {
 	return resolveInstructionForPlanning(instruction, state)
 }
+
+// IsProposalDecline reports whether the instruction clearly refuses a pending offer.
+func IsProposalDecline(instruction string) bool {
+	return isProposalDecline(instruction)
+}

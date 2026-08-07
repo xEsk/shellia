@@ -64,8 +64,3 @@ func ExecuteCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 func ExecuteManualCommand(ctx context.Context, deps RuntimeDeps, ui bool, cfg config, ctxInfo *contextInfo, command string, renderMode ManualRenderMode) (commandExecution, error) {
 	return executeManualCommand(ctx, deps, ui, cfg, ctxInfo, command, renderMode)
 }
-
-// StaticFallbackAnswer returns a deterministic answer when LLM summary streaming fails.
-func StaticFallbackAnswer(fallbackSummary string, executions []commandExecution, skipped []skippedCommand) string {
-	return staticFallbackAnswer(fallbackSummary, executions, skipped)
-}

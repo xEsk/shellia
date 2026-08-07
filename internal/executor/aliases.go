@@ -15,6 +15,7 @@ type (
 	commandExecution   = core.CommandExecution
 	commandBatchResult = core.CommandBatchResult
 	skippedCommand     = core.SkippedCommand
+	repeatReason       = core.RepeatReason
 	capturedStream     = core.CapturedStream
 	stepBox            = uipkg.StepBox
 	confirmDecision    = uipkg.ConfirmDecision
@@ -30,8 +31,10 @@ const (
 	confirmDecisionRun         = uipkg.ConfirmDecisionRun
 	confirmDecisionEdit        = uipkg.ConfirmDecisionEdit
 	confirmDecisionInteractive = uipkg.ConfirmDecisionInteractive
+	localClassificationSafe    = safetypkg.ClassificationSafe
 
-	skippedDuplicateSuccessReason = core.SkippedDuplicateSuccessReason
+	repeatReasonUserRequested = core.RepeatReasonUserRequested
+	repeatReasonRequired      = core.RepeatReasonRequired
 )
 
 var (
@@ -48,5 +51,7 @@ var (
 	newStepBox                     = uipkg.NewStepBox
 	styleStart                     = uipkg.StyleStart
 	styleEnd                       = uipkg.StyleEnd
+	classifyCommand                = safetypkg.ClassifyCommand
+	higherRisk                     = safetypkg.HigherRisk
 	hasShellOperators              = safetypkg.HasShellOperators
 )

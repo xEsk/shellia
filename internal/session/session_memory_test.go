@@ -103,6 +103,19 @@ func TestNormalizeForMemory(t *testing.T) {
 	}
 }
 
+func TestIsProposalDecline(t *testing.T) {
+	for _, instruction := range []string{"no", "no gràcies", "ara no", "cancel·la"} {
+		if !isProposalDecline(instruction) {
+			t.Errorf("isProposalDecline(%q) = false, want true", instruction)
+		}
+	}
+	for _, instruction := range []string{"no sé", "no funciona", "fes una altra cosa"} {
+		if isProposalDecline(instruction) {
+			t.Errorf("isProposalDecline(%q) = true, want false", instruction)
+		}
+	}
+}
+
 func TestShouldPromotePendingIntent(t *testing.T) {
 	t.Run("empty instruction returns false", func(t *testing.T) {
 		if shouldPromotePendingIntent("", turnResult{}) {
@@ -120,51 +133,6 @@ func TestShouldPromotePendingIntent(t *testing.T) {
 		turn := turnResult{Plans: []commandPlan{{Command: "make build"}}}
 		if !shouldPromotePendingIntent("zeige den status", turn) {
 			t.Error("expected true for non-empty instruction in any language")
-		}
-	})
-}
-
-func TestLooksLikeShellCommand(t *testing.T) {
-	shell := []string{"git status", "ls -la", "docker ps", "go build ./...", "brew install jq"}
-	for _, s := range shell {
-		if !looksLikeShellCommand(s) {
-			t.Errorf("expected looksLikeShellCommand(%q) = true", s)
-		}
-	}
-
-	not := []string{"", "some text", "unknown_cmd arg", "multi\nline"}
-	for _, s := range not {
-		if looksLikeShellCommand(s) {
-			t.Errorf("expected looksLikeShellCommand(%q) = false", s)
-		}
-	}
-}
-
-func TestDetectSuggestedCommand(t *testing.T) {
-	t.Run("extracts backtick shell command from result", func(t *testing.T) {
-		turn := turnResult{Result: "You can run `git status` to check."}
-		if got := detectSuggestedCommand(turn); got != "git status" {
-			t.Errorf("got %q", got)
-		}
-	})
-
-	t.Run("extracts from summary if not in result", func(t *testing.T) {
-		turn := turnResult{Summary: "Try `docker ps` to list containers."}
-		if got := detectSuggestedCommand(turn); got != "docker ps" {
-			t.Errorf("got %q", got)
-		}
-	})
-
-	t.Run("ignores non-shell backtick content", func(t *testing.T) {
-		turn := turnResult{Result: "The variable `foo` is undefined."}
-		if got := detectSuggestedCommand(turn); got != "" {
-			t.Errorf("expected empty, got %q", got)
-		}
-	})
-
-	t.Run("empty turn returns empty", func(t *testing.T) {
-		if got := detectSuggestedCommand(turnResult{}); got != "" {
-			t.Errorf("expected empty, got %q", got)
 		}
 	})
 }
@@ -301,11 +269,18 @@ func TestResolveInstructionForPlanning(t *testing.T) {
 		}
 	})
 
-	t.Run("does not expand affirmative follow-up locally", func(t *testing.T) {
-		state := sessionState{LastSuggestedCommand: "git push origin main"}
-		got := resolveInstructionForPlanning("mach es", state)
-		if got != "mach es" {
-			t.Errorf("got %q", got)
+	t.Run("accepts pending structured proposal", func(t *testing.T) {
+		state := sessionState{PendingProposal: pendingProposal{Objective: "consulta l'espai disponible al disc", Summary: "Consultar disc"}}
+		got := resolveInstructionForPlanning("sí", state)
+		if got != "consulta l'espai disponible al disc" {
+			t.Errorf("got %q, want pending proposal objective", got)
+		}
+	})
+
+	t.Run("does not invent action without pending proposal", func(t *testing.T) {
+		got := resolveInstructionForPlanning("sí", sessionState{})
+		if got != "sí" {
+			t.Errorf("got %q, want original instruction", got)
 		}
 	})
 
@@ -325,6 +300,74 @@ func TestResolveInstructionForPlanning(t *testing.T) {
 	})
 }
 
+// TestUpdateSessionStateStoresStructuredProposal checks capability offers
+// survive completed answers without relying on Markdown command extraction.
+func TestUpdateSessionStateStoresStructuredProposal(t *testing.T) {
+	state := &sessionState{}
+	updateSessionState(state, "pots mirar el disc?", turnResult{
+		Outcome:  turnOutcomeCompleted,
+		Proposal: pendingProposal{Objective: "consulta l'espai disponible al disc", Summary: "Consultar disc"},
+	}, config{})
+
+	if state.PendingProposal.Objective != "consulta l'espai disponible al disc" {
+		t.Fatalf("PendingProposal = %#v, want structured offer", state.PendingProposal)
+	}
+}
+
+func TestUpdateSessionStateReplacesPendingProposalOnNewCompletedInstruction(t *testing.T) {
+	state := &sessionState{PendingProposal: pendingProposal{Objective: "consulta el disc", Summary: "Consultar disc"}}
+	updateSessionState(state, "explica'm què és un inode", turnResult{Outcome: turnOutcomeCompleted}, config{})
+
+	if state.PendingProposal != (pendingProposal{}) {
+		t.Fatalf("PendingProposal = %#v, want cleared by new completed instruction", state.PendingProposal)
+	}
+}
+
+func TestUpdateSessionStateRejectsProposalFromNonCompletedOutcome(t *testing.T) {
+	state := &sessionState{PendingProposal: pendingProposal{Objective: "old objective", Summary: "Old offer"}}
+	updateSessionState(state, "invalid capability turn", turnResult{
+		Outcome:  turnOutcomeStructuralError,
+		Proposal: pendingProposal{Objective: "hidden objective", Summary: "Hidden offer"},
+	}, config{})
+
+	if state.PendingProposal != (pendingProposal{}) {
+		t.Fatalf("PendingProposal = %#v, want no offer from non-completed outcome", state.PendingProposal)
+	}
+}
+
+func TestManualExecutionInvalidatesRetryObservationBinding(t *testing.T) {
+	state := &sessionState{
+		LastRetryInstruction:     "consulta el disc",
+		LastObservationObjective: "consulta el disc",
+		LastObservations:         []observationMemory{{Command: "df -h /", Purpose: "Inspect disk", Transcript: "20 GB"}},
+	}
+	updateSessionStateFromExecution(state, "pwd", commandExecution{
+		Command: "pwd",
+		Purpose: "Inspect directory",
+		Stdout:  capturedStream{Text: "/tmp"},
+	}, config{MemoryObservationChars: 200, MaxObservationEntries: 4})
+
+	if state.LastObservationObjective != "" {
+		t.Fatalf("LastObservationObjective = %q, want manual evidence detached from retry objective", state.LastObservationObjective)
+	}
+}
+
+func TestOutputlessExecutionInvalidatesRetryObservationBinding(t *testing.T) {
+	state := &sessionState{
+		LastRetryInstruction:     "consulta el disc",
+		LastObservationObjective: "consulta el disc",
+		LastObservations:         []observationMemory{{Command: "df -h /", Purpose: "Inspect disk", Transcript: "20 GB"}},
+	}
+	updateSessionState(state, "mutate state", turnResult{
+		Outcome:    turnOutcomeBlocked,
+		Executions: []commandExecution{{Command: "touch marker", Purpose: "Mutate state", ExitCode: 0}},
+	}, config{MemoryObservationChars: 200, MaxObservationEntries: 4})
+
+	if state.LastObservationObjective != "" {
+		t.Fatalf("LastObservationObjective = %q, want outputless execution to invalidate old evidence", state.LastObservationObjective)
+	}
+}
+
 func TestUpdateSessionState(t *testing.T) {
 	t.Run("nil state is a no-op", func(t *testing.T) {
 		updateSessionState(nil, "anything", turnResult{}, config{})
@@ -332,17 +375,9 @@ func TestUpdateSessionState(t *testing.T) {
 
 	t.Run("sets pending intent", func(t *testing.T) {
 		state := &sessionState{}
-		updateSessionState(state, "deploy to prod", turnResult{Actionable: true}, config{})
+		updateSessionState(state, "deploy to prod", turnResult{Outcome: turnOutcomeBlocked, BlockerKind: "missing_input", BlockerReason: "Need target"}, config{})
 		if state.PendingIntent != "deploy to prod" {
 			t.Errorf("got %q", state.PendingIntent)
-		}
-	})
-
-	t.Run("clears suggested command on actionable turn", func(t *testing.T) {
-		state := &sessionState{LastSuggestedCommand: "git status"}
-		updateSessionState(state, "run build", turnResult{Actionable: true}, config{})
-		if state.LastSuggestedCommand != "" {
-			t.Errorf("expected cleared command, got %q", state.LastSuggestedCommand)
 		}
 	})
 
@@ -353,4 +388,40 @@ func TestUpdateSessionState(t *testing.T) {
 			t.Error("expected LastReferencedFile to be set")
 		}
 	})
+}
+
+// TestUpdateSessionStateCarriesMissingInputUntilCompletion checks follow-ups retain and resolve a blocker explicitly.
+func TestUpdateSessionStateCarriesMissingInputUntilCompletion(t *testing.T) {
+	state := &sessionState{LastObservations: []observationMemory{{Command: "df -h", Purpose: "Inspect disk", Transcript: "20 GB free"}}}
+	updateSessionState(state, "restart it", turnResult{
+		Outcome:       turnOutcomeBlocked,
+		BlockerKind:   "missing_input",
+		BlockerReason: "Specify the service name.",
+	}, config{})
+
+	if state.PendingIntent != "restart it" || state.LastBlockerKind != "missing_input" || state.LastBlockerReason != "Specify the service name." {
+		t.Fatalf("blocked state = %#v", state)
+	}
+	if len(state.LastObservations) != 1 || state.LastObservations[0].Command != "df -h" {
+		t.Fatalf("blocked state lost prior evidence = %#v", state.LastObservations)
+	}
+
+	updateSessionState(state, "restart nginx", turnResult{Outcome: turnOutcomeTimeout}, config{})
+	if state.LastBlockerKind != "missing_input" || state.LastBlockerReason != "Specify the service name." {
+		t.Fatalf("non-complete follow-up lost blocker = %#v", state)
+	}
+
+	updateSessionState(state, "restart nginx", turnResult{Outcome: turnOutcomeCompleted, Result: "nginx restarted"}, config{})
+	if state.PendingIntent != "" || state.LastBlockerKind != "" || state.LastBlockerReason != "" {
+		t.Fatalf("completed state retained blocker = %#v", state)
+	}
+}
+
+// TestUpdateSessionStateKeepsNonSuccessfulOutcomePending checks deterministic stops are not projected as success.
+func TestUpdateSessionStateKeepsNonSuccessfulOutcomePending(t *testing.T) {
+	state := &sessionState{}
+	updateSessionState(state, "restart nginx", turnResult{Outcome: turnOutcomeTimeout}, config{})
+	if state.PendingIntent != "restart nginx" {
+		t.Fatalf("PendingIntent = %q, want unfinished timeout instruction", state.PendingIntent)
+	}
 }

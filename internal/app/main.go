@@ -29,29 +29,35 @@ var version = "dev"
 
 var errHelp = errors.New("help requested")
 
+var errStructuralResponse = errors.New("invalid structured model response")
+
 // planningRoundRequest groups one model planning attempt and its rendering dependencies.
 type planningRoundRequest struct {
-	Deps   runtimeDeps
-	UI     bool
-	TurnID string
-	Round  int
-	Prompt llmPromptRequest
+	Deps                  runtimeDeps
+	UI                    bool
+	TurnID                string
+	Round                 int
+	Prompt                llmPromptRequest
+	AllowStructuralRepair bool
 }
 
 // planningRoundResult is the normalized output of one planning attempt.
 type planningRoundResult struct {
-	Parsed  llmResponse
-	Summary string
-	Plans   []commandPlan
+	Parsed               llmResponse
+	Summary              string
+	Plans                []commandPlan
+	StructuralRepairUsed bool
 }
 
 // turnRequest groups the context needed to process one user instruction.
 type turnRequest struct {
-	Config      config
-	ContextInfo *contextInfo
-	Instruction string
-	History     []historyEntry
-	State       sessionState
+	Config              config
+	ContextInfo         *contextInfo
+	Instruction         string
+	ResolvedInstruction string
+	AcceptedProposal    bool
+	History             []historyEntry
+	State               sessionState
 }
 
 // SetVersion records the binary version for UI and trace metadata.
@@ -133,7 +139,7 @@ func runApp(parentCtx context.Context, args []string, deps runtimeDeps) int {
 		return 0
 	}
 
-	_, err = runTurn(appCtx, deps, ui, turnRequest{
+	turn, err := runTurn(appCtx, deps, ui, turnRequest{
 		Config:      cfg,
 		ContextInfo: &ctxInfo,
 		Instruction: cfg.Instruction,
@@ -157,7 +163,16 @@ func runApp(parentCtx context.Context, args []string, deps runtimeDeps) int {
 			return 1
 		}
 	}
-	return 0
+	return oneShotExitCode(turn.Outcome)
+}
+
+func oneShotExitCode(outcome turnOutcome) int {
+	switch outcome {
+	case turnOutcomeCompleted, turnOutcomePlanned, turnOutcomeDeclined:
+		return 0
+	default:
+		return 1
+	}
 }
 
 // parseArgs processes CLI config and validates the minimum required values.
@@ -242,7 +257,6 @@ func buildFlagSet(cfg *config) (*flag.FlagSet, *int, *int) {
 	fs.BoolVar(&cfg.YesSafe, "yes-safe", cfg.YesSafe, "auto-execute safe commands without confirmation")
 	fs.BoolVar(&cfg.ContinueOnError, "continue-on-error", cfg.ContinueOnError, "continue if a command fails")
 	fs.BoolVar(&cfg.AskConfirmPlan, "ask-confirm-plan", cfg.AskConfirmPlan, "ask for confirmation before executing the plan")
-	fs.BoolVar(&cfg.AskConfirmPlanOnly, "ask-confirm-plan-only", cfg.AskConfirmPlanOnly, "ask for confirmation after showing the plan in plan-only mode")
 	fs.BoolVar(&cfg.Interactive, "interactive", false, "start or maintain an interactive session")
 	fs.BoolVar(&cfg.Interactive, "i", false, "short alias for --interactive")
 	fs.BoolVar(&cfg.PlanOnly, "plan", cfg.PlanOnly, "show the command plan without executing it")
@@ -299,7 +313,7 @@ func finalizeConfig(fs *flag.FlagSet, cfg config, timeoutSecs, reqTimeoutSecs in
 	if cfg.CaptureStdoutBytes > maxCaptureBytes || cfg.CaptureStderrBytes > maxCaptureBytes {
 		return config{}, fmt.Errorf("capture byte limits cannot exceed %d bytes", maxCaptureBytes)
 	}
-	if cfg.ObservationOutputChars > maxOutputChars || cfg.SummaryOutputChars > maxOutputChars {
+	if cfg.ObservationOutputChars > maxOutputChars {
 		return config{}, fmt.Errorf("output char limits cannot exceed %d", maxOutputChars)
 	}
 	if cfg.PlanningMaxRounds <= 0 {
@@ -510,7 +524,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			State:       state,
 		})
 		stop()
-		if err != nil && turn.Actionable {
+		if err != nil && len(turn.Executions) > 0 {
 			updateSessionState(&state, cfg.Instruction, turn, cfg)
 		}
 		if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {
@@ -523,7 +537,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 		} else {
 			history = append(history, historyEntry{Instruction: cfg.Instruction, Result: turn.Result})
 			updateSessionState(&state, cfg.Instruction, turn, cfg)
-			if turn.Actionable {
+			if turn.Outcome == turnOutcomeCompleted {
 				state.LastRetryInstruction = ""
 			}
 		}
@@ -564,7 +578,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 				State:       state,
 			})
 			stop()
-			if err != nil && turn.Actionable {
+			if err != nil && len(turn.Executions) > 0 {
 				updateSessionState(&state, plannedInstruction, turn, cfg)
 			}
 
@@ -653,6 +667,16 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			continue
 		}
 
+		if !forcePromptMode && mode == interactiveModeAI && strings.TrimSpace(state.PendingProposal.Objective) != "" && isProposalDecline(trimmed) {
+			declined := state.PendingProposal
+			state.PendingProposal = pendingProposal{}
+			deps.Trace.Record("pending_proposal_declined", "", "session", -1, map[string]any{
+				"objective": declined.Objective,
+			})
+			printInfoTo(deps.Stdout, ui, "D’acord. No ho executaré.")
+			continue
+		}
+
 		if !forcePromptMode && (mode == interactiveModeShell || strings.HasPrefix(trimmed, "!")) {
 			command := trimmed
 			renderMode := renderModeForShellSession(cfg)
@@ -666,6 +690,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			}
 
 			turnCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
+			state.LastObservationObjective = ""
 			execution, err := deps.ExecuteManualCommand(turnCtx, deps, ui, cfg, ctxInfo, command, renderMode)
 			stop()
 
@@ -683,24 +708,37 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 		}
 
 		instruction := input
+		priorProposal := state.PendingProposal
+		resolvedInstruction := resolveInstructionForPlanning(instruction, state)
+		acceptedProposal := resolvedInstruction != strings.TrimSpace(instruction) && strings.TrimSpace(state.PendingProposal.Objective) != ""
+		retryInstruction := instruction
+		if acceptedProposal {
+			retryInstruction = resolvedInstruction
+			state.PendingProposal = pendingProposal{}
+		}
 
 		// Per-turn signal context: Ctrl+C cancels only this turn, not the whole session.
 		turnCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 		turn, err := runTurn(turnCtx, deps, ui, turnRequest{
-			Config:      cfg,
-			ContextInfo: ctxInfo,
-			Instruction: instruction,
-			History:     history,
-			State:       state,
+			Config:              cfg,
+			ContextInfo:         ctxInfo,
+			Instruction:         instruction,
+			ResolvedInstruction: resolvedInstruction,
+			AcceptedProposal:    acceptedProposal,
+			History:             history,
+			State:               state,
 		})
 		stop()
-		if err != nil && turn.Actionable {
-			updateSessionState(&state, instruction, turn, cfg)
+		if !acceptedProposal && strings.TrimSpace(priorProposal.Objective) != "" {
+			state.PendingProposal = pendingProposal{}
+		}
+		if err != nil && len(turn.Executions) > 0 {
+			updateSessionState(&state, retryInstruction, turn, cfg)
 		}
 
 		if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {
-			state.LastRetryInstruction = instruction
-			rememberUnfinishedInstruction(&state, instruction)
+			state.LastRetryInstruction = retryInstruction
+			rememberUnfinishedInstruction(&state, retryInstruction)
 			printWarningTo(deps.Stderr, ui, "Request cancelled.")
 			fmt.Fprintln(deps.Stdout)
 			printSeparator(deps.Stdout, ui)
@@ -708,13 +746,23 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 		}
 		if err != nil {
 			printWarningTo(deps.Stderr, ui, err.Error())
-			state.LastRetryInstruction = instruction
-			rememberUnfinishedInstruction(&state, instruction)
+			state.LastRetryInstruction = retryInstruction
+			rememberUnfinishedInstruction(&state, retryInstruction)
 			continue
 		}
+		if !acceptedProposal && strings.TrimSpace(priorProposal.Objective) != "" && turn.Outcome == turnOutcomeCompleted && strings.TrimSpace(turn.Proposal.Objective) != strings.TrimSpace(priorProposal.Objective) {
+			deps.Trace.Record("pending_proposal_replaced", "", "session", -1, map[string]any{
+				"previous_objective":    priorProposal.Objective,
+				"replacement_objective": turn.Proposal.Objective,
+			})
+		}
 		history = append(history, historyEntry{Instruction: instruction, Result: turn.Result})
-		updateSessionState(&state, instruction, turn, cfg)
-		if turn.Actionable {
+		updateSessionState(&state, retryInstruction, turn, cfg)
+		if acceptedProposal && turn.Outcome != turnOutcomeCompleted && turn.Outcome != turnOutcomeDeclined {
+			state.LastRetryInstruction = retryInstruction
+			rememberUnfinishedInstruction(&state, retryInstruction)
+		}
+		if turn.Outcome == turnOutcomeCompleted {
 			state.LastRetryInstruction = ""
 		}
 		if len(history) > maxHistoryEntries {
@@ -796,17 +844,50 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 	instruction := request.Instruction
 	history := request.History
 	state := request.State
+	objective := strings.TrimSpace(request.ResolvedInstruction)
+	if objective == "" {
+		objective = instruction
+	}
+	workflow := newWorkflowState(objective, cfg.PlanOnly, cfg.PlanningMaxRounds)
+	workflow.priorEvidenceAvailable = len(state.LastObservations) > 0 &&
+		strings.EqualFold(strings.TrimSpace(state.LastRetryInstruction), strings.TrimSpace(objective)) &&
+		strings.EqualFold(strings.TrimSpace(state.LastObservationObjective), strings.TrimSpace(objective))
 	turnID := deps.Trace.StartTurn(map[string]any{
-		"instruction":   instruction,
-		"cwd":           ctxInfo.CWD,
-		"history_count": len(history),
-		"state":         state,
+		"instruction":        instruction,
+		"resolved_objective": objective,
+		"execution_allowed":  workflow.canExecute(),
+		"cwd":                ctxInfo.CWD,
+		"history_count":      len(history),
+		"state":              state,
 	})
 	ctx = withTraceTurnID(ctx, turnID)
+	if request.AcceptedProposal {
+		deps.Trace.Record("pending_proposal_accepted", turnID, "session", -1, map[string]any{
+			"objective": objective,
+		})
+	}
 	defer func() {
+		if err != nil && result.Outcome == "" {
+			switch {
+			case errors.Is(err, context.Canceled):
+				result.Outcome = turnOutcomeCancelled
+				result.BlockerKind = "cancelled"
+				result.BlockerReason = "The turn was cancelled."
+			case errors.Is(err, context.DeadlineExceeded):
+				result.Outcome = turnOutcomeTimeout
+				result.BlockerKind = "timeout"
+				result.BlockerReason = "The turn timed out."
+			default:
+				result.Outcome = turnOutcomeStructuralError
+				result.BlockerKind = "structural_error"
+				result.BlockerReason = err.Error()
+			}
+		}
 		data := map[string]any{
 			"result":           result.Result,
-			"actionable":       result.Actionable,
+			"outcome":          result.Outcome,
+			"blocker_kind":     result.BlockerKind,
+			"blocker_reason":   result.BlockerReason,
 			"plans_count":      len(result.Plans),
 			"executions_count": len(result.Executions),
 			"skipped_count":    len(result.Skipped),
@@ -822,96 +903,203 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 	}
 
 	printHeaderTo(deps.Stdout, ui, cfg, *ctxInfo)
-	allExecutions := make([]commandExecution, 0, 4)
-	allSkipped := make([]skippedCommand, 0, 4)
-	lastSummary := ""
-	lastPlans := []commandPlan(nil)
-	planningRoundLimit := cfg.PlanningMaxRounds
 	partialResult := func() turnResult {
-		return turnResult{
-			Result:     strings.TrimSpace(lastSummary),
-			Summary:    lastSummary,
-			Actionable: len(allExecutions) > 0,
-			Plans:      lastPlans,
-			Executions: allExecutions,
-			Skipped:    allSkipped,
-		}
+		return workflow.result("", "", "")
 	}
 
-	for round := 0; ; round++ {
+	for workflow.round = 0; ; workflow.round++ {
+		round := workflow.round
+		var previousDecision *llmResponse
+		if workflow.lastDecision.Action != "" {
+			previousDecision = &workflow.lastDecision
+		}
 		promptRequest := llmPromptRequest{
-			Config:       cfg,
-			ContextInfo:  *ctxInfo,
-			Instruction:  instruction,
-			History:      history,
-			State:        state,
-			Observations: allExecutions,
-			Skipped:      allSkipped,
+			Config:                    cfg,
+			ContextInfo:               *ctxInfo,
+			Instruction:               workflow.objective,
+			History:                   history,
+			State:                     state,
+			Observations:              workflow.executions,
+			Skipped:                   workflow.skipped,
+			LatestBatchExecutionStart: workflow.latestBatchExecutionStart,
+			LatestBatchSkippedStart:   workflow.latestBatchSkippedStart,
+			EvidenceRevision:          workflow.evidenceRevision,
+			PlanningRoundsRemaining:   workflow.planningBudget - round,
+			ObjectiveMode:             workflow.objectiveMode,
+			SuccessCriteria:           workflow.successCriteria,
+			DecisionError:             workflow.decisionError,
+			PriorEvidenceAvailable:    workflow.priorEvidenceAvailable,
+			PreviousDecision:          previousDecision,
+			Attempts:                  workflow.attempts,
 		}
 		roundResult, err := runPlanningRound(ctx, planningRoundRequest{
-			Deps:   deps,
-			UI:     ui,
-			TurnID: turnID,
-			Round:  round,
-			Prompt: promptRequest,
+			Deps:                  deps,
+			UI:                    ui,
+			TurnID:                turnID,
+			Round:                 round,
+			Prompt:                promptRequest,
+			AllowStructuralRepair: !workflow.structuralRepairUsed,
 		})
 		if err != nil {
-			return partialResult(), err
+			failed := partialResult()
+			switch {
+			case errors.Is(err, context.Canceled):
+				failed.Outcome = turnOutcomeCancelled
+				failed.BlockerKind = "cancelled"
+				failed.BlockerReason = "The planning request was cancelled."
+			case errors.Is(err, context.DeadlineExceeded):
+				failed.Outcome = turnOutcomeTimeout
+				failed.BlockerKind = "timeout"
+				failed.BlockerReason = "The planning request timed out."
+			case errors.Is(err, errStructuralResponse):
+				failed.Outcome = turnOutcomeStructuralError
+				failed.BlockerKind = "structural_error"
+				failed.BlockerReason = err.Error()
+			default:
+				failed.Outcome = turnOutcomeBlocked
+				failed.BlockerKind = "unavailable"
+				failed.BlockerReason = err.Error()
+			}
+			return failed, err
+		}
+		if roundResult.StructuralRepairUsed {
+			workflow.structuralRepairUsed = true
 		}
 		parsed := roundResult.Parsed
 		summary := roundResult.Summary
 		plans := roundResult.Plans
 
-		lastSummary = summary
-		lastPlans = plans
-
-		if len(plans) == 0 {
-			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
-				"decision": "final_answer_without_commands",
+		if decisionErr := workflow.validateDecision(parsed); decisionErr != nil {
+			workflow.recordDecision(parsed, summary, plans)
+			workflow.decisionError = decisionErr.Error()
+			deps.Trace.Record("completion_validation", turnID, "planning", round, map[string]any{
+				"objective_mode":   parsed.ObjectiveMode,
+				"success_criteria": parsed.SuccessCriteria,
+				"basis_type":       parsed.CompletionBasis.Type,
+				"admitted":         false,
+				"reason":           decisionErr.Error(),
 			})
-			printFinalResultTo(deps.Stdout, ui, summary)
-			if cfg.PlanOnly {
-				printPlanOnlyGuidanceTo(deps.Stdout, ui, parsed, cfg.AskConfirmPlanOnly)
+			if workflow.semanticRepairUsed {
+				failed := workflow.result(turnOutcomeStructuralError, "structural_error", decisionErr.Error())
+				validationFailure := "Shellia could not validate the model's final response. The observed command output remains available above; retry the request if needed."
+				if len(workflow.executions) == 0 {
+					validationFailure = "Shellia could not validate the model's final response. No commands were executed; retry the request if needed."
+				}
+				failed.Result = validationFailure
+				printFinalResultTo(deps.Stdout, ui, validationFailure)
+				return failed, nil
 			}
-			return turnResult{
-				Result:     summary,
-				Summary:    summary,
-				Actionable: len(allExecutions) > 0,
-				Plans:      plans,
-				Executions: allExecutions,
-				Skipped:    allSkipped,
-			}, nil
+			workflow.semanticRepairUsed = true
+			continue
 		}
-
-		plans, redundantPlans := filterPreviouslySuccessfulPlans(plans, allExecutions)
-		lastPlans = plans
-		for _, plan := range redundantPlans {
-			skipped := skippedCommand{Command: plan.Command, Purpose: plan.Purpose, Reason: skippedDuplicateSuccessReason}
-			allSkipped = append(allSkipped, skipped)
-			deps.Trace.Record("command_skipped", turnID, "planning", round, map[string]any{
-				"command": skipped.Command,
-				"purpose": skipped.Purpose,
-				"reason":  skipped.Reason,
+		workflow.decisionError = ""
+		workflow.recordDecision(parsed, summary, plans)
+		workflow.proposal = pendingProposal{Objective: strings.TrimSpace(parsed.Offer.Objective), Summary: strings.TrimSpace(parsed.Offer.Summary)}
+		if workflow.contractLocked {
+			deps.Trace.Record("objective_contract", turnID, "planning", round, map[string]any{
+				"objective_mode":   workflow.objectiveMode,
+				"success_criteria": workflow.successCriteria,
 			})
 		}
-		if len(plans) == 0 && len(redundantPlans) > 0 {
+
+		switch parsed.Action {
+		case "complete":
+			deps.Trace.Record("completion_validation", turnID, "planning", round, map[string]any{
+				"objective_mode":    parsed.ObjectiveMode,
+				"success_criteria":  parsed.SuccessCriteria,
+				"basis_type":        parsed.CompletionBasis.Type,
+				"evidence_revision": parsed.CompletionBasis.EvidenceRevision,
+				"attempt_ids":       parsed.CompletionBasis.AttemptIDs,
+				"admitted":          true,
+			})
 			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
-				"decision": "skip_redundant_successes",
+				"decision":         "complete",
+				"completion_basis": parsed.CompletionBasis.Type,
 			})
-			break
-		}
-
-		printPlanTo(deps.Stdout, ui, cfg, summary, plans, parsed.RequiresObservation)
-		if cfg.PlanOnly {
-			printPlanOnlyGuidanceTo(deps.Stdout, ui, parsed, cfg.AskConfirmPlanOnly)
-		}
-
-		skipConfirm := (cfg.PlanOnly && !cfg.AskConfirmPlanOnly) || (!cfg.PlanOnly && !cfg.AskConfirmPlan)
-		if skipConfirm {
-			if cfg.PlanOnly {
-				return turnResult{Result: planOnlyResult(summary, parsed), Summary: summary, Actionable: len(plans) > 0, Plans: plans}, nil
+			answer := summary
+			if parsed.ObjectiveMode == "capability" && strings.TrimSpace(parsed.Offer.Objective) != "" {
+				deps.Trace.Record("pending_proposal_created", turnID, "session", -1, map[string]any{
+					"objective": parsed.Offer.Objective,
+					"summary":   parsed.Offer.Summary,
+				})
+				answer = strings.TrimSpace(answer) + "\n\nVols que ho executi?"
 			}
-		} else {
+			printFinalResultTo(deps.Stdout, ui, answer)
+			completed := workflow.result(turnOutcomeCompleted, "", "")
+			completed.Result = answer
+			return completed, nil
+		case "blocked":
+			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
+				"decision":       "blocked",
+				"blocker_kind":   parsed.BlockerKind,
+				"blocker_reason": parsed.BlockerReason,
+			})
+			answer := strings.TrimSpace(summary)
+			if answer == "" {
+				answer = parsed.BlockerReason
+			} else if reason := strings.TrimSpace(parsed.BlockerReason); reason != "" && reason != answer {
+				answer += "\n" + reason
+			}
+			printFinalResultTo(deps.Stdout, ui, answer)
+			blocked := workflow.result(turnOutcomeBlocked, parsed.BlockerKind, parsed.BlockerReason)
+			blocked.Result = answer
+			return blocked, nil
+		}
+
+		workflow.beginDecisionBatch()
+		plans, rejectedPlans := workflow.admitPlans(plans)
+		workflow.lastPlans = append(workflow.lastPlans[:0], plans...)
+		conflictAttemptStart := len(workflow.attempts)
+		workflow.recordRepetitionConflicts(rejectedPlans)
+		traceWorkflowAttempts(deps, turnID, round, workflow.attempts[conflictAttemptStart:])
+		for _, plan := range rejectedPlans {
+			deps.Trace.Record("repeat_admission", turnID, "planning", round, map[string]any{
+				"command":           plan.Command,
+				"purpose":           plan.Purpose,
+				"repeat_reason":     plan.RepeatReason,
+				"admitted":          false,
+				"evidence_revision": workflow.evidenceRevision,
+			})
+		}
+		for _, plan := range plans {
+			if plan.RepeatReason == "" {
+				continue
+			}
+			deps.Trace.Record("repeat_admission", turnID, "planning", round, map[string]any{
+				"command":           plan.Command,
+				"purpose":           plan.Purpose,
+				"repeat_reason":     plan.RepeatReason,
+				"admitted":          true,
+				"evidence_revision": workflow.evidenceRevision,
+			})
+		}
+		if len(plans) == 0 && len(rejectedPlans) > 0 {
+			workflow.stallCount++
+			if workflow.stallCount == 1 {
+				deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
+					"decision": "repair_repetition_conflict",
+				})
+				continue
+			}
+			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
+				"decision": "no_progress",
+			})
+			const noProgressReason = "Shellia could not make progress because the same successful command was proposed again without an explicit repeat reason."
+			printFinalResultTo(deps.Stdout, ui, noProgressReason)
+			stalled := workflow.result(turnOutcomeNoProgress, "no_progress", noProgressReason)
+			stalled.Result = noProgressReason
+			return stalled, nil
+		}
+
+		printPlanTo(deps.Stdout, ui, cfg, summary, plans, false)
+		if !workflow.canExecute() {
+			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
+				"decision": "planned_without_execution",
+			})
+			return workflow.result(turnOutcomePlanned, "", ""), nil
+		}
+
+		if cfg.AskConfirmPlan {
 			executePlan, err := promptPlanExecution(deps.Stdout, ui, deps.Stdin)
 			if err != nil {
 				return partialResult(), fmt.Errorf("cannot read plan confirmation: %w", err)
@@ -920,36 +1108,35 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 				"accepted": executePlan,
 			})
 			if !executePlan {
-				if cfg.PlanOnly {
-					return turnResult{Result: planOnlyResult(summary, parsed), Summary: summary, Actionable: len(plans) > 0, Plans: plans}, nil
-				}
 				printInfoTo(deps.Stdout, ui, "Plan not executed.")
-				return turnResult{
-					Result:     summary,
-					Summary:    summary,
-					Actionable: len(allExecutions) > 0,
-					Plans:      plans,
-					Executions: allExecutions,
-					Skipped:    allSkipped,
-				}, nil
+				return workflow.result(turnOutcomeDeclined, "declined", "The user declined the plan."), nil
 			}
 		}
 
-		if cfg.PlanOnly {
-			cfg.PlanOnly = false
+		attemptStart := len(workflow.attempts)
+		evidenceBefore := workflow.evidenceRevision
+		batch, err := deps.ExecuteCommands(ctx, deps, ui, cfg, ctxInfo, plans, workflow.executions)
+		workflow.recordBatch(plans, batch)
+		traceWorkflowAttempts(deps, turnID, round, workflow.attempts[attemptStart:])
+		if workflow.evidenceRevision != evidenceBefore {
+			deps.Trace.Record("evidence_revision", turnID, "execution", round, map[string]any{
+				"before": evidenceBefore,
+				"after":  workflow.evidenceRevision,
+			})
 		}
-		batch, err := deps.ExecuteCommands(ctx, deps, ui, cfg, ctxInfo, plans, allExecutions)
-		allExecutions = append(allExecutions, batch.Executions...)
-		allSkipped = append(allSkipped, batch.Skipped...)
 		if errors.Is(err, errAborted) {
-			return partialResult(), err
+			aborted := partialResult()
+			aborted.Outcome = turnOutcomeDeclined
+			return aborted, err
 		}
 		if errors.Is(err, context.Canceled) {
 			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
 				"decision": "execution_failure_replan_excluded",
 				"reason":   "cancellation",
 			})
-			return partialResult(), err
+			cancelled := partialResult()
+			cancelled.Outcome = turnOutcomeCancelled
+			return cancelled, err
 		}
 		var promptErr *interactivePromptError
 		interactiveRepair := errors.As(err, &promptErr)
@@ -957,15 +1144,15 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			return partialResult(), err
 		}
 
-		requiresFollowup := interactiveRepair || batch.HadOrdinaryFailure || (parsed.RequiresObservation && !batch.HadTimeout)
-		if !requiresFollowup {
-			if batch.HadTimeout {
-				deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
-					"decision": "execution_failure_replan_excluded",
-					"reason":   "timeout",
-				})
-			}
-			break
+		if batch.HadTimeout {
+			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
+				"decision": "timeout",
+			})
+			timedOut := partialResult()
+			timedOut.Outcome = turnOutcomeTimeout
+			timedOut.BlockerKind = "timeout"
+			timedOut.BlockerReason = "A command timed out; Shellia did not retry it automatically."
+			return timedOut, nil
 		}
 		followupTrigger := "observation"
 		if interactiveRepair {
@@ -975,19 +1162,19 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			followupTrigger = "execution_failure"
 		}
 
-		if round >= planningRoundLimit-1 {
-			keepGoing, limitErr := promptPlanningLimitContinuation(deps.Stdout, ui, deps.Stdin, planningRoundLimit)
+		if workflow.planningLimitReached(round) {
+			keepGoing, limitErr := promptPlanningLimitContinuation(deps.Stdout, ui, deps.Stdin, workflow.planningBudget)
 			if limitErr != nil {
 				return partialResult(), limitErr
 			}
 			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
 				"decision": "planning_limit_continuation",
 				"accepted": keepGoing,
-				"limit":    planningRoundLimit,
+				"limit":    workflow.planningBudget,
 				"trigger":  followupTrigger,
 			})
 			if keepGoing {
-				planningRoundLimit += cfg.PlanningMaxRounds
+				workflow.extendPlanningBudget(cfg.PlanningMaxRounds)
 				if batch.HadOrdinaryFailure {
 					deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
 						"decision": "continue_after_execution_failure",
@@ -995,13 +1182,11 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 				}
 				continue
 			}
-			if batch.HadOrdinaryFailure {
-				deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
-					"decision": "execution_failure_replan_excluded",
-					"reason":   "planning_limit_declined",
-				})
-			}
-			break
+			limited := partialResult()
+			limited.Outcome = turnOutcomePlanningLimit
+			limited.BlockerKind = "planning_limit"
+			limited.BlockerReason = "The planning limit was reached and continuation was declined."
+			return limited, nil
 		}
 		decision := "continue_after_observation"
 		if batch.HadOrdinaryFailure {
@@ -1012,38 +1197,9 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		})
 		continue
 	}
-
-	openResultPanelTo(deps.Stdout, ui)
-	w := newResultWriter(ui, deps.Stdout)
-	answer, streamErr := streamSummarizeExecutions(ctx, deps.HTTPClient, cfg, instruction, allExecutions, allSkipped, w, deps.Trace, turnID)
-	w.StopThinking()
-	if ctx.Err() != nil {
-		closeResultPanelTo(deps.Stdout, ui)
-		return partialResult(), ctx.Err()
-	}
-	if streamErr != nil || strings.TrimSpace(answer) == "" {
-		answer = staticFallbackAnswer(lastSummary, allExecutions, allSkipped)
-		// Only print the fallback if streaming never wrote a single byte to the terminal.
-		// If it wrote partial content before erroring, don't print on top of it.
-		if !w.WroteAnything() {
-			if err := renderAnswerBlock(deps.Stdout, ui, answer, w.AnswerState()); err != nil {
-				return partialResult(), err
-			}
-			w.MarkWroteAnything()
-		}
-	}
-	closeResultPanelTo(deps.Stdout, ui)
-	return turnResult{
-		Result:     strings.TrimSpace(answer),
-		Summary:    lastSummary,
-		Actionable: true,
-		Plans:      lastPlans,
-		Executions: allExecutions,
-		Skipped:    allSkipped,
-	}, nil
 }
 
-// runPlanningRound asks the model for one plan and applies discovery repair when useful.
+// runPlanningRound asks the model for one workflow decision and repairs one malformed response.
 func runPlanningRound(ctx context.Context, request planningRoundRequest) (planningRoundResult, error) {
 	cfg := request.Prompt.Config
 	deps := request.Deps
@@ -1058,6 +1214,15 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 		"model":         cfg.Model,
 		"system_prompt": systemPrompt,
 		"user_prompt":   userPrompt,
+	})
+	deps.Trace.Record("evidence_projection", request.TurnID, "planning", request.Round, map[string]any{
+		"evidence_revision": request.Prompt.EvidenceRevision,
+		"executions_count":  len(request.Prompt.Observations),
+		"skipped_count":     len(request.Prompt.Skipped),
+		"output_budget":     cfg.ObservationOutputChars,
+		"omitted": strings.Contains(userPrompt, "[older evidence omitted:") ||
+			strings.Contains(userPrompt, "[older attempts omitted:") ||
+			strings.Contains(userPrompt, "[omitted by configuration]"),
 	})
 
 	thinking := startThinkingIndicator(ui, deps.Stdout)
@@ -1082,12 +1247,33 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 	}
 
 	parsed, err := parseResponse(rawResponse)
+	structuralRepairUsed := false
 	if err != nil {
 		deps.Trace.Record("llm_error", request.TurnID, "planning", request.Round, map[string]any{
 			"error":        err.Error(),
 			"raw_response": rawResponse,
 		})
-		return planningRoundResult{}, err
+		if !request.AllowStructuralRepair {
+			return planningRoundResult{}, fmt.Errorf("%w: %v", errStructuralResponse, err)
+		}
+		structuralRepairUsed = true
+		repairPrompt := userPrompt + "\n\nThe previous response was structurally invalid: " + err.Error() + "\nReturn exactly one valid JSON decision using the required schema."
+		deps.Trace.Record("llm_prompt", request.TurnID, "structural_repair", request.Round, map[string]any{
+			"model":         cfg.Model,
+			"system_prompt": systemPrompt,
+			"user_prompt":   repairPrompt,
+		})
+		repairedRaw, repairErr := callPlanningPrompt(ctx, deps.HTTPClient, cfg, systemPrompt, repairPrompt)
+		if repairErr != nil {
+			return planningRoundResult{}, repairErr
+		}
+		deps.Trace.Record("llm_response", request.TurnID, "structural_repair", request.Round, map[string]any{
+			"raw_response": repairedRaw,
+		})
+		parsed, err = parseResponse(repairedRaw)
+		if err != nil {
+			return planningRoundResult{}, fmt.Errorf("%w: %v", errStructuralResponse, err)
+		}
 	}
 
 	summary, plans, err := normalizePlan(parsed)
@@ -1099,106 +1285,21 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 		return planningRoundResult{}, err
 	}
 	deps.Trace.Record("planner_result", request.TurnID, "planning", request.Round, map[string]any{
-		"summary":              summary,
-		"requires_input":       parsed.RequiresInput,
-		"input_reason":         parsed.InputReason,
-		"requires_observation": parsed.RequiresObservation,
-		"observation_reason":   parsed.ObservationReason,
-		"commands":             tracePlannerCommands(plans),
-		"commands_count":       len(plans),
+		"action":           parsed.Action,
+		"summary":          summary,
+		"completion_basis": parsed.CompletionBasis,
+		"blocker_kind":     parsed.BlockerKind,
+		"blocker_reason":   parsed.BlockerReason,
+		"commands":         tracePlannerCommands(plans),
+		"commands_count":   len(plans),
 	})
 
-	if len(plans) == 0 && !cfg.PlanOnly && shouldRetryWithDiscoveryRepair(parsed, request.Round, request.Prompt.Observations) {
-		deps.Trace.Record("shellia_decision", request.TurnID, "planning", request.Round, map[string]any{
-			"decision": "discovery_repair_triggered",
-		})
-		repaired, ok := runDiscoveryRepair(ctx, request, parsed)
-		if ok {
-			return repaired, nil
-		}
-		deps.Trace.Record("shellia_decision", request.TurnID, "planning", request.Round, map[string]any{
-			"decision": "discovery_repair_failed",
-		})
-	}
-
 	return planningRoundResult{
-		Parsed:  parsed,
-		Summary: summary,
-		Plans:   plans,
+		Parsed:               parsed,
+		Summary:              summary,
+		Plans:                plans,
+		StructuralRepairUsed: structuralRepairUsed,
 	}, nil
-}
-
-// runDiscoveryRepair tries one discovery-only retry after a recoverable empty plan.
-func runDiscoveryRepair(
-	ctx context.Context,
-	request planningRoundRequest,
-	previous llmResponse,
-) (planningRoundResult, bool) {
-	cfg := request.Prompt.Config
-	deps := request.Deps
-	ui := request.UI
-	repairRequest := discoveryPromptRequest{
-		Prompt:   request.Prompt,
-		Previous: previous,
-	}
-
-	systemPrompt, userPrompt := buildDiscoveryRepairLLMPrompts(repairRequest)
-	if cfg.RawPrompt {
-		printRawPromptsTo(deps.Stdout, ui, "Raw discovery repair prompt", systemPrompt, userPrompt)
-	}
-	deps.Trace.Record("llm_prompt", request.TurnID, "discovery_repair", request.Round, map[string]any{
-		"model":         cfg.Model,
-		"system_prompt": systemPrompt,
-		"user_prompt":   userPrompt,
-	})
-
-	thinking := startThinkingIndicator(ui, deps.Stdout)
-	repairedRawResponse, repairErr := callPlanningPrompt(ctx, deps.HTTPClient, cfg, systemPrompt, userPrompt)
-	if thinking != nil {
-		thinking.Stop()
-	}
-	if repairErr != nil {
-		deps.Trace.Record("llm_error", request.TurnID, "discovery_repair", request.Round, map[string]any{
-			"error": repairErr.Error(),
-		})
-		return planningRoundResult{}, false
-	}
-	deps.Trace.Record("llm_response", request.TurnID, "discovery_repair", request.Round, map[string]any{
-		"raw_response": repairedRawResponse,
-	})
-
-	repairedParsed, parseErr := parseResponse(repairedRawResponse)
-	if parseErr != nil {
-		deps.Trace.Record("llm_error", request.TurnID, "discovery_repair", request.Round, map[string]any{
-			"error":        parseErr.Error(),
-			"raw_response": repairedRawResponse,
-		})
-		return planningRoundResult{}, false
-	}
-
-	repairedSummary, repairedPlans, normalizeErr := normalizePlan(repairedParsed)
-	if normalizeErr != nil {
-		deps.Trace.Record("llm_error", request.TurnID, "discovery_repair", request.Round, map[string]any{
-			"error":  normalizeErr.Error(),
-			"parsed": repairedParsed,
-		})
-		return planningRoundResult{}, false
-	}
-	deps.Trace.Record("planner_result", request.TurnID, "discovery_repair", request.Round, map[string]any{
-		"summary":              repairedSummary,
-		"requires_input":       repairedParsed.RequiresInput,
-		"input_reason":         repairedParsed.InputReason,
-		"requires_observation": repairedParsed.RequiresObservation,
-		"observation_reason":   repairedParsed.ObservationReason,
-		"commands":             tracePlannerCommands(repairedPlans),
-		"commands_count":       len(repairedPlans),
-	})
-
-	return planningRoundResult{
-		Parsed:  repairedParsed,
-		Summary: repairedSummary,
-		Plans:   repairedPlans,
-	}, true
 }
 
 // tracePlannerCommands renders normalized command plans with stable trace field names.
@@ -1213,6 +1314,7 @@ func tracePlannerCommands(plans []commandPlan) []map[string]any {
 			"classification":         plan.Classification,
 			"local_safe":             plan.LocalSafe,
 			"independent_on_failure": plan.IndependentOnFailure,
+			"repeat_reason":          plan.RepeatReason,
 			"interactive":            plan.Interactive,
 			"interactive_reason":     plan.InteractiveReason,
 		})
@@ -1220,24 +1322,20 @@ func tracePlannerCommands(plans []commandPlan) []map[string]any {
 	return commands
 }
 
-// filterPreviouslySuccessfulPlans removes commands already completed successfully in the same turn.
-func filterPreviouslySuccessfulPlans(plans []commandPlan, executions []commandExecution) ([]commandPlan, []commandPlan) {
-	succeeded := make(map[string]bool, len(executions))
-	for _, execution := range executions {
-		command := strings.TrimSpace(execution.Command)
-		if execution.ExitCode == 0 && command != "" {
-			succeeded[command] = true
-		}
+// traceWorkflowAttempts records causal command outcomes without duplicating captured output.
+func traceWorkflowAttempts(deps runtimeDeps, turnID string, round int, attempts []workflowAttempt) {
+	for _, attempt := range attempts {
+		deps.Trace.Record("workflow_attempt", turnID, "execution", round, map[string]any{
+			"attempt_id":         attempt.ID,
+			"planned_command":    attempt.PlannedCommand,
+			"effective_command":  attempt.EffectiveCommand,
+			"purpose":            attempt.Purpose,
+			"outcome":            attempt.Outcome,
+			"exit_code":          attempt.ExitCode,
+			"repeat_reason":      attempt.RepeatReason,
+			"related_attempt_id": attempt.RelatedAttemptID,
+			"evidence_before":    attempt.EvidenceBefore,
+			"evidence_after":     attempt.EvidenceAfter,
+		})
 	}
-
-	kept := make([]commandPlan, 0, len(plans))
-	redundant := make([]commandPlan, 0)
-	for _, plan := range plans {
-		if succeeded[strings.TrimSpace(plan.Command)] {
-			redundant = append(redundant, plan)
-			continue
-		}
-		kept = append(kept, plan)
-	}
-	return kept, redundant
 }

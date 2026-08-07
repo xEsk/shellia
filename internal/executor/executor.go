@@ -362,8 +362,8 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 			batch.Skipped = append(batch.Skipped, skipCommand(deps, ui, cfg, nil, turnID, index, len(plans), plan, plan.Command, skippedAfterFailureReason))
 			continue
 		}
-		if succeeded[strings.TrimSpace(plan.Command)] {
-			batch.Skipped = append(batch.Skipped, skipCommand(deps, ui, cfg, nil, turnID, index, len(plans), plan, plan.Command, skippedDuplicateSuccessReason))
+		if succeeded[strings.TrimSpace(plan.Command)] && !plan.RepeatReason.AllowsSuccessfulRepeat() {
+			batch.Skipped = append(batch.Skipped, skipCommand(deps, ui, cfg, nil, turnID, index, len(plans), plan, plan.Command, repeatReasonRequired))
 			continue
 		}
 
@@ -372,32 +372,46 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 		interactive := plan.Interactive
 
 		if !cfg.YesSafe || !plan.LocalSafe || plan.Interactive {
-			decision, editedCommand, err := promptConfirmation(box, reader, deps.Stdin, fmt.Sprintf("Run step %d/%d?", index+1, len(plans)), plan.Command, cfg.ConfirmationDefault)
-			deps.Trace.Record("command_confirmation", turnID, "", -1, map[string]any{
-				"step":           index + 1,
-				"total_steps":    len(plans),
-				"command":        plan.Command,
-				"decision":       traceConfirmationDecision(decision),
-				"edited_command": editedCommand,
-			})
-			if err != nil {
-				deps.Trace.Record("command_error", turnID, "", -1, map[string]any{
-					"step":    index + 1,
-					"command": plan.Command,
-					"error":   err.Error(),
+			for {
+				decision, editedCommand, err := promptConfirmation(box, reader, deps.Stdin, fmt.Sprintf("Run step %d/%d?", index+1, len(plans)), effectiveCommand, cfg.ConfirmationDefault)
+				deps.Trace.Record("command_confirmation", turnID, "", -1, map[string]any{
+					"step":           index + 1,
+					"total_steps":    len(plans),
+					"command":        effectiveCommand,
+					"decision":       traceConfirmationDecision(decision),
+					"edited_command": editedCommand,
 				})
-				box.Close()
-				return batch, fmt.Errorf("cannot read confirmation: %w", err)
-			}
-			if decision == confirmDecisionCancel {
-				box.Close()
-				return batch, errAborted
-			}
-			if decision == confirmDecisionEdit {
-				effectiveCommand = editedCommand
-			}
-			if decision == confirmDecisionInteractive {
-				interactive = true
+				if err != nil {
+					deps.Trace.Record("command_error", turnID, "", -1, map[string]any{
+						"step":    index + 1,
+						"command": effectiveCommand,
+						"error":   err.Error(),
+					})
+					box.Close()
+					return batch, fmt.Errorf("cannot read confirmation: %w", err)
+				}
+				if decision == confirmDecisionCancel {
+					box.Close()
+					return batch, errAborted
+				}
+				if decision == confirmDecisionEdit {
+					effectiveCommand = editedCommand
+					localSafety := classifyCommand(effectiveCommand)
+					plan.Risk = higherRisk(plan.Risk, localSafety.Risk)
+					plan.Classification = localSafety.Classification
+					plan.RequiresConfirmation = plan.RequiresConfirmation || localSafety.RequiresConfirmation
+					plan.LocalSafe = localSafety.Classification == localClassificationSafe
+					if succeeded[strings.TrimSpace(effectiveCommand)] && !plan.RepeatReason.AllowsSuccessfulRepeat() {
+						break
+					}
+					if localSafety.RequiresConfirmation {
+						continue
+					}
+				}
+				if decision == confirmDecisionInteractive {
+					interactive = true
+				}
+				break
 			}
 		} else {
 			deps.Trace.Record("command_confirmation", turnID, "", -1, map[string]any{
@@ -407,8 +421,8 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 				"decision":    "auto_safe",
 			})
 		}
-		if succeeded[strings.TrimSpace(effectiveCommand)] {
-			batch.Skipped = append(batch.Skipped, skipCommand(deps, ui, cfg, box, turnID, index, len(plans), plan, effectiveCommand, skippedDuplicateSuccessReason))
+		if succeeded[strings.TrimSpace(effectiveCommand)] && !plan.RepeatReason.AllowsSuccessfulRepeat() {
+			batch.Skipped = append(batch.Skipped, skipCommand(deps, ui, cfg, box, turnID, index, len(plans), plan, effectiveCommand, repeatReasonRequired))
 			continue
 		}
 
@@ -421,6 +435,7 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 			"risk":                  plan.Risk,
 			"classification":        plan.Classification,
 			"requires_confirmation": plan.RequiresConfirmation,
+			"repeat_reason":         plan.RepeatReason,
 			"interactive":           interactive,
 		})
 		result, err := executeOneCommand(ctx, commandRunRequest{
@@ -446,12 +461,15 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 			}
 			return batch, context.Canceled
 		}
+		var executionError *commandRunError
+		timedOut := errors.As(err, &executionError) && executionError.TimedOut
 		batch.Executions = append(batch.Executions, commandExecution{
 			Command:  effectiveCommand,
 			Purpose:  plan.Purpose,
 			Stdout:   result.Output.Stdout,
 			Stderr:   result.Output.Stderr,
 			ExitCode: result.ExitCode,
+			TimedOut: timedOut,
 		})
 		deps.Trace.Record("command_end", turnID, "", -1, map[string]any{
 			"step":        index + 1,
@@ -1054,45 +1072,4 @@ func hasUnescapedWhitespace(value string) bool {
 		}
 	}
 	return false
-}
-
-// staticFallbackAnswer returns a plain-text answer when the streaming summarizer is unavailable.
-func staticFallbackAnswer(fallbackSummary string, executions []commandExecution, skipped []skippedCommand) string {
-	for index := len(executions) - 1; index >= 0; index-- {
-		execution := executions[index]
-		if execution.ExitCode == 0 {
-			continue
-		}
-		preferred := strings.TrimSpace(execution.PreferredOutput())
-		status := fmt.Sprintf("The command `%s` failed with exit code %d.", strings.TrimSpace(execution.Command), execution.ExitCode)
-		if len(skipped) > 0 {
-			status += fmt.Sprintf(" %d command(s) were skipped and not executed.", len(skipped))
-		}
-		if preferred != "" {
-			return preferred + "\n" + status
-		}
-		return status
-	}
-
-	if len(skipped) > 0 {
-		omission := "Some commands were skipped and were not executed."
-		summary := strings.TrimSpace(fallbackSummary)
-		if summary == "" {
-			return omission
-		}
-		return summary + "\n" + omission
-	}
-
-	if len(executions) == 0 {
-		return fallbackSummary
-	}
-
-	last := executions[len(executions)-1]
-	preferred := strings.TrimSpace(last.PreferredOutput())
-
-	if preferred != "" {
-		return preferred
-	}
-
-	return fmt.Sprintf("%s done.", strings.TrimSpace(last.Purpose))
 }

@@ -1,42 +1,123 @@
 package llm
 
 import (
+	"context"
+	"errors"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
-// TestParseResponseAcceptsExtraTrailingBrace checks local models that append one stray brace.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
+
+// TestParseResponseValidatesWorkflowDecisionContract checks malformed model
+// decisions cannot reach orchestration as executable plans.
+func TestParseResponseValidatesWorkflowDecisionContract(t *testing.T) {
+	tests := []struct {
+		name        string
+		raw         string
+		wantAction  string
+		wantBlocked string
+		wantErr     bool
+	}{
+		{
+			name:       "execute with command",
+			raw:        `{"action":"execute","objective_mode":"observe","success_criteria":"Disk space observed","summary":"Inspect disk.","commands":[{"command":"df -h","purpose":"Inspect disk space","risk":"safe","requires_confirmation":false}]}`,
+			wantAction: "execute",
+		},
+		{
+			name:       "execute with typed repeat reason",
+			raw:        `{"action":"execute","objective_mode":"observe","success_criteria":"Disk space verified","summary":"Verify disk again.","commands":[{"command":"df -h","purpose":"Verify changed disk space","risk":"safe","requires_confirmation":false,"repeat_reason":"verify_after_change"}]}`,
+			wantAction: "execute",
+		},
+		{
+			name:       "complete with final answer",
+			raw:        `{"action":"complete","objective_mode":"observe","success_criteria":"Disk space observed","summary":"There are 20 GB free.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`,
+			wantAction: "complete",
+		},
+		{
+			name:        "blocked with actionable reason",
+			raw:         `{"action":"blocked","objective_mode":"act","success_criteria":"Service restarted","summary":"I need the service name.","blocker_kind":"missing_input","blocker_reason":"Specify the service to restart.","commands":[]}`,
+			wantAction:  "blocked",
+			wantBlocked: "missing_input",
+		},
+		{name: "missing action", raw: `{"summary":"Done.","commands":[]}`, wantErr: true},
+		{name: "unknown action", raw: `{"action":"wait","objective_mode":"explain","success_criteria":"Answer provided","summary":"Wait.","commands":[]}`, wantErr: true},
+		{name: "execute without commands", raw: `{"action":"execute","objective_mode":"observe","success_criteria":"State observed","summary":"Inspect.","commands":[]}`, wantErr: true},
+		{name: "complete with commands", raw: `{"action":"complete","objective_mode":"explain","success_criteria":"Answer provided","summary":"Done.","completion_basis":{"type":"model_knowledge"},"commands":[{"command":"pwd","purpose":"Inspect","risk":"safe"}]}`, wantErr: true},
+		{name: "complete without answer", raw: `{"action":"complete","objective_mode":"explain","success_criteria":"Answer provided","summary":"","completion_basis":{"type":"model_knowledge"},"commands":[]}`, wantErr: true},
+		{name: "complete without basis", raw: `{"action":"complete","objective_mode":"explain","success_criteria":"Answer provided","summary":"Done.","commands":[]}`, wantErr: true},
+		{name: "blocked with commands", raw: `{"action":"blocked","objective_mode":"act","success_criteria":"Task completed","summary":"Cannot continue.","blocker_kind":"missing_input","blocker_reason":"Need input.","commands":[{"command":"pwd","purpose":"Inspect","risk":"safe"}]}`, wantErr: true},
+		{name: "blocked without reason", raw: `{"action":"blocked","objective_mode":"act","success_criteria":"Task completed","summary":"Cannot continue.","blocker_kind":"missing_input","commands":[]}`, wantErr: true},
+		{name: "blocked with unknown kind", raw: `{"action":"blocked","objective_mode":"act","success_criteria":"Task completed","summary":"Cannot continue.","blocker_kind":"maybe_later","blocker_reason":"Need input.","commands":[]}`, wantErr: true},
+		{name: "unknown repeat reason", raw: `{"action":"execute","objective_mode":"observe","success_criteria":"State observed","summary":"Repeat.","commands":[{"command":"df -h","purpose":"Repeat disk check","risk":"safe","repeat_reason":"because_i_said_so"}]}`, wantErr: true},
+		{name: "capability cannot execute", raw: `{"action":"execute","objective_mode":"capability","success_criteria":"Capability explained","summary":"Inspect.","commands":[{"command":"df -h","purpose":"Inspect disk","risk":"safe"}]}`, wantErr: true},
+		{name: "capability resolves as complete", raw: `{"action":"blocked","objective_mode":"capability","success_criteria":"Capability explained","summary":"I cannot do it.","blocker_kind":"unavailable","blocker_reason":"No supported tool.","commands":[]}`, wantErr: true},
+		{name: "explain cannot execute", raw: `{"action":"execute","objective_mode":"explain","success_criteria":"Method explained","summary":"Inspect.","commands":[{"command":"df -h","purpose":"Inspect disk","risk":"safe"}]}`, wantErr: true},
+		{name: "non-capability cannot offer", raw: `{"action":"complete","objective_mode":"explain","success_criteria":"Method explained","summary":"Use df.","completion_basis":{"type":"model_knowledge"},"offer":{"objective":"inspect disk"},"commands":[]}`, wantErr: true},
+		{name: "missing objective mode", raw: `{"action":"complete","summary":"Codex can be updated.","completion_basis":"direct answer","commands":[]}`, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response, err := parseResponse(tt.raw)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseResponse() error = nil, want rejection")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseResponse() error = %v", err)
+			}
+			if response.Action != tt.wantAction {
+				t.Fatalf("Action = %q, want %q", response.Action, tt.wantAction)
+			}
+			if response.BlockerKind != tt.wantBlocked {
+				t.Fatalf("BlockerKind = %q, want %q", response.BlockerKind, tt.wantBlocked)
+			}
+		})
+	}
+}
+
+// TestParseResponseAcceptsExtraTrailingBrace checks local models that append
+// one stray brace still yield the first complete JSON object.
 func TestParseResponseAcceptsExtraTrailingBrace(t *testing.T) {
-	raw := `{"summary":"Showing files.","commands":[{"command":"ls","purpose":"List files","risk":"safe","requires_confirmation":false}]}}`
+	raw := `{"action":"execute","objective_mode":"observe","success_criteria":"Files listed","summary":"Showing files.","commands":[{"command":"ls","purpose":"List files","risk":"safe","requires_confirmation":false}]}}`
 
 	response, err := parseResponse(raw)
 	if err != nil {
 		t.Fatalf("parseResponse() error = %v", err)
-	}
-	if response.Summary != "Showing files." {
-		t.Fatalf("Summary = %q, want %q", response.Summary, "Showing files.")
 	}
 	if len(response.Commands) != 1 || response.Commands[0].Command != "ls" {
 		t.Fatalf("Commands = %#v, want ls command", response.Commands)
 	}
 }
 
-// TestParseResponseDefaultsFailureIndependenceToFalse checks omitted dependency
-// metadata keeps the conservative zero value.
-func TestParseResponseDefaultsFailureIndependenceToFalse(t *testing.T) {
-	parsed, err := parseResponse(`{"summary":"Run one command.","commands":[{"command":"pwd","purpose":"Print directory","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`)
+// TestParseResponseKeepsBracesInsideStrings checks JSON extraction respects
+// quoted brace characters.
+func TestParseResponseKeepsBracesInsideStrings(t *testing.T) {
+	raw := `prefix {"action":"complete","objective_mode":"explain","success_criteria":"Braces explained","summary":"Use {literal} braces.","completion_basis":{"type":"model_knowledge"},"commands":[]} suffix`
+
+	response, err := parseResponse(raw)
 	if err != nil {
 		t.Fatalf("parseResponse() error = %v", err)
 	}
-	if parsed.Commands[0].IndependentOnFailure {
-		t.Fatal("IndependentOnFailure = true, want conservative false default")
+	if response.Summary != "Use {literal} braces." {
+		t.Fatalf("Summary = %q, want braces preserved", response.Summary)
 	}
 }
 
-// TestNormalizePlanPreservesFailureIndependence checks explicit independence
-// survives local plan normalization.
+// TestNormalizePlanPreservesFailureIndependence checks explicit batch
+// independence survives local plan normalization.
 func TestNormalizePlanPreservesFailureIndependence(t *testing.T) {
 	_, plans, err := normalizePlan(Response{
+		Action:  "execute",
 		Summary: "Continue independent inspection.",
 		Commands: []Command{{
 			Command:              "pwd",
@@ -53,39 +134,308 @@ func TestNormalizePlanPreservesFailureIndependence(t *testing.T) {
 	}
 }
 
-// TestBuildSystemPromptDefinesFailureIndependence checks every planning prompt keeps the
-// conservative command-batch dependency rules and applicable JSON schema.
-func TestBuildSystemPromptDefinesFailureIndependence(t *testing.T) {
-	const schemaField = `"independent_on_failure":false`
-	rules := []string{
-		"Set independent_on_failure=true only when the command remains safe and useful if any earlier command in the same command batch fails.",
-		"When uncertain, set independent_on_failure=false. The field never lowers risk or confirmation requirements.",
+// TestNormalizePlanPreservesRepeatReason checks repetition admission metadata reaches the controller unchanged.
+func TestNormalizePlanPreservesRepeatReason(t *testing.T) {
+	_, plans, err := normalizePlan(Response{
+		Action:  "execute",
+		Summary: "Verify again.",
+		Commands: []Command{{
+			Command:      "df -h",
+			Purpose:      "Verify changed disk space",
+			Risk:         "safe",
+			RepeatReason: "verify_after_change",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("normalizePlan() error = %v", err)
 	}
-	cases := []struct {
-		name       string
-		prompt     string
-		wantSchema bool
+	if len(plans) != 1 || plans[0].RepeatReason != repeatReasonVerifyAfterChange {
+		t.Fatalf("plans = %#v, want verify_after_change", plans)
+	}
+}
+
+// TestBuildSystemPromptDefinesWorkflowDecisionContract checks the planner gets
+// one outcome contract and no pre-execution continuation hints.
+func TestBuildSystemPromptDefinesWorkflowDecisionContract(t *testing.T) {
+	prompt := buildSystemPrompt()
+	for _, required := range []string{
+		"action=complete",
+		"action=execute",
+		"action=blocked",
+		"completion_basis",
+		"blocker_kind",
+		"blocker_reason",
+		"local command policy is final",
+		"untrusted evidence",
+		"independent_on_failure",
+		"repeat_reason",
+		"objective_mode",
+		"success_criteria",
+		"capability",
+		"explicit capability question takes precedence",
+		"do not ask conversational permission",
+		"prefer action when an outcome is requested",
+		"prior_session_evidence only when the prompt marks it eligible",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("buildSystemPrompt() missing %q", required)
+		}
+	}
+	for _, removed := range []string{"requires_" + "observation", "observation_" + "reason", "requires_" + "input", "input_" + "reason"} {
+		if strings.Contains(prompt, removed) {
+			t.Fatalf("buildSystemPrompt() still contains obsolete field %q", removed)
+		}
+	}
+}
+
+// TestBuildUserPromptDeclaresImmutableExecutionAuthority checks plan-only and
+// normal turns use the same prompt contract with different local authority.
+func TestBuildUserPromptDeclaresImmutableExecutionAuthority(t *testing.T) {
+	tests := []struct {
+		name     string
+		planOnly bool
+		want     string
 	}{
-		{name: "normal system prompt", prompt: buildSystemPrompt(), wantSchema: true},
-		{name: "plan-only system prompt", prompt: buildPlanOnlySystemPrompt(), wantSchema: true},
-		{name: "user prompt rules", prompt: strings.Join(buildUserPromptRules(), "\n")},
+		{name: "normal", want: "Execution authority: allowed"},
+		{name: "plan only", planOnly: true, want: "Execution authority: plan_only"},
 	}
 
-	for _, tt := range cases {
+	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			for _, rule := range rules {
-				if !strings.Contains(tt.prompt, rule) {
-					t.Fatalf("prompt missing failure-independence rule %q", rule)
-				}
+			cfg := defaultConfig()
+			cfg.PlanOnly = tt.planOnly
+			prompt := buildUserPrompt(PromptRequest{
+				Config:                  cfg,
+				Instruction:             "inspect disk",
+				ContextInfo:             contextInfo{CWD: "/tmp"},
+				PlanningRoundsRemaining: 2,
+			})
+			if !strings.Contains(prompt, tt.want) {
+				t.Fatalf("buildUserPrompt() missing %q in %q", tt.want, prompt)
 			}
-			if tt.wantSchema && !strings.Contains(tt.prompt, schemaField) {
-				t.Fatalf("prompt missing schema field %q", schemaField)
+			if !strings.Contains(prompt, "Planning rounds remaining: 2") {
+				t.Fatalf("buildUserPrompt() missing planning budget in %q", prompt)
 			}
 		})
 	}
 }
 
-// TestTrimForSummaryHandlesNonPositiveLimit checks defensive callers cannot panic trimming output.
+func TestBuildUserPromptIncludesPendingStructuredProposal(t *testing.T) {
+	cfg := defaultConfig()
+	prompt := buildUserPrompt(PromptRequest{
+		Config:      cfg,
+		Instruction: "potser",
+		ContextInfo: contextInfo{CWD: "/tmp"},
+		State: sessionState{PendingProposal: pendingProposal{
+			Objective: "consulta l'espai disponible al disc",
+			Summary:   "Consultar disc",
+		}},
+	})
+
+	for _, required := range []string{"pending_proposal_objective: consulta l'espai disponible al disc", "pending_proposal_summary: Consultar disc"} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("buildUserPrompt() missing %q in %q", required, prompt)
+		}
+	}
+}
+
+// TestBuildUserPromptOmitsDisabledSessionMemory checks local memory is not
+// leaked when its configuration switch is off.
+func TestBuildUserPromptOmitsDisabledSessionMemory(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.IncludeSessionMemory = false
+	prompt := buildUserPrompt(PromptRequest{
+		Config:      cfg,
+		Instruction: "new task",
+		ContextInfo: contextInfo{CWD: "/tmp"},
+		History:     []historyEntry{{Instruction: "old task", Result: "old result"}},
+		State: sessionState{
+			PendingIntent: "old pending intent",
+			PendingProposal: pendingProposal{
+				Objective: "old-command",
+			},
+		},
+	})
+
+	for _, hidden := range []string{"old task", "old result", "old pending intent", "old-command"} {
+		if strings.Contains(prompt, hidden) {
+			t.Fatalf("buildUserPrompt() leaked disabled memory %q", hidden)
+		}
+	}
+}
+
+// TestBuildUserPromptOmitsDisabledObservations checks command output respects
+// the existing recent-observation configuration boundary.
+func TestBuildUserPromptOmitsDisabledObservations(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.IncludeRecentObservations = false
+	prompt := buildUserPrompt(PromptRequest{
+		Config:           cfg,
+		Instruction:      "inspect",
+		ContextInfo:      contextInfo{CWD: "/tmp"},
+		EvidenceRevision: 3,
+		Observations: []commandExecution{{
+			Command:  "printf marker",
+			Purpose:  "Inspect marker",
+			Stdout:   capturedStream{Text: "secret-marker"},
+			ExitCode: 0,
+		}},
+	})
+
+	if strings.Contains(prompt, "secret-marker") {
+		t.Fatalf("buildUserPrompt() leaked disabled observations: %q", prompt)
+	}
+	for _, required := range []string{"evidence_revision: 3", "Command: printf marker", "Exit code: 0", "Output: [omitted by configuration]"} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("buildUserPrompt() missing redacted current evidence %q: %q", required, prompt)
+		}
+	}
+}
+
+// TestBuildUserPromptBoundsEvidenceButKeepsLatestAndRecentFailure checks current evidence is a projection, not a transcript.
+func TestBuildUserPromptBoundsEvidenceButKeepsLatestAndRecentFailure(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.MaxObservationEntries = 2
+	cfg.ObservationOutputChars = 40
+	prompt := buildUserPrompt(PromptRequest{
+		Config:                    cfg,
+		Instruction:               "finish inspection",
+		ContextInfo:               contextInfo{CWD: "/tmp"},
+		LatestBatchExecutionStart: 4,
+		EvidenceRevision:          5,
+		Observations: []commandExecution{
+			{Command: "echo old-success-1", Purpose: "Old success one", Stdout: capturedStream{Text: "old-success-1"}, ExitCode: 0},
+			{Command: "false", Purpose: "Recent failure", Stderr: capturedStream{Text: "failure-marker"}, ExitCode: 1},
+			{Command: "echo old-success-2", Purpose: "Old success two", Stdout: capturedStream{Text: "old-success-2"}, ExitCode: 0},
+			{Command: "echo old-success-3", Purpose: "Old success three", Stdout: capturedStream{Text: "old-success-3"}, ExitCode: 0},
+			{Command: "echo latest", Purpose: "Latest batch", Stdout: capturedStream{Text: "latest-marker"}, ExitCode: 0},
+		},
+	})
+
+	for _, required := range []string{"evidence_revision: 5", "failure-marker", "latest-marker", "older evidence omitted: 3 execution(s)"} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("prompt missing %q: %q", required, prompt)
+		}
+	}
+	for _, omitted := range []string{"old-success-1", "old-success-2", "old-success-3"} {
+		if strings.Contains(prompt, omitted) {
+			t.Fatalf("prompt retained omitted evidence %q: %q", omitted, prompt)
+		}
+	}
+}
+
+func TestBuildUserPromptMapsValidCompletionReferencesDuringRepair(t *testing.T) {
+	prompt := buildUserPrompt(PromptRequest{
+		Config:        defaultConfig(),
+		Instruction:   "actualitza codex",
+		ContextInfo:   contextInfo{CWD: "/tmp"},
+		DecisionError: "attempt 1 does not belong to evidence revision 2",
+		Attempts: []workflowAttempt{
+			{ID: 1, Outcome: "success", EvidenceBefore: 0, EvidenceAfter: 1},
+			{ID: 2, Outcome: "success", EvidenceBefore: 1, EvidenceAfter: 2},
+			{ID: 3, Outcome: "success", EvidenceBefore: 1, EvidenceAfter: 2},
+			{ID: 4, Outcome: "skipped", EvidenceBefore: 2, EvidenceAfter: 2},
+		},
+	})
+
+	for _, required := range []string{
+		"Valid completion references:",
+		"evidence_revision 1: attempt_ids [1]",
+		"evidence_revision 2: attempt_ids [2, 3]",
+		"Use one evidence_revision and only its listed attempt_ids",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("repair prompt missing %q: %q", required, prompt)
+		}
+	}
+	if strings.Contains(prompt, "evidence_revision 2: attempt_ids [2, 3, 4]") {
+		t.Fatalf("repair prompt offered skipped attempt as completion evidence: %q", prompt)
+	}
+}
+
+// TestBuildUserPromptKeepsEntireLatestSkippedBatch checks the entry limit never slices the current decision batch.
+func TestBuildUserPromptKeepsEntireLatestSkippedBatch(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.MaxObservationEntries = 1
+	prompt := buildUserPrompt(PromptRequest{
+		Config:                  cfg,
+		Instruction:             "finish inspection",
+		ContextInfo:             contextInfo{CWD: "/tmp"},
+		LatestBatchSkippedStart: 2,
+		Skipped: []skippedCommand{
+			{Command: "old-one", Purpose: "Old one", Reason: "old"},
+			{Command: "old-two", Purpose: "Old two", Reason: "old"},
+			{Command: "latest-one", Purpose: "Latest one", Reason: "current"},
+			{Command: "latest-two", Purpose: "Latest two", Reason: "current"},
+		},
+	})
+
+	for _, required := range []string{"latest-one", "latest-two", "older evidence omitted: 0 execution(s), 2 skipped command(s)"} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("prompt missing %q: %q", required, prompt)
+		}
+	}
+	for _, omitted := range []string{"old-one", "old-two"} {
+		if strings.Contains(prompt, omitted) {
+			t.Fatalf("prompt retained omitted skipped evidence %q: %q", omitted, prompt)
+		}
+	}
+}
+
+// TestBuildUserPromptAppliesOneOutputBudget checks multiple observations share the configured evidence budget.
+func TestBuildUserPromptAppliesOneOutputBudget(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.ObservationOutputChars = 12
+	prompt := buildUserPrompt(PromptRequest{
+		Config:                    cfg,
+		Instruction:               "inspect",
+		ContextInfo:               contextInfo{CWD: "/tmp"},
+		LatestBatchExecutionStart: 0,
+		Observations: []commandExecution{
+			{Command: "first", Purpose: "First", Stdout: capturedStream{Text: "AAAAAA-hidden-first-tail"}},
+			{Command: "second", Purpose: "Second", Stdout: capturedStream{Text: "BBBBBB-hidden-second-tail"}},
+		},
+	})
+
+	if !strings.Contains(prompt, "output evidence budget: 12 chars") {
+		t.Fatalf("prompt missing global budget marker: %q", prompt)
+	}
+	for _, hidden := range []string{"hidden-first-tail", "hidden-second-tail"} {
+		if strings.Contains(prompt, hidden) {
+			t.Fatalf("prompt exceeded shared output budget with %q: %q", hidden, prompt)
+		}
+	}
+}
+
+// TestBuildUserPromptProjectsDecisionAndBoundedAttempts checks causal workflow state survives across rounds without an unbounded ledger.
+func TestBuildUserPromptProjectsDecisionAndBoundedAttempts(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.MaxObservationEntries = 2
+	previous := Response{Action: "execute", Summary: "Inspect and verify."}
+	prompt := buildUserPrompt(PromptRequest{
+		Config:           cfg,
+		Instruction:      "finish inspection",
+		ContextInfo:      contextInfo{CWD: "/tmp"},
+		PreviousDecision: &previous,
+		Attempts: []workflowAttempt{
+			{ID: 1, Round: 0, PlannedCommand: "old-command", EffectiveCommand: "old-command", Outcome: "success"},
+			{ID: 2, Round: 1, PlannedCommand: "planned-two", EffectiveCommand: "effective-two", Outcome: "failed", ExitCode: 1},
+			{ID: 3, Round: 2, PlannedCommand: "verify", EffectiveCommand: "verify", Outcome: "success", RepeatReason: repeatReasonVerifyAfterChange, RelatedAttemptID: 1},
+		},
+	})
+
+	for _, required := range []string{"Previous workflow decision:", "action: execute", "Inspect and verify.", "attempt 2", "planned-two", "effective-two", "attempt 3", "verify_after_change", "related_attempt: 1", "older attempts omitted: 1"} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("buildUserPrompt() missing %q: %q", required, prompt)
+		}
+	}
+	if strings.Contains(prompt, "old-command") {
+		t.Fatalf("buildUserPrompt() retained older bounded attempt: %q", prompt)
+	}
+}
+
+// TestTrimForSummaryHandlesNonPositiveLimit checks defensive callers cannot
+// panic while trimming output.
 func TestTrimForSummaryHandlesNonPositiveLimit(t *testing.T) {
 	if got := trimForSummary("abcdef", 0, truncationStart); got != "" {
 		t.Fatalf("trimForSummary(limit 0) = %q, want empty", got)
@@ -95,623 +445,17 @@ func TestTrimForSummaryHandlesNonPositiveLimit(t *testing.T) {
 	}
 }
 
-// TestParseResponseKeepsBracesInsideStrings checks JSON extraction respects quoted content.
-func TestParseResponseKeepsBracesInsideStrings(t *testing.T) {
-	raw := `prefix {"summary":"Use {literal} braces.","commands":[]} suffix`
-
-	response, err := parseResponse(raw)
-	if err != nil {
-		t.Fatalf("parseResponse() error = %v", err)
-	}
-	if response.Summary != "Use {literal} braces." {
-		t.Fatalf("Summary = %q, want braces preserved", response.Summary)
-	}
-}
-
-// TestParseResponseAllowsEmptyObservationForRepair checks repair can handle missing discovery commands.
-func TestParseResponseAllowsEmptyObservationForRepair(t *testing.T) {
-	raw := `{"summary":"Need to verify locally.","commands":[],"requires_observation":true,"observation_reason":"Check package availability."}`
-
-	response, err := parseResponse(raw)
-	if err != nil {
-		t.Fatalf("parseResponse() error = %v", err)
-	}
-	if !response.RequiresObservation {
-		t.Fatalf("RequiresObservation = false, want true")
-	}
-	if len(response.Commands) != 0 {
-		t.Fatalf("Commands = %#v, want empty", response.Commands)
-	}
-}
-
-// TestShouldRetryWithDiscoveryRepairForRequiresInputEmptyPlan checks that an
-// empty first plan marked as requires_input gets one discovery repair retry.
-func TestShouldRetryWithDiscoveryRepairForRequiresInputEmptyPlan(t *testing.T) {
-	response := Response{
-		Summary:       "Need more detail.",
-		RequiresInput: true,
-		InputReason:   "Installation method is unknown.",
-	}
-
-	if !shouldRetryWithDiscoveryRepair(response, 0, nil) {
-		t.Fatalf("shouldRetryWithDiscoveryRepair() = false, want true")
-	}
-}
-
-// TestShouldRetryWithDiscoveryRepairForRequiresObservationEmptyPlan checks
-// local-model empty observation plans get one discovery repair retry.
-func TestShouldRetryWithDiscoveryRepairForRequiresObservationEmptyPlan(t *testing.T) {
-	response := Response{
-		Summary:             "Need to verify locally.",
-		RequiresObservation: true,
-		ObservationReason:   "Check package availability.",
-	}
-
-	if !shouldRetryWithDiscoveryRepair(response, 0, nil) {
-		t.Fatalf("shouldRetryWithDiscoveryRepair() = false, want true")
-	}
-}
-
-// TestShouldRetryWithDiscoveryRepairSkipsAnswerOnly checks that an answer-only
-// empty response does not trigger the discovery repair fallback.
-func TestShouldRetryWithDiscoveryRepairSkipsAnswerOnly(t *testing.T) {
-	response := Response{
-		Summary: "Not enough detail.",
-	}
-
-	if shouldRetryWithDiscoveryRepair(response, 0, nil) {
-		t.Fatalf("shouldRetryWithDiscoveryRepair() = true, want false")
-	}
-}
-
-// TestShouldRetryWithDiscoveryRepairSkipsLaterRounds checks that the repair
-// fallback runs only on the initial empty planning response.
-func TestShouldRetryWithDiscoveryRepairSkipsLaterRounds(t *testing.T) {
-	response := Response{
-		Summary:       "Need more detail.",
-		RequiresInput: true,
-	}
-
-	if shouldRetryWithDiscoveryRepair(response, 1, nil) {
-		t.Fatalf("shouldRetryWithDiscoveryRepair() = true, want false")
-	}
-}
-
-// TestBuildSystemPromptGuidesInteractivePromptRecovery checks that the planner avoids redundant in-command prompts.
-func TestBuildSystemPromptGuidesInteractivePromptRecovery(t *testing.T) {
-	prompt := buildSystemPrompt()
-
-	requiredSnippets := []string{
-		"Shellia already asks the user to confirm risky commands",
-		"prefer a known non-interactive confirmation flag only when you are confident",
-		"If observed output shows a confirmation prompt or another terminal question",
-	}
-	for _, snippet := range requiredSnippets {
-		if !strings.Contains(prompt, snippet) {
-			t.Fatalf("buildSystemPrompt() missing %q in %q", snippet, prompt)
-		}
-	}
-}
-
-// TestBuildSystemPromptAllowsExplicitReruns checks that the planner does not
-// treat previous observations as a hard stop when the user asks to rerun work.
-func TestBuildSystemPromptAllowsExplicitReruns(t *testing.T) {
-	prompt := buildSystemPrompt()
-
-	requiredSnippets := []string{
-		"explicitly asks to repeat, rerun, retry, or execute an earlier action again",
-		"treat it as a fresh execution request",
-		"still propose the command again",
-	}
-	for _, snippet := range requiredSnippets {
-		if !strings.Contains(prompt, snippet) {
-			t.Fatalf("buildSystemPrompt() missing %q in %q", snippet, prompt)
-		}
-	}
-}
-
-// TestBuildSystemPromptPrefersDirectSpecificOutput checks that observation is
-// reserved for cases where a direct answer command cannot be built yet.
-func TestBuildSystemPromptPrefersDirectSpecificOutput(t *testing.T) {
-	prompt := buildSystemPrompt()
-
-	requiredSnippets := []string{
-		"Before setting requires_observation=true",
-		"directly produce the requested answer or value",
-		"instead of a broader inspection command",
-	}
-	for _, snippet := range requiredSnippets {
-		if !strings.Contains(prompt, snippet) {
-			t.Fatalf("buildSystemPrompt() missing %q in %q", snippet, prompt)
-		}
-	}
-}
-
-// TestBuildSystemPromptRejectsPartialObservationAsExactAnswer checks follow-ups
-// do not get satisfied by broader prior observations.
-func TestBuildSystemPromptRejectsPartialObservationAsExactAnswer(t *testing.T) {
-	prompt := buildSystemPrompt()
-
-	requiredSnippets := []string{
-		"partial, adjacent, or indirect prior observation",
-		"more specific follow-up",
-		"contains the exact value the user is asking for",
-	}
-	for _, snippet := range requiredSnippets {
-		if !strings.Contains(prompt, snippet) {
-			t.Fatalf("buildSystemPrompt() missing %q in %q", snippet, prompt)
-		}
-	}
-}
-
-// TestBuildSystemPromptTreatsChangedStateAsStale checks prior observations do
-// not block verification when the user says the underlying state changed.
-func TestBuildSystemPromptTreatsChangedStateAsStale(t *testing.T) {
-	prompt := buildSystemPrompt()
-
-	requiredSnippets := []string{
-		"relevant state changed after a prior observation",
-		"treat that prior observation as stale",
-		"smallest safe verification command",
-	}
-	for _, snippet := range requiredSnippets {
-		if !strings.Contains(prompt, snippet) {
-			t.Fatalf("buildSystemPrompt() missing %q in %q", snippet, prompt)
-		}
-	}
-}
-
-// TestBuildSystemPromptAvoidsFallbackJSONGuidance checks JSON-mode providers avoid extra noise.
-func TestBuildSystemPromptAvoidsFallbackJSONGuidance(t *testing.T) {
-	prompt := buildSystemPrompt()
-
-	if strings.Contains(prompt, "Do not repeat the JSON object") {
-		t.Fatalf("buildSystemPrompt() includes fallback JSON guidance: %q", prompt)
-	}
-}
-
-// TestBuildUserPromptRulesPreferFocusedExtraction checks that planner rules
-// keep inspection output limited to the requested value when possible.
-func TestBuildUserPromptRulesPreferFocusedExtraction(t *testing.T) {
-	prompt := buildUserPrompt(PromptRequest{
-		Config:      defaultConfig(),
-		ContextInfo: contextInfo{},
-		Instruction: "get a specific value",
-	})
-
-	requiredSnippets := []string{
-		"asks for a specific value",
-		"extracts only that value",
-		"instead of printing the full source data",
-	}
-	for _, snippet := range requiredSnippets {
-		if !strings.Contains(prompt, snippet) {
-			t.Fatalf("buildUserPrompt() missing %q in %q", snippet, prompt)
-		}
-	}
-}
-
-// TestBuildUserPromptRulesRequireExactFollowUpValues checks old observations
-// cannot block a narrower follow-up question that needs a precise value.
-func TestBuildUserPromptRulesRequireExactFollowUpValues(t *testing.T) {
-	prompt := buildUserPrompt(PromptRequest{
-		Config:      defaultConfig(),
-		ContextInfo: contextInfo{},
-		Instruction: "what exact package version is installed?",
-		State: sessionState{
-			LastObservations: []observationMemory{
-				{
-					Purpose:    "Check whether the package exists",
-					Command:    "command -v example-tool",
-					Transcript: "/usr/local/bin/example-tool",
-				},
-			},
-		},
-	})
-
-	requiredSnippets := []string{
-		"more specific value",
-		"prior observation",
-		"smallest safe command that returns that exact value",
-	}
-	for _, snippet := range requiredSnippets {
-		if !strings.Contains(prompt, snippet) {
-			t.Fatalf("buildUserPrompt() missing %q in %q", snippet, prompt)
-		}
-	}
-}
-
-// TestBuildUserPromptRulesRecheckAfterReportedStateChange checks follow-ups can
-// invalidate reusable observations when the user reports a later change.
-func TestBuildUserPromptRulesRecheckAfterReportedStateChange(t *testing.T) {
-	prompt := buildUserPrompt(PromptRequest{
-		Config:      defaultConfig(),
-		ContextInfo: contextInfo{},
-		Instruction: "please verify it again; I changed it after your check",
-		State: sessionState{
-			LastObservations: []observationMemory{
-				{
-					Purpose:    "Check current state",
-					Command:    "example-tool --version",
-					Transcript: "example-tool 1.0.0",
-				},
-			},
-		},
-	})
-
-	requiredSnippets := []string{
-		"relevant state changed after a prior observation",
-		"treat that prior observation as stale",
-		"verify again with the smallest safe command",
-	}
-	for _, snippet := range requiredSnippets {
-		if !strings.Contains(prompt, snippet) {
-			t.Fatalf("buildUserPrompt() missing %q in %q", snippet, prompt)
-		}
-	}
-}
-
-// TestBuildPlanOnlySystemPromptDefinesOperationalPlan checks /plan has a dedicated non-executing contract.
-func TestBuildPlanOnlySystemPromptDefinesOperationalPlan(t *testing.T) {
-	prompt := buildPlanOnlySystemPrompt()
-
-	requiredSnippets := []string{
-		"non-executing plan mode",
-		"preparation, inspection, decision, and manual execution",
-		"Avoid redundant inspection steps",
-		"write observation_reason as explicit branches",
-	}
-	for _, snippet := range requiredSnippets {
-		if !strings.Contains(prompt, snippet) {
-			t.Fatalf("buildPlanOnlySystemPrompt() missing %q in %q", snippet, prompt)
-		}
-	}
-}
-
-// TestBuildDiscoveryRepairLLMPromptsAddsPreviousResponse checks repair prompts include the missing-detail context.
-func TestBuildDiscoveryRepairLLMPromptsAddsPreviousResponse(t *testing.T) {
+// TestCallPlanningPromptAppliesRequestTimeout checks every workflow decision has the configured request deadline.
+func TestCallPlanningPromptAppliesRequestTimeout(t *testing.T) {
 	cfg := defaultConfig()
-	ctxInfo := contextInfo{
-		CWD:   "/tmp/project",
-		User:  "xesc",
-		OS:    "darwin/arm64",
-		Shell: "/bin/zsh",
-	}
+	cfg.RequestTimeout = 10 * time.Millisecond
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		<-request.Context().Done()
+		return nil, request.Context().Err()
+	})}
 
-	systemPrompt, userPrompt := buildDiscoveryRepairLLMPrompts(DiscoveryPromptRequest{
-		Prompt: PromptRequest{
-			Config:      cfg,
-			ContextInfo: ctxInfo,
-			Instruction: "update the local tool",
-		},
-		Previous: Response{
-			Summary:       "Need install source.",
-			RequiresInput: true,
-			InputReason:   "The install source is unknown.",
-		},
-	})
-
-	if !strings.Contains(systemPrompt, "You are Shellia's planning layer.") {
-		t.Fatalf("system prompt = %q, want standard planning prompt", systemPrompt)
-	}
-	requiredSnippets := []string{
-		"Discovery repair mode",
-		"Previous empty planning response",
-		"Need install source.",
-		"The install source is unknown.",
-		"discovered locally from this machine",
-	}
-	for _, snippet := range requiredSnippets {
-		if !strings.Contains(userPrompt, snippet) {
-			t.Fatalf("buildDiscoveryRepairLLMPrompts() user prompt missing %q in %q", snippet, userPrompt)
-		}
-	}
-}
-
-// TestCallDiscoveryRepairLLMSendsRepairPrompt checks the repair LLM path uses the discovery prompt.
-func TestCallDiscoveryRepairLLMSendsRepairPrompt(t *testing.T) {
-	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"summary":"Inspect locally.","requires_observation":true,"observation_reason":"Use command output.","commands":[{"command":"command -v shellia","purpose":"Find shellia","risk":"safe","requires_confirmation":false,"interactive":false,"interactive_reason":""}]}`,
-	})
-	cfg := loopTestConfig(fake.URL())
-	ctxInfo := contextInfo{
-		CWD:   "/tmp/project",
-		User:  "xesc",
-		OS:    "darwin/arm64",
-		Shell: "/bin/zsh",
-	}
-
-	raw, err := callDiscoveryRepairLLM(t.Context(), fake.HTTPClient(), DiscoveryPromptRequest{
-		Prompt: PromptRequest{
-			Config:      cfg,
-			ContextInfo: ctxInfo,
-			Instruction: "update shellia",
-		},
-		Previous: Response{
-			Summary:       "Need install source.",
-			RequiresInput: true,
-			InputReason:   "The install source is unknown.",
-		},
-	})
-	if err != nil {
-		t.Fatalf("callDiscoveryRepairLLM() error = %v", err)
-	}
-	if !strings.Contains(raw, "command -v shellia") {
-		t.Fatalf("callDiscoveryRepairLLM() = %q, want fake repair response", raw)
-	}
-
-	bodies := fake.requestBodies()
-	if len(bodies) != 1 || !strings.Contains(bodies[0], "Discovery repair mode") {
-		t.Fatalf("repair request bodies = %#v, want discovery repair prompt", bodies)
-	}
-}
-
-// TestBuildUserPromptAlwaysAddsJSONGuidance checks JSON instructions do not depend on response_format.
-func TestBuildUserPromptAlwaysAddsJSONGuidance(t *testing.T) {
-	ctxInfo := contextInfo{
-		CWD:   "/tmp/project",
-		User:  "xesc",
-		OS:    "darwin/arm64",
-		Shell: "/bin/zsh",
-	}
-
-	localCfg := defaultConfig()
-	localCfg.BaseURL = "http://localhost:8080/v1"
-	localCfg.APIKey = ""
-	localPrompt := buildUserPrompt(PromptRequest{
-		Config:              localCfg,
-		ContextInfo:         ctxInfo,
-		Instruction:         "list files",
-		ResolvedInstruction: "list files",
-	})
-	if !strings.Contains(localPrompt, "Do not repeat the JSON object") {
-		t.Fatalf("buildUserPrompt(local) missing JSON guidance: %q", localPrompt)
-	}
-
-	keyedCfg := defaultConfig()
-	keyedCfg.APIKey = "test-key"
-	keyedPrompt := buildUserPrompt(PromptRequest{
-		Config:              keyedCfg,
-		ContextInfo:         ctxInfo,
-		Instruction:         "list files",
-		ResolvedInstruction: "list files",
-	})
-	if !strings.Contains(keyedPrompt, "Do not repeat the JSON object") {
-		t.Fatalf("buildUserPrompt(keyed) missing JSON guidance: %q", keyedPrompt)
-	}
-}
-
-// TestBuildUserPromptOmitsImplicitGitContext checks repository state is only
-// shared after an explicit command observation.
-func TestBuildUserPromptOmitsImplicitGitContext(t *testing.T) {
-	cfg := defaultConfig()
-	ctxInfo := contextInfo{
-		CWD:   "/tmp/project",
-		User:  "xesc",
-		OS:    "darwin/arm64",
-		Shell: "/bin/zsh",
-	}
-
-	prompt := buildUserPrompt(PromptRequest{
-		Config:              cfg,
-		ContextInfo:         ctxInfo,
-		Instruction:         "check status",
-		ResolvedInstruction: "check status",
-	})
-
-	for _, snippet := range []string{"git.is_repo", "git.branch", "git.status_short"} {
-		if strings.Contains(prompt, snippet) {
-			t.Fatalf("buildUserPrompt() includes implicit Git context %q in %q", snippet, prompt)
-		}
-	}
-}
-
-// TestBuildUserPromptOmitsSessionMemoryWhenDisabled checks stored session context can be hidden.
-func TestBuildUserPromptOmitsSessionMemoryWhenDisabled(t *testing.T) {
-	cfg := defaultConfig()
-	cfg.IncludeSessionMemory = false
-	ctxInfo := contextInfo{
-		CWD:   "/tmp/project",
-		User:  "xesc",
-		OS:    "darwin/arm64",
-		Shell: "/bin/zsh",
-	}
-	history := []historyEntry{{Instruction: "previous task", Result: "previous result"}}
-	state := sessionState{
-		PendingIntent:        "continue deployment",
-		LastRetryInstruction: "run build",
-		LastSuggestedCommand: "git push origin main",
-		LastRuntimeHint:      "docker",
-		LastCreatedFiles:     []string{"release.txt"},
-		LastReferencedFile:   "main.go",
-	}
-
-	prompt := buildUserPrompt(PromptRequest{
-		Config:              cfg,
-		ContextInfo:         ctxInfo,
-		Instruction:         "do it",
-		ResolvedInstruction: "Resolved: do previous task",
-		History:             history,
-		State:               state,
-	})
-
-	for _, snippet := range []string{"Recent session context:", "Session memory:", "Resolved planning context:", "previous task", "run build", "git push origin main"} {
-		if strings.Contains(prompt, snippet) {
-			t.Fatalf("buildUserPrompt() includes disabled session memory %q in %q", snippet, prompt)
-		}
-	}
-}
-
-// TestBuildUserPromptOmitsRecentObservationsWhenDisabled checks command output context can be hidden.
-func TestBuildUserPromptOmitsRecentObservationsWhenDisabled(t *testing.T) {
-	cfg := defaultConfig()
-	cfg.IncludeRecentObservations = false
-	ctxInfo := contextInfo{
-		CWD:   "/tmp/project",
-		User:  "xesc",
-		OS:    "darwin/arm64",
-		Shell: "/bin/zsh",
-	}
-	state := sessionState{
-		LastObservations: []observationMemory{
-			{Purpose: "Check status", Command: "git status --short", Transcript: "stdout:\n M llm.go"},
-		},
-	}
-	observations := []commandExecution{
-		{Purpose: "List files", Command: "ls", Stdout: capturedStream{Text: "main.go"}},
-	}
-
-	prompt := buildUserPrompt(PromptRequest{
-		Config:              cfg,
-		ContextInfo:         ctxInfo,
-		Instruction:         "run it again",
-		ResolvedInstruction: "run it again",
-		State:               state,
-		Observations:        observations,
-	})
-
-	for _, snippet := range []string{"Recent reusable observations:", "Observed outputs from the current task:", "git status --short", "main.go"} {
-		if strings.Contains(prompt, snippet) {
-			t.Fatalf("buildUserPrompt() includes disabled observations %q in %q", snippet, prompt)
-		}
-	}
-}
-
-// TestBuildUserPromptAddsPlanOnlyGuidance checks /plan requests human-readable branch guidance.
-func TestBuildUserPromptAddsPlanOnlyGuidance(t *testing.T) {
-	cfg := defaultConfig()
-	cfg.PlanOnly = true
-	ctxInfo := contextInfo{
-		CWD:   "/tmp/project",
-		User:  "xesc",
-		OS:    "darwin/arm64",
-		Shell: "/bin/zsh",
-	}
-
-	prompt := buildUserPrompt(PromptRequest{
-		Config:              cfg,
-		ContextInfo:         ctxInfo,
-		Instruction:         "inspect docker",
-		ResolvedInstruction: "inspect docker",
-	})
-
-	requiredSnippets := []string{
-		"Plan-only mode:",
-		"not an execution round",
-		"no automatic discovery repair",
-		"exact preparation commands",
-		"manual decision branches",
-	}
-	for _, snippet := range requiredSnippets {
-		if !strings.Contains(prompt, snippet) {
-			t.Fatalf("buildUserPrompt() missing %q in %q", snippet, prompt)
-		}
-	}
-}
-
-// TestBuildUserPromptMakesReusableObservationsNonBlocking checks that prior
-// outputs remain context without blocking explicit fresh execution requests.
-func TestBuildUserPromptMakesReusableObservationsNonBlocking(t *testing.T) {
-	cfg := defaultConfig()
-	ctxInfo := contextInfo{
-		CWD:   "/tmp/project",
-		User:  "xesc",
-		OS:    "darwin/arm64",
-		Shell: "/bin/zsh",
-	}
-	state := sessionState{
-		LastRetryInstruction: "run failing build",
-		LastObservations: []observationMemory{
-			{
-				Purpose:    "Check status",
-				Command:    "git status --short",
-				Transcript: "stdout:\n M llm.go",
-			},
-		},
-	}
-
-	prompt := buildUserPrompt(PromptRequest{
-		Config:              cfg,
-		ContextInfo:         ctxInfo,
-		Instruction:         "zeige mir den status",
-		ResolvedInstruction: "zeige mir den status",
-		State:               state,
-	})
-
-	requiredSnippets := []string{
-		"Recent reusable observations:",
-		"last_retry_instruction: run failing build",
-		"git status --short",
-		"Decision order:",
-		"decide intent inside this planning response",
-		"local Shellia code has not pre-classified natural-language follow-ups",
-		"optional context for resolving references",
-		"retry in any language",
-		"If the current instruction is a new unrelated task, ignore stale session memory",
-		"Observation policy:",
-		"task continuity only",
-		"NOT a reason to skip a fresh execution request",
-		"Never skip commands based solely on reusable observations from prior turns",
-	}
-	for _, snippet := range requiredSnippets {
-		if !strings.Contains(prompt, snippet) {
-			t.Fatalf("buildUserPrompt() missing %q in %q", snippet, prompt)
-		}
-	}
-}
-
-// TestBuildDiscoveryRepairPromptIncludesContext checks that the discovery repair
-// prompt keeps the normal planning context and adds the repair instructions.
-func TestBuildDiscoveryRepairPromptIncludesContext(t *testing.T) {
-	cfg := defaultConfig()
-	ctxInfo := contextInfo{
-		CWD:   "/tmp/project",
-		User:  "xesc",
-		OS:    "darwin/arm64",
-		Shell: "/bin/zsh",
-	}
-	history := []historyEntry{
-		{Instruction: "check brew", Result: "brew is installed"},
-	}
-	state := sessionState{
-		PendingIntent:        "actualitza el claude-code",
-		LastRuntimeHint:      "homebrew",
-		LastSuggestedCommand: "brew update",
-	}
-	previous := Response{
-		Summary:       "Cannot determine how Claude Code was installed.",
-		RequiresInput: true,
-		InputReason:   "Need the installation method.",
-	}
-
-	prompt := buildDiscoveryRepairPrompt(DiscoveryPromptRequest{
-		Prompt: PromptRequest{
-			Config:              cfg,
-			ContextInfo:         ctxInfo,
-			Instruction:         "actualitza el claude-code",
-			ResolvedInstruction: "actualitza el claude-code",
-			History:             history,
-			State:               state,
-		},
-		Previous: previous,
-	})
-
-	requiredSnippets := []string{
-		"User instruction:",
-		"Current context:",
-		"- cwd: /tmp/project",
-		"Recent session context:",
-		"Session memory:",
-		"Discovery repair mode:",
-		"Do not stop after one unsuccessful ownership or installation check if other plausible local discovery paths still exist.",
-		"In your summary, briefly tell the user that the first verification was not conclusive and that you are continuing with another short investigation.",
-		"Previous empty planning response:",
-		"requires_input: true",
-		"Need the installation method.",
-	}
-	for _, snippet := range requiredSnippets {
-		if !strings.Contains(prompt, snippet) {
-			t.Fatalf("buildDiscoveryRepairPrompt() missing %q in %q", snippet, prompt)
-		}
+	_, err := callPlanningPrompt(context.Background(), client, cfg, "system", "user")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("callPlanningPrompt() error = %v, want request deadline", err)
 	}
 }

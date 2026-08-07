@@ -30,11 +30,11 @@ The executable entry point is in `cmd/shellia`. Private implementation packages 
 ```
 cmd/shellia/main.go → app.Run() → parseArgs() → runInteractive() or one-shot
                                       ↓
-                                  runTurn() [configurable planning rounds]
-                                      ├── llm        — HTTP request, streaming, retry, prompt parsing
+                                  runTurn() [goal-driven workflow]
+                                      ├── llm        — HTTP request, retry, decision parsing
                                       ├── safety     — local risk classification
                                       ├── executor   — PTY, capture, confirmation, cwd tracking
-                                      └── ui         — terminal rendering and final answer stream display
+                                      └── ui         — terminal rendering and final answer display
 ```
 
 **File responsibilities:**
@@ -47,7 +47,7 @@ cmd/shellia/main.go → app.Run() → parseArgs() → runInteractive() or one-sh
 | `internal/app` | Arg parsing, interactive session loop, turn orchestration, runtime dependency injection |
 | `internal/core` | Shared types crossing package boundaries |
 | `internal/config` | TOML config loading; precedence: defaults → `~/.config/shellia/config.toml` → env vars → CLI flags |
-| `internal/llm` | OpenAI-compatible API calls, prompt building, response parsing, streaming |
+| `internal/llm` | OpenAI-compatible API calls, prompt building, structured decision parsing |
 | `internal/executor` | Command execution with PTY, bounded output capture, working directory tracking |
 | `internal/safety` | Local risk classification (safe/risky/dangerous) before any LLM trust |
 | `internal/session` | Session state across turns (pending intent, created files, runtime hints, observations) |
@@ -61,7 +61,9 @@ cmd/shellia/main.go → app.Run() → parseArgs() → runInteractive() or one-sh
 - `app.runtimeDeps` — injectable process dependencies for core loop tests and orchestration
 - `core.CommandPlan` — LLM-generated plan for a single command (command, purpose, risk, interactive flag)
 - `core.CommandExecution` — post-execution result including captured stdout/stderr and exit code
-- `core.SessionState` — rolling per-session memory for follow-up turns
+- `core.SessionState` — rolling per-session memory for follow-up turns and structured pending offers
+
+The first coherent workflow decision locks `objective_mode` (`act`, `observe`, `capability`, or `explain`) and `success_criteria`. `act` and `observe` require causal execution or observation evidence before completion. Capability answers never execute in the same turn; any accepted offer starts a fresh workflow and still uses the local safety policy.
 
 **Runtime dependencies and tests:**
 
@@ -78,7 +80,7 @@ cmd/shellia/main.go → app.Run() → parseArgs() → runInteractive() or one-sh
 5. Known-safe allowlist (ls, pwd, cat, git status, docker inspect…) → Safe
 6. Default → Risky
 
-**Output capture** is bounded (configurable bytes) — stdout and stderr are captured separately with live streaming to terminal. Two capture thresholds: `observation_output_chars` (passed back to LLM for re-planning) and `summary_output_chars` (used in final summary).
+**Output capture** is bounded (configurable bytes) — stdout and stderr are captured separately with live streaming to terminal. `observation_output_chars` is the shared output budget passed back to the LLM for the next workflow decision.
 
 ## Coding Conventions
 

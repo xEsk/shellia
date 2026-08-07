@@ -42,7 +42,7 @@ type Config struct {
 	Interactive bool
 	PlanOnly    bool
 
-	// LLM options identify the OpenAI-compatible endpoint used for planning and summaries.
+	// LLM options identify the OpenAI-compatible endpoint used for workflow decisions.
 	BaseURL                string
 	APIKey                 string
 	Model                  string
@@ -59,16 +59,14 @@ type Config struct {
 	ContinueOnError     bool
 	ConfirmationDefault ConfirmationDefault
 	AskConfirmPlan      bool
-	AskConfirmPlanOnly  bool
 	PlanningMaxRounds   int
 	ShellMode           CommandEngineMode
 	CommandMode         CommandEngineMode
 
-	// Output options limit captured command output before it is shown, summarized or reused.
+	// Output options limit captured command output before it is shown or reused as evidence.
 	CaptureStdoutBytes     int
 	CaptureStderrBytes     int
 	ObservationOutputChars int
-	SummaryOutputChars     int
 	MemoryObservationChars int
 	MaxObservationEntries  int
 	TruncationStrategy     core.TruncationStrategy
@@ -126,7 +124,6 @@ type FileConfig struct {
 		YesSafe               *bool  `toml:"yes_safe"`
 		ContinueOnError       *bool  `toml:"continue_on_error"`
 		AskConfirmPlan        *bool  `toml:"ask_confirm_plan"`
-		AskConfirmPlanOnly    *bool  `toml:"ask_confirm_plan_only"`
 		PlanningMaxRounds     int    `toml:"planning_max_rounds"`
 		ConfirmationDefault   string `toml:"confirmation_default"`
 		ShellMode             string `toml:"shell_mode"`
@@ -138,7 +135,6 @@ type FileConfig struct {
 		CaptureStdoutBytes     int    `toml:"capture_stdout_bytes"`
 		CaptureStderrBytes     int    `toml:"capture_stderr_bytes"`
 		ObservationOutputChars int    `toml:"observation_output_chars"`
-		SummaryOutputChars     int    `toml:"summary_output_chars"`
 		MemoryObservationChars int    `toml:"memory_observation_chars"`
 		MaxObservationEntries  int    `toml:"max_observation_entries"`
 		TruncationStrategy     string `toml:"truncation_strategy"`
@@ -180,7 +176,6 @@ func defaultConfig() Config {
 		RequestTimeout:      60 * time.Second,
 		ConfirmationDefault: ConfirmationDefaultNone,
 		AskConfirmPlan:      true,
-		AskConfirmPlanOnly:  true,
 		PlanningMaxRounds:   defaultPlanningMaxRounds,
 		ShellMode:           CommandEngineInteractive,
 		CommandMode:         CommandEnginePlain,
@@ -189,7 +184,6 @@ func defaultConfig() Config {
 		CaptureStdoutBytes:     128 * 1024,
 		CaptureStderrBytes:     256 * 1024,
 		ObservationOutputChars: 1200,
-		SummaryOutputChars:     4000,
 		MemoryObservationChars: 400,
 		MaxObservationEntries:  4,
 		TruncationStrategy:     core.TruncationMixed,
@@ -229,9 +223,6 @@ func applyFileConfig(cfg *Config, fileCfg FileConfig) {
 	if fileCfg.Execution.AskConfirmPlan != nil {
 		cfg.AskConfirmPlan = *fileCfg.Execution.AskConfirmPlan
 	}
-	if fileCfg.Execution.AskConfirmPlanOnly != nil {
-		cfg.AskConfirmPlanOnly = *fileCfg.Execution.AskConfirmPlanOnly
-	}
 	if fileCfg.Execution.PlanningMaxRounds > 0 {
 		cfg.PlanningMaxRounds = fileCfg.Execution.PlanningMaxRounds
 	}
@@ -252,9 +243,6 @@ func applyFileConfig(cfg *Config, fileCfg FileConfig) {
 	}
 	if fileCfg.Output.ObservationOutputChars > 0 {
 		cfg.ObservationOutputChars = fileCfg.Output.ObservationOutputChars
-	}
-	if fileCfg.Output.SummaryOutputChars > 0 {
-		cfg.SummaryOutputChars = fileCfg.Output.SummaryOutputChars
 	}
 	if fileCfg.Output.MemoryObservationChars > 0 {
 		cfg.MemoryObservationChars = fileCfg.Output.MemoryObservationChars
@@ -543,9 +531,6 @@ continue_on_error = false
 # Show the full plan and ask "Execute this plan? [y/n]" before running any commands.
 ask_confirm_plan = true
 
-# Ask for confirmation after showing the plan when running in plan-only mode (--plan flag).
-ask_confirm_plan_only = true
-
 # Maximum number of planning follow-up rounds before Shellia asks whether to continue.
 # You can override it for one run with SHELLIA_PLANNING_MAX_ROUNDS.
 planning_max_rounds = 4
@@ -580,9 +565,6 @@ capture_stderr_bytes = 262144
 # between planning rounds. Smaller values save tokens; larger values give the model
 # more context for re-planning.
 observation_output_chars = 1200
-
-# Maximum characters of command output passed to the summarizer LLM for the final answer.
-summary_output_chars = 4000
 
 # Maximum characters kept per command output in session memory (used across follow-up turns).
 memory_observation_chars = 400
