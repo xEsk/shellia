@@ -91,7 +91,7 @@ func (turn *bandsTurn) plan(cfg configpkg.Config, summary string, plans []core.C
 		titleColor = colorCyan
 	}
 	turn.row("  " + style(turn.ansi, titleColor+colorBold, title))
-	for _, line := range wrapPlainText(summary, surfaceContentWidth(turn.target, bandsMarker+"     ")) {
+	for _, line := range wrapPlainText(summary, turn.contentWidth("    ")) {
 		turn.row("    " + style(turn.ansi, colorWhite+colorBold, line))
 	}
 
@@ -100,7 +100,7 @@ func (turn *bandsTurn) plan(cfg configpkg.Config, summary string, plans []core.C
 	}
 
 	turn.row("  " + style(turn.ansi, colorDim+colorBold, "steps"))
-	for _, line := range planStepLines(turn.target, turn.ansi, cfg, plans) {
+	for _, line := range bandsPlanStepLines(turn.ansi, cfg, plans, turn.contentWidth("    ")) {
 		turn.row("    " + line)
 	}
 }
@@ -132,7 +132,7 @@ func (turn *bandsTurn) final(message string) {
 	}
 
 	turn.row("  " + style(turn.ansi, colorMagenta+colorBold, "Shellia"))
-	for _, line := range renderAnswerMarkdown(message, surfaceContentWidth(turn.target, bandsMarker+"     "), turn.ansi) {
+	for _, line := range renderAnswerMarkdown(message, turn.contentWidth("    "), turn.ansi) {
 		turn.row("    " + line)
 	}
 }
@@ -151,6 +151,43 @@ func (turn *bandsTurn) close() {
 
 func (turn *bandsTurn) row(text string) {
 	fmt.Fprintln(turn.target, bandsTurnRow(turn.ansi, bandsShelliaBackground, colorMagenta, text, boxWidthFor(turn.target)))
+}
+
+func (turn *bandsTurn) contentWidth(indent string) int {
+	width := boxWidthFor(turn.target) - visibleWidth(bandsMarker+" "+indent)
+	if width < 1 {
+		return 1
+	}
+	return width
+}
+
+func bandsPlanStepLines(ansi bool, cfg configpkg.Config, plans []core.CommandPlan, width int) []string {
+	lines := make([]string, 0, len(plans)*4)
+	for index, plan := range plans {
+		prefixPlain := fmt.Sprintf("%d. ", index+1)
+		prefixRendered := stepBadge(ansi, index+1) + " "
+		purposeWidth := width - visibleWidth(prefixPlain)
+		if purposeWidth < 1 {
+			purposeWidth = 1
+		}
+		for lineIndex, line := range wrapPlainText(plan.Purpose, purposeWidth) {
+			if lineIndex == 0 {
+				lines = append(lines, prefixRendered+line)
+				continue
+			}
+			lines = append(lines, strings.Repeat(" ", visibleWidth(prefixPlain))+line)
+		}
+		lines = append(lines, renderCommandBox(ansi, plan.Command, width)...)
+		if cfg.Verbose {
+			lines = append(lines,
+				fmt.Sprintf("%s %s", metaLabel(ansi, "risk"), riskBadge(ansi, plan.Risk)),
+				fmt.Sprintf("%s %s", metaLabel(ansi, "safety"), classificationBadge(ansi, plan.Classification)),
+				fmt.Sprintf("%s %s", metaLabel(ansi, "confirm"), confirmBadge(ansi, plan.RequiresConfirmation)),
+			)
+		}
+		lines = append(lines, "")
+	}
+	return lines
 }
 
 func newBandsStepSurface(target io.Writer, ansi bool) *bandsStepSurface {
@@ -242,7 +279,10 @@ func bandsExecutionRow(ansi bool, text string, width int) string {
 }
 
 func bandsANSIRow(background string, accent string, prefix string, text string, width int) string {
-	text = strings.ReplaceAll(text, colorReset, colorReset+background)
+	text = strings.NewReplacer(
+		colorReset, colorReset+background,
+		"\033[m", "\033[m"+background,
+	).Replace(text)
 	row := background + accent + prefix + colorReset + background + text
 	if padding := bandsRowPadding(prefix+text, width); padding > 0 {
 		row += strings.Repeat(" ", padding)
