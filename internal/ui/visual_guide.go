@@ -80,7 +80,7 @@ func (turn *guideTurn) plan(cfg configpkg.Config, summary string, plans []core.C
 	}
 
 	turn.write("  " + style(turn.ansi, colorDim+colorBold, "steps"))
-	for _, line := range planStepLines(turn.target, turn.ansi, cfg, plans) {
+	for _, line := range guidePlanStepLines(turn.ansi, cfg, plans, turn.contentWidth("    ")) {
 		turn.write("    " + line)
 	}
 }
@@ -142,11 +142,40 @@ func (turn *guideTurn) write(content string) {
 }
 
 func (turn *guideTurn) contentWidth(indent string) int {
-	width := boxWidthFor(turn.target) - visibleWidth("│"+indent)
+	width := boxWidthFor(turn.target) - visibleWidth("│ "+indent)
 	if width < 1 {
 		return 1
 	}
 	return width
+}
+
+func guidePlanStepLines(ansi bool, cfg configpkg.Config, plans []core.CommandPlan, width int) []string {
+	lines := make([]string, 0, len(plans)*4)
+	for index, plan := range plans {
+		prefixPlain := fmt.Sprintf("%d. ", index+1)
+		prefixRendered := stepBadge(ansi, index+1) + " "
+		purposeWidth := width - visibleWidth(prefixPlain)
+		if purposeWidth < 1 {
+			purposeWidth = 1
+		}
+		for lineIndex, line := range wrapPlainText(plan.Purpose, purposeWidth) {
+			if lineIndex == 0 {
+				lines = append(lines, prefixRendered+line)
+				continue
+			}
+			lines = append(lines, strings.Repeat(" ", visibleWidth(prefixPlain))+line)
+		}
+		lines = append(lines, renderCommandBox(ansi, plan.Command, width)...)
+		if cfg.Verbose {
+			lines = append(lines,
+				fmt.Sprintf("%s %s", metaLabel(ansi, "risk"), riskBadge(ansi, plan.Risk)),
+				fmt.Sprintf("%s %s", metaLabel(ansi, "safety"), classificationBadge(ansi, plan.Classification)),
+				fmt.Sprintf("%s %s", metaLabel(ansi, "confirm"), confirmBadge(ansi, plan.RequiresConfirmation)),
+			)
+		}
+		lines = append(lines, "")
+	}
+	return lines
 }
 
 func (surface *guideStepSurface) writer() io.Writer {
