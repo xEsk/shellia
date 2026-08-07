@@ -125,7 +125,7 @@ func (t *Turn) Close()
 - Modify: `internal/app/runtime.go`
 
 **Interfaces:**
-- Produces: `config.VisualStyle`, `config.NormalizeVisualStyle`, `ui.Presentation` inputs i `effectivePresentation(cfg, deps)`.
+- Produces: `config.VisualStyle`, `config.NormalizeVisualStyle` i `effectivePresentation(cfg, deps)` amb un resultat privat `{Style, ANSI}` d’`app`; Task 2 el convertirà a `ui.Presentation` quan creï el renderer.
 - Dependency: cap.
 
 - [ ] **Step 1: Escriure els tests RED de configuració**
@@ -247,15 +247,10 @@ Commit: `Add terminal visual style configuration`
 - [ ] **Step 1: Escriure una fixture semàntica i el RED de selecció**
 
 ```go
-func TestNewRendererSelectsEveryImplementation(t *testing.T) {
-	for _, style := range []configpkg.VisualStyle{
-		configpkg.VisualStylePlain, configpkg.VisualStyleGuide,
-		configpkg.VisualStyleBands, configpkg.VisualStyleCards,
-	} {
-		var out bytes.Buffer
-		renderer := NewRenderer(&out, Presentation{Style: style, ANSI: false})
-		if renderer == nil { t.Fatalf("NewRenderer(%q) = nil", style) }
-	}
+func TestNewRendererSelectsPlain(t *testing.T) {
+	var out bytes.Buffer
+	renderer := NewRenderer(&out, Presentation{Style: configpkg.VisualStylePlain, ANSI: false})
+	if renderer == nil { t.Fatal("NewRenderer(plain) = nil") }
 }
 ```
 
@@ -279,10 +274,12 @@ func newTestTurn(out io.Writer, style configpkg.VisualStyle, ansi bool) *Turn {
 	return r.BeginShelliaTurn(testConfig(), core.ContextInfo{CWD: "/Users/Xesc/Documents/Scripts"})
 }
 
-func renderConversationFixture(t *testing.T, style configpkg.VisualStyle, ansi bool) string {
+type testRendererFactory func(io.Writer, bool) rendererImpl
+
+func renderConversationFixture(t *testing.T, factory testRendererFactory, ansi bool) string {
 	t.Helper()
 	var out bytes.Buffer
-	r := NewRenderer(&out, Presentation{Style: style, ANSI: ansi})
+	r := &Renderer{impl: factory(&out, ansi), ansi: ansi}
 	r.UserTurn(core.InteractiveModeAI, "quant d'espai queda al disc?")
 	turn := r.BeginShelliaTurn(testConfig(), core.ContextInfo{CWD: "/Users/Xesc/Documents/Scripts"})
 	turn.Plan(testConfig(), "Cal consultar l'espai disponible.", []core.CommandPlan{testPlan()}, false)
@@ -314,7 +311,7 @@ Expected: FAIL perquè les façanes i el selector no existeixen.
 
 - [ ] **Step 3: Crear façanes i primitives compartides**
 
-Implementar exactament els contractes fixats a l’inici del pla. `visual_surface.go` pot contenir width, wrapping, prefix, row i lifecycle incremental; no pot contenir noms ni switches de `plain`, `guide`, `bands` o `cards`.
+Implementar exactament els contractes fixats a l’inici del pla. Cada tema exposa internament un constructor amb la mateixa forma `func(io.Writer, bool) rendererImpl`; Task 2 només registra `plain`. `visual_surface.go` pot contenir width, wrapping, prefix, row i lifecycle incremental; no pot contenir noms ni switches de `plain`, `guide`, `bands` o `cards`.
 
 Adaptar `stepBox` perquè escrigui a una superfície creada pel torn, mantenint els seus mètodes actuals (`Command`, `Bullet`, `Text`, `Section`, `KeyValue`, `OutputLabel`, `OutputLine`, `EditCommand`, `ReplaceLastRenderedRow`, `IsClosed`, `Close`). `newStepBox` continua creant la superfície plain per als callers no migrats.
 
@@ -361,14 +358,14 @@ Commit: `Route plain output through visual renderer`
 
 ```go
 func TestGuideRendererNestsTechnicalActivity(t *testing.T) {
-	output := renderConversationFixture(t, configpkg.VisualStyleGuide, false)
+	output := renderConversationFixture(t, newGuideRenderer, false)
 	for _, want := range []string{"│ Tu", "│ you › quant d'espai", "│ Shellia", "│   plan", "│   step 1/1", "│     system output"} {
 		if !strings.Contains(output, want) { t.Fatalf("guide output lacks %q:\n%s", want, output) }
 	}
 }
 
 func TestGuideNoColorKeepsGeometryWithoutANSI(t *testing.T) {
-	output := renderConversationFixture(t, configpkg.VisualStyleGuide, false)
+	output := renderConversationFixture(t, newGuideRenderer, false)
 	if strings.Contains(output, "\033[") || !strings.Contains(output, "│") { t.Fatalf("output = %q", output) }
 }
 ```
@@ -406,14 +403,14 @@ Commit: `Add guide conversation renderer`
 
 ```go
 func TestBandsRendererOwnsWholeTurns(t *testing.T) {
-	output := renderConversationFixture(t, configpkg.VisualStyleBands, true)
+	output := renderConversationFixture(t, newBandsRenderer, true)
 	if !strings.Contains(output, "▌") { t.Fatalf("bands marker missing: %q", output) }
 	if !strings.Contains(output, "\033[48;") { t.Fatalf("bands background missing: %q", output) }
 	assertOrdered(t, output, "Tu", "Shellia", "plan", "step 1/1", "system output")
 }
 
 func TestBandsNoColorUsesMarkerNotBackground(t *testing.T) {
-	output := renderConversationFixture(t, configpkg.VisualStyleBands, false)
+	output := renderConversationFixture(t, newBandsRenderer, false)
 	if strings.Contains(output, "\033[") || !strings.Contains(output, "▌") { t.Fatalf("output = %q", output) }
 }
 ```
@@ -444,7 +441,7 @@ Commit: `Add turn band renderer`
 ```go
 func TestCardsRendererStreamsBeforeCloseAndClosesOnce(t *testing.T) {
 	var out bytes.Buffer
-	r := NewRenderer(&out, Presentation{Style: configpkg.VisualStyleCards, ANSI: false})
+	r := &Renderer{impl: newCardsRenderer(&out, false), ansi: false}
 	turn := r.BeginShelliaTurn(testConfig(), core.ContextInfo{CWD: "/tmp"})
 	step := turn.BeginStep(testConfig(), 1, 1, testPlan())
 	step.OutputLabel()
