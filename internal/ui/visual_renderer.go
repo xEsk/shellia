@@ -48,6 +48,12 @@ func NewRenderer(target io.Writer, presentation Presentation) *Renderer {
 	switch presentation.Style {
 	case configpkg.VisualStylePlain:
 		impl = newPlainRenderer(target, presentation.ANSI)
+	case configpkg.VisualStyleGuide:
+		impl = newGuideRenderer(target, presentation.ANSI)
+	case configpkg.VisualStyleBands:
+		impl = newBandsRenderer(target, presentation.ANSI)
+	case configpkg.VisualStyleCards:
+		impl = newCardsRenderer(target, presentation.ANSI)
 	default:
 		impl = newPlainRenderer(target, presentation.ANSI)
 	}

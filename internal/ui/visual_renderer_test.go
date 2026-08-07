@@ -75,6 +75,30 @@ func TestNewRendererSelectsPlain(t *testing.T) {
 	}
 }
 
+func TestNewRendererSelectsEveryVisualStyle(t *testing.T) {
+	tests := []struct {
+		name  string
+		style configpkg.VisualStyle
+		want  string
+	}{
+		{name: "plain", style: configpkg.VisualStylePlain, want: "you › selected"},
+		{name: "guide", style: configpkg.VisualStyleGuide, want: "│ Tu"},
+		{name: "bands", style: configpkg.VisualStyleBands, want: "▌ Tu"},
+		{name: "cards", style: configpkg.VisualStyleCards, want: "┌─ Tu"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			renderer := NewRenderer(&out, Presentation{Style: tt.style, ANSI: false})
+			renderer.UserTurn(core.InteractiveModeAI, "selected")
+			if !strings.Contains(out.String(), tt.want) {
+				t.Fatalf("NewRenderer(%q) output lacks %q: %q", tt.style, tt.want, out.String())
+			}
+		})
+	}
+}
+
 func TestNewRendererFallsBackToPlain(t *testing.T) {
 	var out bytes.Buffer
 	renderer := NewRenderer(&out, Presentation{Style: configpkg.VisualStyle("unknown"), ANSI: false})
