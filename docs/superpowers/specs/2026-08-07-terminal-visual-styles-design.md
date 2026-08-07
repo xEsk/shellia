@@ -157,7 +157,8 @@ La feature haurà de demostrar amb proves de regressió que la selecció implíc
 - Mentre espera entrada, el prompt interactiu identifica l’usuari actiu (`xesc ›`); `›` és un indicador d’edició i no forma part del transcript consolidat.
 - En enviar-se, el torn de l’usuari rep una guia vertical gruixuda cian (`┃`), una sola etiqueta amb el nom de l’usuari actiu i el text en una fila separada sense `you` ni `›`.
 - Totes les files del torn d’usuari comparteixen una superfície compacta de fons blau-petroli molt fosc, sense vores, que acaba poc després del contingut més ample en lloc d’omplir el terminal.
-- La superfície aporta una columna de padding intern a cada costat. La seva amplada és la de la fila visible més llarga més aquest padding, limitada per l’amplada disponible del terminal, i s’aplica a totes les files d’un prompt multilínia.
+- La superfície comença immediatament després de `┃`, sense cap cel·la amb el fons del terminal entre la guia i el bloc, i aporta dues columnes de padding intern a cada costat. La seva amplada és la de la fila visible més llarga més aquest padding, limitada per l’amplada disponible del terminal, i s’aplica a totes les files d’un prompt multilínia.
+- Una fila buida amb el mateix fons obre i tanca la superfície per donar padding vertical al contingut. Després de la fila inferior es conserva una fila amb el fons normal del terminal per separar el torn de l’usuari del torn de Shellia.
 - El torn de Shellia rep la mateixa guia vertical gruixuda (`┃`) en magenta.
 - Plans, passos i resposta final comparteixen aquesta identitat de torn.
 - Cada execució conserva el command box actual i usa la guia fina actual (`│`) com a guia secundària neutra per a propòsit, confirmació i output.

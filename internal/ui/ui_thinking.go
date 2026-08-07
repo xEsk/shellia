@@ -24,7 +24,7 @@ const (
 )
 
 // startThinkingIndicator renders a subtle animated Thinking status on the current line.
-func startThinkingIndicator(ui bool, target io.Writer) *thinkingIndicator {
+func startThinkingIndicator(ui bool, target io.Writer, prefix string) *thinkingIndicator {
 	output, ok := target.(*os.File)
 	if !ok {
 		return nil
@@ -64,14 +64,14 @@ func startThinkingIndicator(ui bool, target io.Writer) *thinkingIndicator {
 				}
 				return
 			case <-delayTimer.C:
-				renderThinkingFrame(target, ui, frame, true)
+				renderThinkingFrame(target, ui, frame, true, prefix)
 				shown = true
 				frame++
 			case <-ticker.C:
 				if !shown {
 					continue
 				}
-				renderThinkingFrame(target, ui, frame, false)
+				renderThinkingFrame(target, ui, frame, false, prefix)
 				frame++
 			}
 		}
@@ -95,11 +95,12 @@ func clearThinkingLine(target io.Writer) {
 }
 
 // renderThinkingFrame repaints the current line with the requested Thinking frame.
-func renderThinkingFrame(target io.Writer, ui bool, frame int, firstFrame bool) {
-	if firstFrame {
+func renderThinkingFrame(target io.Writer, ui bool, frame int, firstFrame bool, prefix string) {
+	if firstFrame && prefix == "" {
 		fmt.Fprint(target, "\n")
 	}
 	fmt.Fprint(target, "\r\033[2K")
+	fmt.Fprint(target, prefix)
 	fmt.Fprint(target, thinkingStatusFrame(ui, frame))
 }
 

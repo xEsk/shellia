@@ -152,8 +152,8 @@ func PromptPlanningLimitContinuation(target io.Writer, ui bool, stdin *os.File, 
 type ThinkingIndicator = thinkingIndicator
 
 // StartThinkingIndicator starts the thinking animation when UI is enabled.
-func StartThinkingIndicator(ui bool, target io.Writer) *ThinkingIndicator {
-	return startThinkingIndicator(ui, target)
+func StartThinkingIndicator(ui bool, target io.Writer, prefix string) *ThinkingIndicator {
+	return startThinkingIndicator(ui, target, prefix)
 }
 
 // Stop stops the thinking animation.

@@ -11,6 +11,7 @@ import (
 type Presentation struct {
 	Style configpkg.VisualStyle
 	ANSI  bool
+	User  string
 }
 
 // Renderer presents user and Shellia turns through one selected visual style.
@@ -27,6 +28,18 @@ type Turn struct {
 type rendererImpl interface {
 	userTurn(core.InteractiveMode, string)
 	beginShelliaTurn(configpkg.Config, core.ContextInfo) turnImpl
+}
+
+type userTurnQuestionOwner interface {
+	ownsUserTurnQuestion() bool
+}
+
+type interactivePromptPrefixProvider interface {
+	interactivePromptPrefix(core.InteractiveMode) string
+}
+
+type thinkingPrefixProvider interface {
+	thinkingPrefix() string
 }
 
 type turnImpl interface {
@@ -49,7 +62,7 @@ func NewRenderer(target io.Writer, presentation Presentation) *Renderer {
 	case configpkg.VisualStylePlain:
 		impl = newPlainRenderer(target, presentation.ANSI)
 	case configpkg.VisualStyleGuide:
-		impl = newGuideRenderer(target, presentation.ANSI)
+		impl = newGuideRendererWithUser(target, presentation.ANSI, presentation.User)
 	case configpkg.VisualStyleBands:
 		impl = newBandsRenderer(target, presentation.ANSI)
 	case configpkg.VisualStyleCards:
@@ -67,6 +80,23 @@ func (renderer *Renderer) UserTurn(mode core.InteractiveMode, text string) {
 		return
 	}
 	renderer.impl.userTurn(mode, text)
+}
+
+func (renderer *Renderer) ownsUserTurnQuestion(mode core.InteractiveMode) bool {
+	if renderer == nil || renderer.impl == nil || mode != core.InteractiveModeAI {
+		return false
+	}
+	owner, ok := renderer.impl.(userTurnQuestionOwner)
+	return ok && owner.ownsUserTurnQuestion()
+}
+
+func (renderer *Renderer) interactivePromptPrefix(ui bool, mode core.InteractiveMode) string {
+	if renderer != nil && renderer.impl != nil {
+		if provider, ok := renderer.impl.(interactivePromptPrefixProvider); ok {
+			return provider.interactivePromptPrefix(mode)
+		}
+	}
+	return promptPrefix(ui, mode)
 }
 
 // BeginShelliaTurn opens one Shellia response turn.
@@ -99,6 +129,18 @@ func (turn *Turn) Final(message string) {
 		return
 	}
 	turn.impl.final(message)
+}
+
+// ThinkingPrefix returns the visual prefix for an in-progress model request.
+func (turn *Turn) ThinkingPrefix() string {
+	if turn == nil || turn.impl == nil {
+		return ""
+	}
+	provider, ok := turn.impl.(thinkingPrefixProvider)
+	if !ok {
+		return ""
+	}
+	return provider.thinkingPrefix()
 }
 
 // Suspend temporarily leaves the visual surface before terminal handoff.

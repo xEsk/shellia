@@ -604,7 +604,7 @@ func readInteractivePromptWithRenderer(ui bool, reader *bufio.Reader, stdin *os.
 
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, promptQuestionLine(ui, mode))
-	prompt := promptPrefix(ui, mode)
+	prompt := renderer.interactivePromptPrefix(ui, mode)
 
 	fd := int(stdin.Fd())
 	if !term.IsTerminal(fd) {
@@ -654,11 +654,11 @@ func readInteractivePromptWithRenderer(ui bool, reader *bufio.Reader, stdin *os.
 				continue
 			}
 			submitted := strings.TrimSpace(string(buffer))
-			clearEditablePromptTo(stdout, renderState)
+			clearSubmittedPromptTo(stdout, renderState, mode, renderer)
 			renderSubmittedPrompt(stdout, ui, prompt, buffer, mode, renderer)
 			return submitted, nil
 		case 3:
-			clearEditablePromptTo(stdout, renderState)
+			clearSubmittedPromptTo(stdout, renderState, mode, renderer)
 			renderSubmittedPrompt(stdout, ui, prompt, buffer, mode, renderer)
 			return "exit", nil
 		case 27:
@@ -667,7 +667,7 @@ func readInteractivePromptWithRenderer(ui bool, reader *bufio.Reader, stdin *os.
 				return "", fmt.Errorf("cannot apply prompt escape sequence: %w", err)
 			}
 			if result.exit {
-				clearEditablePromptTo(stdout, renderState)
+				clearSubmittedPromptTo(stdout, renderState, mode, renderer)
 				renderSubmittedPrompt(stdout, ui, prompt, buffer, mode, renderer)
 				return "exit", nil
 			}
@@ -707,6 +707,14 @@ func renderSubmittedPrompt(target io.Writer, ui bool, prompt string, buffer []ru
 	}
 	printSubmittedPromptTo(target, ui, prompt, buffer)
 	fmt.Fprint(target, "\r\n")
+}
+
+func clearSubmittedPromptTo(target io.Writer, state *editableRenderState, mode interactiveMode, renderer *Renderer) {
+	clearEditablePromptTo(target, state)
+	if renderer == nil || !renderer.ownsUserTurnQuestion(mode) {
+		return
+	}
+	fmt.Fprint(target, "\033[1A\r\033[2K")
 }
 
 // readFallbackPromptLine reads one prompt line when raw terminal editing is unavailable.
@@ -795,7 +803,7 @@ func renderConfirmationPrompt(box *stepBox, prompt string, defaultChoice confirm
 	if box == nil {
 		return
 	}
-	box.writeRow(buildConfirmRow(box.ui, prompt, renderConfirmationOptions(box.ui, defaultChoice), ""))
+	box.surface.renderEditableRow(buildConfirmRow(box.ui, prompt, renderConfirmationOptions(box.ui, defaultChoice), ""), 0)
 }
 
 // logConfirmationChoice records the confirmation decision on the same line as the original prompt.
@@ -803,6 +811,7 @@ func logConfirmationChoice(box *stepBox, prompt string, defaultChoice confirmati
 	if box == nil {
 		return
 	}
+	fmt.Fprint(box.target, "\r\n")
 	box.ReplaceLastRenderedRow(buildConfirmRow(box.ui, prompt, renderConfirmationOptions(box.ui, defaultChoice), choice))
 }
 
@@ -812,6 +821,7 @@ func promptConfirmation(box *stepBox, reader *bufio.Reader, stdin *os.File, prom
 
 	key, ok, err := readSingleConfirmationKey(stdin)
 	if err != nil {
+		fmt.Fprint(box.target, "\r\n")
 		return confirmDecisionCancel, "", err
 	}
 	if ok {
@@ -835,6 +845,7 @@ func promptConfirmation(box *stepBox, reader *bufio.Reader, stdin *os.File, prom
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
+			fmt.Fprint(box.target, "\r\n")
 			return confirmDecisionCancel, "", fmt.Errorf("cannot read confirmation answer: %w", err)
 		}
 

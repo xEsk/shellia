@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -230,7 +231,7 @@ func renderVisualWidthFixture(t *testing.T, style configpkg.VisualStyle, ansi bo
 	}
 
 	render := func(target *os.File) {
-		renderer := newRenderer(target, presentation{Style: style, ANSI: ansi})
+		renderer := newRenderer(target, presentation{Style: style, ANSI: ansi, User: ctxInfo.User})
 		renderer.UserTurn(core.InteractiveModeAI, "quant d'espai queda al disc?")
 		turn := renderer.BeginShelliaTurn(cfg, ctxInfo)
 		turn.Plan(cfg, "Cal consultar l'espai disponible.", []core.CommandPlan{plan}, false)
@@ -398,7 +399,7 @@ func assertVisualAcceptanceGeometry(t *testing.T, style configpkg.VisualStyle, o
 	case configpkg.VisualStylePlain:
 		values = []string{"steps", "  1. Mostrar", "step 1/1", "• system output", "──"}
 	case configpkg.VisualStyleGuide:
-		values = []string{"│ Shellia", "│   plan", "│   step 1/1", "│     system output"}
+		values = []string{"┃ Shellia · dev", "┃ plan", "┃   │ step 1/1", "┃   │ • system output"}
 	case configpkg.VisualStyleBands:
 		values = []string{"▌ Shellia", "▌   plan", "▌     step 1/1", "▌     • system output"}
 	case configpkg.VisualStyleCards:
@@ -409,7 +410,11 @@ func assertVisualAcceptanceGeometry(t *testing.T, style configpkg.VisualStyle, o
 	if interactive {
 		switch style {
 		case configpkg.VisualStyleGuide:
-			values = append(values, "│ Tu")
+			currentUser, err := user.Current()
+			if err != nil {
+				t.Fatalf("user.Current() error = %v", err)
+			}
+			values = append(values, "┃  "+currentUser.Username, currentUser.Username+" ›")
 		case configpkg.VisualStyleBands:
 			values = append(values, "▌ Tu")
 		case configpkg.VisualStyleCards:

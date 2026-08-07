@@ -82,7 +82,7 @@ func TestNewRendererSelectsEveryVisualStyle(t *testing.T) {
 		want  string
 	}{
 		{name: "plain", style: configpkg.VisualStylePlain, want: "you › selected"},
-		{name: "guide", style: configpkg.VisualStyleGuide, want: "│ Tu"},
+		{name: "guide", style: configpkg.VisualStyleGuide, want: "┃  you"},
 		{name: "bands", style: configpkg.VisualStyleBands, want: "▌ Tu"},
 		{name: "cards", style: configpkg.VisualStyleCards, want: "┌─ Tu"},
 	}

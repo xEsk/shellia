@@ -168,4 +168,7 @@ func TestRenderConfirmationPromptHighlightsDefault(t *testing.T) {
 	if !strings.Contains(buffer.String(), colorYellow+colorBold+"n"+colorReset) {
 		t.Fatalf("confirmation prompt does not highlight default option: %q", buffer.String())
 	}
+	if strings.HasSuffix(buffer.String(), "\n") {
+		t.Fatalf("confirmation prompt moved the cursor to the next row: %q", buffer.String())
+	}
 }
