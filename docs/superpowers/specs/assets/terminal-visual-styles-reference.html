@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="ca">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shellia · Referència visual dels estils de terminal</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --page-canvas: #12181b;
+      --page-panel: #1a2226;
+      --page-text: #e3e7e8;
+      --page-muted: #94a0a4;
+      --page-line: rgba(218, 229, 232, 0.16);
+      --page-accent: #b48add;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--page-text);
+      background: var(--page-canvas);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    main {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 42px 0 64px;
+    }
+
+    .reference-heading {
+      max-width: 780px;
+      margin-bottom: 22px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(24px, 4vw, 38px);
+      letter-spacing: -0.025em;
+    }
+
+    .reference-heading p,
+    .subtitle {
+      margin: 0;
+      color: var(--page-muted);
+      line-height: 1.55;
+    }
+
+    .reference-note {
+      margin-top: 12px;
+      padding-left: 12px;
+      border-left: 2px solid var(--page-accent);
+      font-size: 14px;
+    }
+
+    .options {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .option {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px;
+      align-items: start;
+      min-height: 72px;
+      padding: 12px;
+      color: var(--page-text);
+      background: var(--page-panel);
+      border: 1px solid var(--page-line);
+      border-radius: 7px;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    .option:hover {
+      border-color: rgba(180, 138, 221, 0.45);
+    }
+
+    .option[aria-pressed="true"] {
+      background: rgba(180, 138, 221, 0.1);
+      border-color: var(--page-accent);
+    }
+
+    .option .letter {
+      display: grid;
+      width: 24px;
+      height: 24px;
+      place-items: center;
+      color: var(--page-accent);
+      background: rgba(180, 138, 221, 0.12);
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .option .content {
+      display: grid;
+      gap: 3px;
+    }
+
+    .option .content strong {
+      font-size: 13px;
+    }
+
+    .option .content span {
+      color: var(--page-muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    @media (max-width: 850px) {
+      .options {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 520px) {
+      main {
+        width: min(100% - 20px, 1180px);
+        padding-top: 24px;
+      }
+
+      .options {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header class="reference-heading">
+    <h1>Estils visuals de terminal</h1>
+    <p>Contracte visual canònic per implementar <code>plain</code>, <code>guide</code>, <code>bands</code> i <code>cards</code> amb la conversa real facilitada durant el disseny.</p>
+    <p class="reference-note">Aquesta pàgina fixa la jerarquia, el niament, la densitat i les superfícies. El renderer de terminal n’adapta el wrapping i els glifs, però no la relació visual entre blocs.</p>
+  </header>
+
+<section id="shellia-real" data-mode="plain" aria-labelledby="shellia-real-title">
+  <style>
+    #shellia-real {
+      --shellia-canvas: #263135;
+      --shellia-chrome: #181f22;
+      --shellia-panel: #303a3e;
+      --shellia-panel-deep: #202a2e;
+      --shellia-text: #e3e7e8;
+      --shellia-secondary: #a8b3b6;
+      --shellia-muted: #7f8b8f;
+      --shellia-line: rgba(218, 229, 232, 0.14);
+      --shellia-user: #53bdd7;
+      --shellia-agent: #b48add;
+      --shellia-command: #62aae5;
+      --shellia-confirm: #d6cb5c;
+      --shellia-user-soft: rgba(83, 189, 215, 0.075);
+      --shellia-agent-soft: rgba(180, 138, 221, 0.075);
+    }
+
+    #shellia-real .options {
+      margin: 14px 0 20px;
+    }
+
+    #shellia-real .option {
+      width: 100%;
+      text-align: left;
+    }
+
+    #shellia-real .option .content {
+      display: grid;
+      gap: 2px;
+    }
+
+    #shellia-real .option .content span {
+      color: var(--page-muted);
+    }
+
+    #shellia-real .shellia-window {
+      overflow: hidden;
+      color: var(--shellia-text);
+      background: var(--shellia-canvas);
+      border: 1px solid var(--shellia-line);
+      border-radius: 8px;
+      box-shadow: 0 16px 38px rgba(0, 0, 0, 0.18);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.52;
+    }
+
+    #shellia-real .shellia-chrome {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      min-height: 34px;
+      padding: 0 12px;
+      color: var(--shellia-muted);
+      background: var(--shellia-chrome);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    #shellia-real .shellia-chrome span:last-child {
+      justify-self: end;
+    }
+
+    #shellia-real .shellia-dots {
+      color: var(--shellia-secondary);
+      letter-spacing: 2px;
+    }
+
+    #shellia-real .shellia-body {
+      padding: 16px 18px 20px;
+    }
+
+    #shellia-real p,
+    #shellia-real pre {
+      margin: 0;
+    }
+
+    #shellia-real pre {
+      overflow-wrap: anywhere;
+      color: inherit;
+      font: inherit;
+      white-space: pre-wrap;
+    }
+
+    #shellia-real .shellia-startup {
+      margin-bottom: 24px;
+      color: var(--shellia-muted);
+    }
+
+    #shellia-real .shellia-launch {
+      color: var(--shellia-user);
+    }
+
+    #shellia-real .shellia-session {
+      display: inline-grid;
+      gap: 1px;
+      margin-top: 14px;
+      padding: 10px 12px;
+      color: var(--shellia-secondary);
+      background: var(--shellia-panel);
+    }
+
+    #shellia-real .shellia-session strong {
+      color: var(--shellia-text);
+      font-weight: 500;
+    }
+
+    #shellia-real .shellia-turn {
+      position: relative;
+      transition: background-color 140ms ease, border-color 140ms ease;
+    }
+
+    #shellia-real .shellia-turn + .shellia-turn {
+      margin-top: 18px;
+    }
+
+    #shellia-real .shellia-turn-label {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    #shellia-real .shellia-user-label {
+      color: var(--shellia-user);
+    }
+
+    #shellia-real .shellia-agent-label,
+    #shellia-real .shellia-plan-label {
+      color: var(--shellia-agent);
+    }
+
+    #shellia-real .shellia-command-label {
+      color: var(--shellia-command);
+    }
+
+    #shellia-real .shellia-question {
+      margin-bottom: 3px;
+      color: var(--shellia-muted);
+    }
+
+    #shellia-real .shellia-prompt-prefix {
+      color: var(--shellia-user);
+      font-weight: 500;
+    }
+
+    #shellia-real .shellia-context {
+      margin-bottom: 14px;
+      color: var(--shellia-muted);
+    }
+
+    #shellia-real .shellia-context strong {
+      color: var(--shellia-text);
+      font-weight: 500;
+    }
+
+    #shellia-real .shellia-phase + .shellia-phase {
+      margin-top: 16px;
+    }
+
+    #shellia-real .shellia-plan {
+      color: var(--shellia-text);
+    }
+
+    #shellia-real .shellia-plan-label,
+    #shellia-real .shellia-command-label {
+      display: block;
+      margin-bottom: 4px;
+      font-weight: 500;
+    }
+
+    #shellia-real .shellia-execution {
+      padding: 11px 12px;
+      background: var(--shellia-panel);
+      border-radius: 5px;
+    }
+
+    #shellia-real .shellia-command {
+      display: inline-block;
+      margin: 3px 0 8px;
+      padding: 7px 10px;
+      color: var(--shellia-command);
+      background: rgba(0, 0, 0, 0.11);
+    }
+
+    #shellia-real .shellia-run-prefix,
+    #shellia-real .shellia-meta-label {
+      color: var(--shellia-muted);
+    }
+
+    #shellia-real .shellia-purpose {
+      color: var(--shellia-secondary);
+    }
+
+    #shellia-real .shellia-confirm {
+      color: var(--shellia-confirm);
+    }
+
+    #shellia-real .shellia-output-label {
+      display: block;
+      margin-top: 6px;
+      color: var(--shellia-muted);
+    }
+
+    #shellia-real .shellia-output {
+      margin-top: 5px;
+      padding-left: 10px;
+      color: var(--shellia-muted);
+    }
+
+    #shellia-real .shellia-answer {
+      margin-top: 16px;
+      color: var(--shellia-text);
+      font-weight: 500;
+    }
+
+    #shellia-real .shellia-original-separator {
+      display: none;
+    }
+
+    #shellia-real .shellia-session-end {
+      margin-top: 22px;
+      color: var(--shellia-muted);
+    }
+
+    #shellia-real[data-mode="plain"] .shellia-user-turn > .shellia-turn-label,
+    #shellia-real[data-mode="plain"] .shellia-agent-turn > .shellia-turn-label {
+      display: none;
+    }
+
+    #shellia-real[data-mode="plain"] .shellia-agent-turn {
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--shellia-line);
+    }
+
+    #shellia-real[data-mode="plain"] .shellia-execution {
+      padding: 16px 0 0;
+      background: transparent;
+      border-top: 1px solid var(--shellia-line);
+      border-radius: 0;
+    }
+
+    #shellia-real[data-mode="plain"] .shellia-plan + .shellia-plan,
+    #shellia-real[data-mode="plain"] .shellia-execution + .shellia-plan {
+      padding-top: 16px;
+      border-top: 1px solid var(--shellia-line);
+    }
+
+    #shellia-real[data-mode="plain"] .shellia-execution + .shellia-execution {
+      margin-top: 16px;
+    }
+
+    #shellia-real[data-mode="guide"] .shellia-turn {
+      padding-left: 18px;
+    }
+
+    #shellia-real[data-mode="guide"] .shellia-turn::before {
+      position: absolute;
+      inset: 2px auto 2px 0;
+      width: 2px;
+      border-radius: 2px;
+      content: "";
+    }
+
+    #shellia-real[data-mode="guide"] .shellia-user-turn::before {
+      background: var(--shellia-user);
+    }
+
+    #shellia-real[data-mode="guide"] .shellia-agent-turn::before {
+      background: var(--shellia-agent);
+    }
+
+    #shellia-real[data-mode="guide"] .shellia-execution {
+      margin-left: 10px;
+      background: rgba(255, 255, 255, 0.035);
+      border-left: 1px solid var(--shellia-line);
+      border-radius: 0 5px 5px 0;
+    }
+
+    #shellia-real[data-mode="bands"] .shellia-turn {
+      padding: 12px 14px;
+      border-left: 3px solid transparent;
+    }
+
+    #shellia-real[data-mode="bands"] .shellia-user-turn {
+      background: var(--shellia-user-soft);
+      border-left-color: var(--shellia-user);
+    }
+
+    #shellia-real[data-mode="bands"] .shellia-agent-turn {
+      background: var(--shellia-agent-soft);
+      border-left-color: var(--shellia-agent);
+    }
+
+    #shellia-real[data-mode="cards"] .shellia-turn {
+      padding: 13px 14px;
+      border: 1px solid var(--shellia-line);
+      border-radius: 7px;
+    }
+
+    #shellia-real[data-mode="cards"] .shellia-user-turn {
+      background: var(--shellia-user-soft);
+      border-color: rgba(83, 189, 215, 0.25);
+    }
+
+    #shellia-real[data-mode="cards"] .shellia-agent-turn {
+      background: var(--shellia-agent-soft);
+      border-color: rgba(180, 138, 221, 0.25);
+    }
+
+    #shellia-real[data-mode="cards"] .shellia-execution {
+      border: 1px solid var(--shellia-line);
+    }
+
+    @media (max-width: 560px) {
+      #shellia-real .shellia-chrome {
+        grid-template-columns: 1fr auto;
+      }
+
+      #shellia-real .shellia-chrome span:nth-child(2) {
+        display: none;
+      }
+
+      #shellia-real .shellia-body {
+        padding: 14px;
+      }
+
+      #shellia-real[data-mode="guide"] .shellia-turn {
+        padding-left: 14px;
+      }
+    }
+  </style>
+
+  <h2 id="shellia-real-title">La mateixa conversa real, amb quatre jerarquies</h2>
+  <p class="subtitle">Canvia de vista i compara els salts entre usuari, pla, execució, output i resposta final.</p>
+
+  <div class="options" aria-label="Jerarquia visual">
+    <button type="button" class="option" data-mode-control="plain" aria-pressed="true">
+      <span class="letter">1</span>
+      <span class="content"><strong>Plain</strong><span>L’estil actual, net i compatible.</span></span>
+    </button>
+    <button type="button" class="option" data-mode-control="guide" aria-pressed="false">
+      <span class="letter">2</span>
+      <span class="content"><strong>Guia de conversa</strong><span>Dos actors, activitat tècnica subordinada.</span></span>
+    </button>
+    <button type="button" class="option" data-mode-control="bands" aria-pressed="false">
+      <span class="letter">3</span>
+      <span class="content"><strong>Bandes de torn</strong><span>Més separació superficial.</span></span>
+    </button>
+    <button type="button" class="option" data-mode-control="cards" aria-pressed="false">
+      <span class="letter">4</span>
+      <span class="content"><strong>Targetes compactes</strong><span>Màxima separació, més pes visual.</span></span>
+    </button>
+  </div>
+
+  <div class="shellia-window" aria-label="Previsualització de la conversa real de Shellia">
+    <div class="shellia-chrome"><span class="shellia-dots">● ● ●</span><span>~/Documents/Scripts</span><span>shellia -i</span></div>
+    <div class="shellia-body">
+      <section class="shellia-startup">
+        <p>Last login: Fri Aug&nbsp; 7 07:19:47 on ttys002</p>
+        <p class="shellia-launch">/Users/Xesc/Documents/Scripts ➜&nbsp; shellia -i</p>
+        <div class="shellia-session">
+          <strong>shellia session · dev</strong>
+          <span>model · gpt-5.4-mini</span>
+          <span>!&lt;cmd&gt;&nbsp; /shell&nbsp; /ai&nbsp; /model&nbsp; /mode&nbsp; exit&nbsp; /clear&nbsp; /context</span>
+        </div>
+      </section>
+
+      <section class="shellia-turn shellia-user-turn">
+        <span class="shellia-turn-label shellia-user-label">Tu</span>
+        <p class="shellia-question">What do you want Shellia to do?</p>
+        <p><span class="shellia-prompt-prefix">you › </span>quant d'espai queda al disc?</p>
+      </section>
+
+      <section class="shellia-turn shellia-agent-turn">
+        <span class="shellia-turn-label shellia-agent-label">Shellia</span>
+        <p class="shellia-context"><strong>Shellia · dev</strong><br>/Users/Xesc/Documents/Scripts</p>
+        <div class="shellia-phase shellia-plan">
+          <span class="shellia-plan-label">plan</span>
+          <p>Cal consultar l'espai disponible al disc ara mateix.</p>
+        </div>
+        <div class="shellia-phase shellia-execution">
+          <span class="shellia-command-label">step 1/1</span>
+          <p class="shellia-command"><span class="shellia-run-prefix">run › </span>df -h /</p>
+          <p class="shellia-purpose">• Mostrar l'espai lliure del disc arrel en format llegible.</p>
+          <span class="shellia-output-label">• system output</span>
+          <pre class="shellia-output">Filesystem        Size    Used   Avail Capacity iused ifree %iused  Mounted on
+/dev/disk3s1s1   926Gi    17Gi   419Gi     4%    427k  4,3G    0%   /</pre>
+        </div>
+        <div class="shellia-answer">
+          <span class="shellia-agent-label">Shellia</span>
+          <p>Queden 419Gi lliures al disc arrel (/).</p>
+        </div>
+      </section>
+
+      <section class="shellia-turn shellia-user-turn">
+        <span class="shellia-turn-label shellia-user-label">Tu</span>
+        <p class="shellia-question">What do you want Shellia to do?</p>
+        <p><span class="shellia-prompt-prefix">you › </span>necessit saber com s'ha instalat codex al sistema</p>
+      </section>
+
+      <section class="shellia-turn shellia-agent-turn">
+        <span class="shellia-turn-label shellia-agent-label">Shellia</span>
+        <p class="shellia-context"><strong>Shellia · dev</strong><br>/Users/Xesc/Documents/Scripts</p>
+        <div class="shellia-phase shellia-plan">
+          <span class="shellia-plan-label">plan</span>
+          <p>Cal observar l’origen de la instal·lació de Codex al sistema. Primer cal localitzar l’executable i després inspeccionar-ne el camí o el gestor d’instal·lació associat.</p>
+        </div>
+        <div class="shellia-phase shellia-execution">
+          <span class="shellia-command-label">step 1/1</span>
+          <p class="shellia-command"><span class="shellia-run-prefix">run › </span>command -v codex</p>
+          <p class="shellia-purpose">• Locate the Codex executable path if installed.</p>
+          <p class="shellia-confirm">• confirm Run step 1/1? [y/e/i/n]: yes</p>
+          <span class="shellia-output-label">• system output</span>
+          <pre class="shellia-output">/opt/homebrew/bin/codex</pre>
+        </div>
+        <div class="shellia-phase shellia-plan">
+          <span class="shellia-plan-label">plan</span>
+          <p>S’ha localitzat l’executable a /opt/homebrew/bin/codex; cal observar el seu enllaç real o metadades del paquet per determinar el gestor d’instal·lació.</p>
+        </div>
+        <div class="shellia-phase shellia-execution">
+          <span class="shellia-command-label">step 1/1</span>
+          <p class="shellia-command"><span class="shellia-run-prefix">run › </span>ls -l /opt/homebrew/bin/codex</p>
+          <p class="shellia-purpose">• Inspect whether codex is a symlink and reveal its target path, which often indicates the installer/source.</p>
+          <span class="shellia-output-label">• system output</span>
+          <pre class="shellia-output">lrwxr-xr-x@ 1 xesc  admin  46  7 ago 07:21 /opt/homebrew/bin/codex -&gt; /opt/homebrew/Caskroom/codex/0.147.0/bin/codex</pre>
+        </div>
+        <div class="shellia-answer">
+          <span class="shellia-agent-label">Shellia</span>
+          <p>Codex està instal·lat via Homebrew Cask. L’executable /opt/homebrew/bin/codex apunta a<br>/opt/homebrew/Caskroom/codex/0.147.0/bin/codex, que és el patró típic d’una instal·lació gestionada per Homebrew.</p>
+        </div>
+      </section>
+
+      <section class="shellia-turn shellia-user-turn">
+        <span class="shellia-turn-label shellia-user-label">Tu</span>
+        <p class="shellia-question">What do you want Shellia to do?</p>
+        <p><span class="shellia-prompt-prefix">you › </span>actualitza codex</p>
+      </section>
+
+      <section class="shellia-turn shellia-agent-turn">
+        <span class="shellia-turn-label shellia-agent-label">Shellia</span>
+        <p class="shellia-context"><strong>Shellia · dev</strong><br>/Users/Xesc/Documents/Scripts</p>
+        <div class="shellia-phase shellia-plan">
+          <span class="shellia-plan-label">plan</span>
+          <p>Codex is installed via Homebrew Cask, so the appropriate update path is to upgrade the cask with Homebrew and then verify the installed version/path.</p>
+        </div>
+        <div class="shellia-phase shellia-execution">
+          <span class="shellia-command-label">step 1/2</span>
+          <p class="shellia-command"><span class="shellia-run-prefix">run › </span>brew upgrade --cask codex</p>
+          <p class="shellia-purpose">• Upgrade the Codex Homebrew Cask to the latest available version.</p>
+          <p class="shellia-confirm">• confirm Run step 1/2? [y/e/i/n]: yes</p>
+          <span class="shellia-output-label">• system output</span>
+          <pre class="shellia-output">✔︎ JSON API packages.arm64_sequoia.jws.json
+Warning: Not upgrading codex, the latest version is already installed</pre>
+        </div>
+        <div class="shellia-phase shellia-execution">
+          <span class="shellia-command-label">step 2/2</span>
+          <p class="shellia-command"><span class="shellia-run-prefix">run › </span>ls -l /opt/homebrew/bin/codex</p>
+          <p class="shellia-purpose">• Verify the Codex symlink after the upgrade to confirm the installed version path changed.</p>
+          <span class="shellia-output-label">• system output</span>
+          <pre class="shellia-output">lrwxr-xr-x@ 1 xesc  admin  46  7 ago 07:21 /opt/homebrew/bin/codex -&gt; /opt/homebrew/Caskroom/codex/0.147.0/bin/codex</pre>
+        </div>
+        <div class="shellia-answer">
+          <span class="shellia-agent-label">Shellia</span>
+          <p>Codex is already up to date via Homebrew Cask, so no update was needed. The installed symlink still points to<br>/opt/homebrew/Caskroom/codex/0.147.0/bin/codex, which matches the latest installed version reported by Homebrew.</p>
+        </div>
+      </section>
+
+      <section class="shellia-turn shellia-user-turn">
+        <span class="shellia-turn-label shellia-user-label">Tu</span>
+        <p class="shellia-question">What do you want Shellia to do?</p>
+        <p><span class="shellia-prompt-prefix">you › </span>pots mirar si hi ha un update nou?</p>
+      </section>
+
+      <section class="shellia-turn shellia-agent-turn">
+        <span class="shellia-turn-label shellia-agent-label">Shellia</span>
+        <p class="shellia-context"><strong>Shellia · dev</strong><br>/Users/Xesc/Documents/Scripts</p>
+        <div class="shellia-answer">
+          <span class="shellia-agent-label">Shellia</span>
+          <p>Shellia could not validate the model's final response. The observed command output remains available above; retry the<br>request if needed.</p>
+        </div>
+      </section>
+
+      <section class="shellia-session-end">
+        <p>What do you want Shellia to do?</p>
+        <p><span class="shellia-prompt-prefix">you ›</span></p>
+        <br>
+        <p>Shellia Session closed.</p>
+        <p class="shellia-launch">/Users/Xesc/Documents/Scripts ➜&nbsp; ;9;27~</p>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const root = document.getElementById('shellia-real');
+      const setShelliaHierarchy = (mode) => {
+        root.dataset.mode = mode;
+        root.querySelectorAll('[data-mode-control]').forEach((control) => {
+          control.setAttribute('aria-pressed', String(control.dataset.modeControl === mode));
+        });
+      };
+
+      root.querySelectorAll('[data-mode-control]').forEach((control) => {
+        control.addEventListener('click', () => setShelliaHierarchy(control.dataset.modeControl));
+      });
+    })();
+  </script>
+</section>
+</main>
+</body>
+</html>

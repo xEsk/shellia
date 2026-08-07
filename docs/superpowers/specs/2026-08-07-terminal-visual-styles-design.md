@@ -77,6 +77,29 @@ La signatura compartida dels estils nous és la superfície de torn: una identit
 - Centralitzar els quatre estils en un renderer gegant ple de branques: acobla variants que han de poder evolucionar independentment.
 - Crear un sistema de plugins dinàmics: afegeix infraestructura, compatibilitat i superfície pública que aquesta feature no necessita.
 
+### 4.5 Referència visual canònica
+
+La composició aprovada no depèn només d’aquesta descripció. El repositori inclou la [referència visual interactiva dels quatre estils](assets/terminal-visual-styles-reference.html), construïda amb el transcript real que va originar el disseny.
+
+L’HTML és un contracte de disseny versionat, no codi de producció ni una simulació pixel-perfect del terminal. Durant la implementació serà normatiu per a:
+
+- la jerarquia entre usuari, Shellia i activitat tècnica;
+- el niament de plans, passos, comandos, confirmacions i output;
+- la identitat i propietat de cada superfície;
+- la indentació relativa, la densitat i els espais entre fases;
+- la presència de guies, bandes, vores i separadors segons l’estil;
+- el mapa semàntic dels colors existents.
+
+S’adaptaran al terminal, sense alterar aquesta jerarquia:
+
+- el wrapping segons l’amplada real;
+- els glifs exactes de vores i separadors;
+- la reproducció concreta dels colors i fons per part de cada emulador;
+- l’absència de radi, ombres i chrome propis del navegador;
+- la suspensió de superfícies durant un handoff PTY interactiu.
+
+Si la implementació necessita apartar-se d’un element normatiu, cal actualitzar i reaprovar primer aquesta especificació i la referència visual. La maqueta temporal de la sessió de disseny no és autoritativa; ho és aquest fitxer versionat.
+
 ## 5. Contracte de configuració
 
 La configuració persistent afegirà una única clau:
@@ -289,6 +312,7 @@ Qualsevol implementació que necessiti modificar contractes del planner, workflo
 ### 13.2 Renderers
 
 - snapshots o assertions estructurals per estil;
+- fixtures de conversa derivats dels mateixos blocs semàntics de la referència visual canònica;
 - `plain` conserva la sortida actual;
 - els renderers amb `--no-color` no generen escapes propis de Shellia però conserven geometria;
 - wrapping amb rails i vores a diferents amplades;
