@@ -64,6 +64,60 @@ func TestBandsRendererStreamsBeforeCloseAndClosesOnce(t *testing.T) {
 	}
 }
 
+// TestBandsRendererWrapsStreamedOutputWithinTerminalWidth catches terminal
+// auto-wrap that would leave continuation bytes outside the execution band.
+func TestBandsRendererWrapsStreamedOutputWithinTerminalWidth(t *testing.T) {
+	const terminalWidth = 48
+	payload := strings.Repeat("0123456789", 6)
+	for _, ansi := range []bool{false, true} {
+		t.Run(map[bool]string{false: "no ANSI", true: "ANSI"}[ansi], func(t *testing.T) {
+			output := renderBandsAtTerminalWidth(t, terminalWidth, ansi, func(renderer *Renderer) {
+				turn := renderer.BeginShelliaTurn(testConfig(), core.ContextInfo{})
+				step := turn.BeginStep(testConfig(), 1, 1, testPlan())
+				step.OutputLabel()
+				step.OutputLine(payload)
+				step.Close()
+				turn.Close()
+			})
+
+			var renderedPayload strings.Builder
+			payloadRows := 0
+			for _, rawLine := range strings.Split(output, "\n") {
+				rawLine = strings.TrimSuffix(rawLine, "\r")
+				line := stripANSISequences(rawLine)
+				if visibleWidth(line) > terminalWidth {
+					t.Fatalf("visible line width = %d, want <= %d: %q\n%s", visibleWidth(line), terminalWidth, line, output)
+				}
+				if !strings.Contains(line, "0123456789") {
+					continue
+				}
+				payloadRows++
+				if !strings.HasPrefix(line, bandsMarker+"     ") {
+					t.Fatalf("stream continuation lacks nested band marker: %q\n%s", line, output)
+				}
+				content := strings.TrimPrefix(line, bandsMarker+"     ")
+				renderedPayload.WriteString(strings.TrimSpace(content))
+
+				if ansi {
+					if got := visibleWidth(rawLine); got != terminalWidth {
+						t.Fatalf("ANSI stream row width = %d, want %d: %q", got, terminalWidth, rawLine)
+					}
+					if !strings.HasPrefix(rawLine, bandsExecutionBackground) {
+						t.Fatalf("stream continuation lacks execution background: %q", rawLine)
+					}
+					assertBandsBackgroundSurvivesResets(t, rawLine, bandsExecutionBackground)
+				}
+			}
+			if payloadRows < 2 {
+				t.Fatalf("payload row count = %d, want at least 2:\n%s", payloadRows, output)
+			}
+			if renderedPayload.String() != payload {
+				t.Fatalf("wrapped payload = %q, want %q", renderedPayload.String(), payload)
+			}
+		})
+	}
+}
+
 // TestBandsANSIRowsFillTerminalWidth catches backgrounds that stop after the visible content.
 func TestBandsANSIRowsFillTerminalWidth(t *testing.T) {
 	output := renderConversationFixture(t, newBandsRenderer, true)
@@ -250,6 +304,37 @@ func renderBandsUserTurnAtWidth(t *testing.T, width uint16, text string) string 
 		t.Fatalf("close pty: %v", err)
 	}
 	return string(<-read)
+}
+
+func renderBandsAtTerminalWidth(t *testing.T, width int, ansi bool, render func(*Renderer)) string {
+	t.Helper()
+	reader, terminal, err := pty.Open()
+	if err != nil {
+		t.Fatalf("open PTY: %v", err)
+	}
+	defer reader.Close()
+	defer terminal.Close()
+
+	physicalWidth := width + boxHorizontalMargin
+	if err := pty.Setsize(terminal, &pty.Winsize{Cols: uint16(physicalWidth), Rows: 24}); err != nil {
+		t.Fatalf("set PTY width: %v", err)
+	}
+	var output bytes.Buffer
+	readDone := make(chan error, 1)
+	go func() {
+		_, copyErr := io.Copy(&output, reader)
+		readDone <- copyErr
+	}()
+
+	renderer := &Renderer{impl: newBandsRenderer(terminal, ansi), ansi: ansi}
+	render(renderer)
+	if err := terminal.Close(); err != nil {
+		t.Fatalf("close PTY terminal: %v", err)
+	}
+	if err := <-readDone; err != nil && !errors.Is(err, syscall.EIO) {
+		t.Fatalf("read PTY output: %v", err)
+	}
+	return output.String()
 }
 
 func renderNarrowBandsFixture(t *testing.T, width int) string {

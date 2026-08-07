@@ -228,7 +228,9 @@ func (surface *bandsStepSurface) writeRow(rendered string) {
 	if surface == nil || surface.rows == nil {
 		return
 	}
-	surface.rows.writeRow(bandsExecutionRow(surface.ansi, rendered, surface.totalWidth))
+	for _, row := range wrapRenderedRows(rendered, surface.contentWidth()) {
+		surface.rows.writeRow(bandsExecutionRow(surface.ansi, row, surface.totalWidth))
+	}
 }
 
 func (surface *bandsStepSurface) replaceLastRenderedRow(rendered string) {
