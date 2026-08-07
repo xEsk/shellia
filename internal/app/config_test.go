@@ -31,9 +31,9 @@ func TestDefaultConfigShowsSystemOutput(t *testing.T) {
 	}
 }
 
-// TestLoadFileConfigResolvesEveryVisualStyle checks the user-facing TOML
+// TestLoadBaseConfigResolvesEveryVisualStyle checks the user-facing TOML
 // contract at the same boundary used by application startup.
-func TestLoadFileConfigResolvesEveryVisualStyle(t *testing.T) {
+func TestLoadBaseConfigResolvesEveryVisualStyle(t *testing.T) {
 	tests := []struct {
 		name    string
 		uiBlock string
@@ -51,12 +51,10 @@ func TestLoadFileConfigResolvesEveryVisualStyle(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			writeShelliaConfig(t, tt.uiBlock)
 
-			fileCfg, _, err := loadFileConfig()
+			cfg, err := loadBaseConfig()
 			if err != nil {
-				t.Fatalf("loadFileConfig() error = %v", err)
+				t.Fatalf("loadBaseConfig() error = %v", err)
 			}
-			cfg := defaultConfig()
-			applyFileConfig(&cfg, fileCfg)
 			if cfg.VisualStyle != tt.want {
 				t.Fatalf("VisualStyle = %q, want %q", cfg.VisualStyle, tt.want)
 			}

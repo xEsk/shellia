@@ -208,14 +208,9 @@ func loopTurnRequest(cfg config, ctxInfo *contextInfo, instruction string) turnR
 
 var visualAcceptanceANSI = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
 
-type visualAcceptanceResult struct {
-	output       string
-	presentation presentation
-}
-
-// renderVisualAcceptanceTranscript presents one fixed semantic turn through the
-// application presentation boundary without duplicating workflow or LLM calls.
-func renderVisualAcceptanceTranscript(t *testing.T, style configpkg.VisualStyle, ansi bool, interactive bool, tty bool, terminalWidth int) visualAcceptanceResult {
+// renderVisualWidthFixture presents one fixed semantic turn through a selected
+// renderer on a sized PTY. The runApp acceptance matrix separately owns wiring.
+func renderVisualWidthFixture(t *testing.T, style configpkg.VisualStyle, ansi bool, terminalWidth int) string {
 	t.Helper()
 
 	cfg := defaultConfig()
@@ -234,13 +229,9 @@ func renderVisualAcceptanceTranscript(t *testing.T, style configpkg.VisualStyle,
 		RequiresConfirmation: false,
 	}
 
-	render := func(deps runtimeDeps) presentation {
-		effective := effectivePresentation(cfg, deps)
-		selected := presentation{Style: effective.Style, ANSI: effective.ANSI}
-		renderer := newRenderer(deps.Stdout, selected)
-		if interactive {
-			renderer.UserTurn(core.InteractiveModeAI, "quant d'espai queda al disc?")
-		}
+	render := func(target *os.File) {
+		renderer := newRenderer(target, presentation{Style: style, ANSI: ansi})
+		renderer.UserTurn(core.InteractiveModeAI, "quant d'espai queda al disc?")
 		turn := renderer.BeginShelliaTurn(cfg, ctxInfo)
 		turn.Plan(cfg, "Cal consultar l'espai disponible.", []core.CommandPlan{plan}, false)
 		step := turn.BeginStep(cfg, 1, 1, plan)
@@ -252,57 +243,141 @@ func renderVisualAcceptanceTranscript(t *testing.T, style configpkg.VisualStyle,
 		step.Close()
 		turn.Final("Queden 419Gi lliures al disc arrel (/).")
 		turn.Close()
-		return selected
 	}
 
-	if terminalWidth > 0 {
-		reader, terminal, err := pty.Open()
+	reader, terminal, err := pty.Open()
+	if err != nil {
+		t.Fatalf("pty.Open() error = %v", err)
+	}
+	defer reader.Close() //nolint:errcheck // best-effort cleanup of the PTY reader.
+	if err := pty.Setsize(terminal, &pty.Winsize{Cols: uint16(terminalWidth + 4), Rows: 24}); err != nil {
+		terminal.Close() //nolint:errcheck // best-effort cleanup after setup failure.
+		t.Fatalf("pty.Setsize() error = %v", err)
+	}
+
+	readDone := make(chan []byte, 1)
+	go func() {
+		output, _ := io.ReadAll(reader)
+		readDone <- output
+	}()
+	render(terminal)
+	if err := terminal.Close(); err != nil {
+		t.Fatalf("terminal.Close() error = %v", err)
+	}
+	return string(<-readDone)
+}
+
+type visualRunOptions struct {
+	noColor     bool
+	noColorFlag bool
+	interactive bool
+	tty         bool
+}
+
+// runAppVisualAcceptanceTranscript drives real config parsing, app renderer
+// installation, interactive/one-shot routing and turn/executor facade wiring.
+func runAppVisualAcceptanceTranscript(t *testing.T, style configpkg.VisualStyle, options visualRunOptions) string {
+	t.Helper()
+	writeShelliaConfig(t, fmt.Sprintf(`
+default_model = "test"
+
+[[models]]
+name = "test"
+base_url = "http://shellia.test"
+model = "test-model"
+api_key = "test-key"
+
+[execution]
+ask_confirm_plan = false
+
+[ui]
+style = %q
+no_color = %t
+verbose = true
+show_system_output = true
+`, style, options.noColor))
+
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Current disk space observed","summary":"Cal consultar l'espai disponible.","commands":[{"command":"df -h /","purpose":"Mostrar l'espai lliure.","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Current disk space observed","summary":"Queden 419Gi lliures al disc arrel (/).","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
+	)
+	input := ""
+	args := []string{"quant d'espai queda al disc?"}
+	var inputController *os.File
+	var inputTerminal *os.File
+	if options.interactive {
+		args = nil
+		var err error
+		inputController, inputTerminal, err = pty.Open()
 		if err != nil {
-			t.Fatalf("pty.Open() error = %v", err)
+			t.Fatalf("pty.Open(stdin) error = %v", err)
 		}
-		defer reader.Close() //nolint:errcheck // best-effort cleanup of the PTY reader.
-		if err := pty.Setsize(terminal, &pty.Winsize{Cols: uint16(terminalWidth + 4), Rows: 24}); err != nil {
-			terminal.Close() //nolint:errcheck // best-effort cleanup after setup failure.
-			t.Fatalf("pty.Setsize() error = %v", err)
+		defer inputController.Close() //nolint:errcheck // best-effort cleanup of test PTY input.
+		defer inputTerminal.Close()   //nolint:errcheck // best-effort cleanup of test PTY input.
+		if _, err := inputController.WriteString("quant d'espai queda al disc?\r/exit\r"); err != nil {
+			t.Fatalf("WriteString(stdin PTY) error = %v", err)
 		}
-
-		readDone := make(chan []byte, 1)
-		go func() {
-			output, _ := io.ReadAll(reader)
-			readDone <- output
-		}()
-		deps := runtimeDeps{Stdout: terminal, StdoutIsTerminal: func(*os.File) bool { return tty }}
-		effective := render(deps)
-		if err := terminal.Close(); err != nil {
-			t.Fatalf("terminal.Close() error = %v", err)
-		}
-		return visualAcceptanceResult{output: string(<-readDone), presentation: effective}
+	}
+	if options.noColorFlag {
+		args = append([]string{"--no-color"}, args...)
 	}
 
-	output, err := os.CreateTemp(t.TempDir(), "visual-acceptance")
-	if err != nil {
-		t.Fatalf("CreateTemp() error = %v", err)
+	output := captureMainLoopIO(t, input, fake.HTTPClient(), func(deps runtimeDeps) {
+		if options.interactive {
+			deps.Stdin = inputTerminal
+		}
+		deps.StdoutIsTerminal = func(*os.File) bool { return options.tty }
+		deps.ExecuteCommands = func(_ context.Context, turnDeps runtimeDeps, _ bool, turnCfg config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
+			if len(plans) != 1 {
+				t.Fatalf("ExecuteCommands plans = %d, want 1", len(plans))
+			}
+			if turnDeps.Turn == nil {
+				t.Fatal("ExecuteCommands received nil Turn")
+			}
+			step := turnDeps.Turn.BeginStep(turnCfg, 1, 1, plans[0])
+			if step == nil {
+				t.Fatal("Turn.BeginStep() returned nil")
+			}
+			step.OutputLabel()
+			step.OutputLine("419Gi available")
+			step.Close()
+			return commandBatchResult{Executions: []commandExecution{{
+				Command:  plans[0].Command,
+				Purpose:  plans[0].Purpose,
+				ExitCode: 0,
+				Stdout:   capturedStream{Text: "419Gi available", TotalBytes: 15, KeptBytes: 15},
+			}}}, nil
+		}
+		if code := runApp(t.Context(), args, deps); code != 0 {
+			t.Fatalf("runApp() code = %d, want 0", code)
+		}
+	})
+	if fake.requestCount() != 2 {
+		t.Fatalf("LLM requests = %d, want 2", fake.requestCount())
 	}
-	defer output.Close() //nolint:errcheck // best-effort cleanup of a temporary test file.
-	deps := runtimeDeps{Stdout: output, StdoutIsTerminal: func(*os.File) bool { return tty }}
-	effective := render(deps)
-	if _, err := output.Seek(0, io.SeekStart); err != nil {
-		t.Fatalf("Seek() error = %v", err)
-	}
-	data, err := io.ReadAll(output)
-	if err != nil {
-		t.Fatalf("ReadAll() error = %v", err)
-	}
-	return visualAcceptanceResult{output: string(data), presentation: effective}
+	return output
 }
 
 func stripVisualAcceptanceANSI(text string) string {
 	return visualAcceptanceANSI.ReplaceAllString(text, "")
 }
 
-func assertVisualAcceptanceOrder(t *testing.T, output string, interactive bool) {
+func stableInteractiveTurnOutput(t *testing.T, output string) string {
 	t.Helper()
-	values := []string{"Shellia", "/srv/demo", "plan", "Cal consultar l'espai disponible.", "step 1/1", "df -h /", "Mostrar l'espai lliure.", "system output", "419Gi available", "Queden 419Gi lliures"}
+	start := strings.Index(output, "\ncontext\n")
+	if start < 0 {
+		t.Fatalf("interactive output lacks stable turn boundary:\n%s", output)
+	}
+	end := strings.Index(output[start+1:], "\nWhat do you want Shellia to do?")
+	if end < 0 {
+		t.Fatalf("interactive output lacks next-prompt boundary:\n%s", output)
+	}
+	return output[start : start+1+end]
+}
+
+func assertVisualAcceptanceOrder(t *testing.T, output string, interactive bool, contextValue string) {
+	t.Helper()
+	values := []string{"context", contextValue, "Shellia", "plan", "Cal consultar l'espai disponible.", "step 1/1", "df -h /", "Mostrar l'espai lliure.", "system output", "419Gi available", "Queden 419Gi lliures"}
 	if interactive {
 		values = append([]string{"quant d'espai queda al disc?"}, values...)
 	}
@@ -352,6 +427,10 @@ func assertVisualAcceptanceGeometry(t *testing.T, style configpkg.VisualStyle, o
 // rendering across every configured style with and without ANSI colours.
 func TestVisualStylesPreserveOneSemanticTranscript(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
 	styles := []configpkg.VisualStyle{
 		configpkg.VisualStylePlain,
 		configpkg.VisualStyleGuide,
@@ -369,22 +448,23 @@ func TestVisualStylesPreserveOneSemanticTranscript(t *testing.T) {
 	for _, style := range styles {
 		for _, mode := range modes {
 			t.Run(string(style)+"/"+mode.name, func(t *testing.T) {
-				withANSI := renderVisualAcceptanceTranscript(t, style, true, mode.interactive, true, 80)
-				withoutANSI := renderVisualAcceptanceTranscript(t, style, false, mode.interactive, true, 80)
-				if withANSI.presentation.Style != style || !withANSI.presentation.ANSI {
-					t.Fatalf("ANSI presentation = %#v, want style=%q ANSI=true", withANSI.presentation, style)
+				withANSI := runAppVisualAcceptanceTranscript(t, style, visualRunOptions{interactive: mode.interactive, tty: true})
+				withoutANSI := runAppVisualAcceptanceTranscript(t, style, visualRunOptions{noColor: true, interactive: mode.interactive, tty: true})
+				if !strings.Contains(withANSI, "\x1b[") {
+					t.Fatalf("ANSI output contains no escape sequence: %q", withANSI)
 				}
-				if withoutANSI.presentation.Style != style || withoutANSI.presentation.ANSI {
-					t.Fatalf("no-color presentation = %#v, want style=%q ANSI=false", withoutANSI.presentation, style)
+				stableWithoutANSI := withoutANSI
+				if mode.interactive {
+					stableWithoutANSI = stableInteractiveTurnOutput(t, withoutANSI)
 				}
-				if strings.Contains(withoutANSI.output, "\x1b[") {
-					t.Fatalf("no-color output contains ANSI: %q", withoutANSI.output)
+				if strings.Contains(stableWithoutANSI, "\x1b[") {
+					t.Fatalf("stable no-color turn contains ANSI: %q", stableWithoutANSI)
 				}
-				assertVisualAcceptanceGeometry(t, style, stripVisualAcceptanceANSI(withANSI.output), mode.interactive)
-				assertVisualAcceptanceGeometry(t, style, withoutANSI.output, mode.interactive)
-				assertVisualAcceptanceOrder(t, withoutANSI.output, mode.interactive)
-				if !mode.interactive && strings.Contains(withoutANSI.output, "quant d'espai") {
-					t.Fatalf("one-shot output contains interactive user turn:\n%s", withoutANSI.output)
+				assertVisualAcceptanceGeometry(t, style, stripVisualAcceptanceANSI(withANSI), mode.interactive)
+				assertVisualAcceptanceGeometry(t, style, withoutANSI, mode.interactive)
+				assertVisualAcceptanceOrder(t, withoutANSI, mode.interactive, cwd)
+				if !mode.interactive && strings.Contains(withoutANSI, "you ›") {
+					t.Fatalf("one-shot output contains interactive user turn:\n%s", withoutANSI)
 				}
 			})
 		}
@@ -406,17 +486,28 @@ func TestVisualStylesFitEffectiveTerminalWidths(t *testing.T) {
 			for _, ansi := range []bool{true, false} {
 				name := fmt.Sprintf("%s/%d/ansi=%t", style, width, ansi)
 				t.Run(name, func(t *testing.T) {
-					result := renderVisualAcceptanceTranscript(t, style, ansi, true, true, width)
-					for _, rawLine := range strings.Split(result.output, "\n") {
+					output := renderVisualWidthFixture(t, style, ansi, width)
+					for _, rawLine := range strings.Split(output, "\n") {
 						line := strings.TrimSuffix(stripVisualAcceptanceANSI(rawLine), "\r")
 						if got := utf8.RuneCountInString(line); got > width {
-							t.Fatalf("visible line width = %d, want <= %d: %q\n%s", got, width, line, result.output)
+							t.Fatalf("visible line width = %d, want <= %d: %q\n%s", got, width, line, output)
 						}
 					}
 				})
 			}
 		}
 	}
+}
+
+// TestRunAppNoColorFlagPreservesConfiguredGeometry checks the public CLI flag
+// reaches presentation selection without replacing the configured theme.
+func TestRunAppNoColorFlagPreservesConfiguredGeometry(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	output := runAppVisualAcceptanceTranscript(t, configpkg.VisualStyleCards, visualRunOptions{noColorFlag: true, tty: true})
+	if strings.Contains(output, "\x1b[") {
+		t.Fatalf("--no-color output contains ANSI: %q", output)
+	}
+	assertVisualAcceptanceGeometry(t, configpkg.VisualStyleCards, output, false)
 }
 
 // TestVisualStylesFallBackToPlainWithoutTerminalCapability checks redirected
@@ -433,16 +524,14 @@ func TestVisualStylesFallBackToPlainWithoutTerminalCapability(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("TERM", tt.term)
-			got := renderVisualAcceptanceTranscript(t, configpkg.VisualStyleCards, true, true, tt.tty, 0)
-			want := renderVisualAcceptanceTranscript(t, configpkg.VisualStylePlain, false, true, tt.tty, 0)
-			if got.presentation.Style != configpkg.VisualStylePlain || got.presentation.ANSI {
-				t.Fatalf("effective presentation = %#v, want plain without ANSI", got.presentation)
+			options := visualRunOptions{interactive: true, tty: tt.tty}
+			got := runAppVisualAcceptanceTranscript(t, configpkg.VisualStyleCards, options)
+			want := runAppVisualAcceptanceTranscript(t, configpkg.VisualStylePlain, options)
+			if stable := stableInteractiveTurnOutput(t, got); strings.Contains(stable, "\x1b[") {
+				t.Fatalf("stable fallback turn contains ANSI: %q", stable)
 			}
-			if strings.Contains(got.output, "\x1b[") {
-				t.Fatalf("fallback output contains ANSI: %q", got.output)
-			}
-			if got.output != want.output {
-				t.Fatalf("fallback output differs from plain:\ngot:\n%s\nwant:\n%s", got.output, want.output)
+			if got != want {
+				t.Fatalf("fallback output differs from plain:\ngot:\n%s\nwant:\n%s", got, want)
 			}
 		})
 	}
