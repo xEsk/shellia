@@ -321,6 +321,7 @@ capture_stderr_bytes     = 262144
 observation_output_chars = 1200
 
 [ui]
+style              = "plain" # plain | guide | bands | cards
 verbose            = false
 no_color           = false
 show_system_output = true
@@ -371,14 +372,20 @@ Compatibility fallback variables:
 
 ### UI controls
 
+- `style`
+  - selects the terminal structure: `plain`, `guide`, `bands`, or `cards`
+  - defaults to `plain`, which preserves Shellia's original output
+  - each style uses a fixed built-in colour theme; colours are not configurable
 - `show_command_popup`
   - shows the slash-command popup while typing `/` when set to `true`
 - `show_system_output`
   - shows live `system output` blocks in the terminal when set to `true`; captured output is still kept as bounded workflow evidence when set to `false`
 - `no_color`
-  - disables ANSI colours
+  - disables Shellia-generated ANSI colours while preserving the selected style's rails, markers, borders, spacing, and indentation
 - `verbose`
   - shows extra technical details in plans
+
+The `--no-color` flag applies the same no-ANSI behavior for one run. When stdout is piped or redirected, or when `TERM=dumb`, Shellia automatically uses `plain` output without ANSI even if another style is configured. Output produced by a child process running in an interactive PTY is passed through unchanged: Shellia does not filter or rewrite the child's ANSI sequences.
 
 ### Output capture controls
 

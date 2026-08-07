@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	configpkg "shellia/internal/config"
 )
 
 // TestDefaultConfigShowsSystemOutput checks the visible-output default stays unchanged.
@@ -26,6 +28,39 @@ func TestDefaultConfigShowsSystemOutput(t *testing.T) {
 	}
 	if defaultConfig().TraceDir != "" {
 		t.Fatalf("defaultConfig().TraceDir = %q, want empty", defaultConfig().TraceDir)
+	}
+}
+
+// TestLoadFileConfigResolvesEveryVisualStyle checks the user-facing TOML
+// contract at the same boundary used by application startup.
+func TestLoadFileConfigResolvesEveryVisualStyle(t *testing.T) {
+	tests := []struct {
+		name    string
+		uiBlock string
+		want    configpkg.VisualStyle
+	}{
+		{name: "plain", uiBlock: "[ui]\nstyle = \"plain\"", want: configpkg.VisualStylePlain},
+		{name: "guide", uiBlock: "[ui]\nstyle = \"guide\"", want: configpkg.VisualStyleGuide},
+		{name: "bands", uiBlock: "[ui]\nstyle = \"bands\"", want: configpkg.VisualStyleBands},
+		{name: "cards", uiBlock: "[ui]\nstyle = \"cards\"", want: configpkg.VisualStyleCards},
+		{name: "absent defaults to plain", uiBlock: "[ui]\nverbose = true", want: configpkg.VisualStylePlain},
+		{name: "unknown falls back to plain", uiBlock: "[ui]\nstyle = \"unknown\"", want: configpkg.VisualStylePlain},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			writeShelliaConfig(t, tt.uiBlock)
+
+			fileCfg, _, err := loadFileConfig()
+			if err != nil {
+				t.Fatalf("loadFileConfig() error = %v", err)
+			}
+			cfg := defaultConfig()
+			applyFileConfig(&cfg, fileCfg)
+			if cfg.VisualStyle != tt.want {
+				t.Fatalf("VisualStyle = %q, want %q", cfg.VisualStyle, tt.want)
+			}
+		})
 	}
 }
 
