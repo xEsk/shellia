@@ -29,6 +29,15 @@ Nivell `BOUNDED`: és comportament visible i regression-worthy dins l’arquitec
 
 El primer checkpoint útil és `plain` passant pel nou contracte sense drift. Després cada estil és una slice vertical independent i rebutjable per separat. `cards` i el handoff PTY tenen checkpoints propis perquè concentren el risc d’estat incremental.
 
+## Topologia d’execució
+
+La implementació té dues etapes:
+
+1. **Base comuna seqüencial:** Tasks 1 i 2 defineixen configuració, presentació efectiva, contractes `Renderer`/`Turn`, primitives compartides i adaptació `plain`. No es delega cap estil nou fins que el checkpoint byte-for-byte de `plain` i la suite de contracte siguin verds.
+2. **Temes paral·lels:** després de congelar el contracte, Tasks 3, 4 i 5 s’executen en paral·lel amb ownership disjunt. Cada implementador només pot modificar `visual_<style>.go` i `visual_<style>_test.go`; el controlador integra els constructors al selector compartit després de rebre les tres implementacions. Tasks 6 i 7 tornen a ser seqüencials.
+
+Cap implementador paral·lel pot canviar `visual_renderer.go`, `visual_surface.go`, `visual_plain.go`, `app` o `executor`. Si un tema no es pot implementar amb el contracte congelat, s’atura aquella slice i es revisa centralment el contracte abans de continuar.
+
 ## Mapa de fitxers
 
 - Crear `internal/config/visual_style.go`: tipus, constants i normalització dels quatre valors.
@@ -342,7 +351,7 @@ Commit: `Route plain output through visual renderer`
 **Files:**
 - Create: `internal/ui/visual_guide.go`
 - Create: `internal/ui/visual_guide_test.go`
-- Modify: `internal/ui/visual_renderer.go` només per afegir el mapping `VisualStyleGuide -> newGuideRenderer`.
+- Integration owner: `internal/ui/visual_renderer.go` rep el mapping `VisualStyleGuide -> newGuideRenderer` després de completar les Tasks 3–5; l’implementador paral·lel no modifica aquest fitxer.
 
 **Interfaces:**
 - Consumes: `rendererImpl`, `turnImpl` i primitives de Task 2.
@@ -387,7 +396,7 @@ Commit: `Add guide conversation renderer`
 **Files:**
 - Create: `internal/ui/visual_bands.go`
 - Create: `internal/ui/visual_bands_test.go`
-- Modify: `internal/ui/visual_renderer.go` només per al mapping `VisualStyleBands`.
+- Integration owner: `internal/ui/visual_renderer.go` rep el mapping `VisualStyleBands -> newBandsRenderer` després de completar les Tasks 3–5; l’implementador paral·lel no modifica aquest fitxer.
 
 **Interfaces:**
 - Consumes: contracte/primitives de Task 2.
@@ -424,7 +433,7 @@ Commit: `Add turn band renderer`
 **Files:**
 - Create: `internal/ui/visual_cards.go`
 - Create: `internal/ui/visual_cards_test.go`
-- Modify: `internal/ui/visual_renderer.go` només per al mapping `VisualStyleCards`.
+- Integration owner: `internal/ui/visual_renderer.go` rep el mapping `VisualStyleCards -> newCardsRenderer` després de completar les Tasks 3–5; l’implementador paral·lel no modifica aquest fitxer.
 
 **Interfaces:**
 - Consumes: contracte/primitives de Task 2.
