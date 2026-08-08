@@ -26,3 +26,10 @@ func effectivePresentation(cfg config, deps runtimeDeps) effectivePresentationSt
 		ANSI:  !cfg.NoColor,
 	}
 }
+
+func promptPresentationUser(cfg config, user string) string {
+	if cfg.PromptIdentity == configpkg.PromptIdentityYou {
+		return ""
+	}
+	return strings.TrimSpace(user)
+}

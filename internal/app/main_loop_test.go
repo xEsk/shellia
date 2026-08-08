@@ -2480,7 +2480,7 @@ func TestRunInteractiveRoutesPlainConversationThroughRenderer(t *testing.T) {
 	})
 
 	position := 0
-	for _, want := range []string{"you ›", "Shellia", "plan", "step 1/1", "system output", "Queden 419Gi lliures"} {
+	for _, want := range []string{"test-user ›", "Shellia", "plan", "step 1/1", "system output", "Queden 419Gi lliures"} {
 		next := strings.Index(output[position:], want)
 		if next < 0 {
 			t.Fatalf("interactive output lacks ordered value %q: %q", want, output)

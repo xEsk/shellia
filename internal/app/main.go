@@ -120,7 +120,7 @@ func runApp(parentCtx context.Context, args []string, deps runtimeDeps) int {
 		printErrorTo(deps.Stderr, ui, err.Error())
 		return 1
 	}
-	deps.Renderer = newRenderer(deps.Stdout, presentation{Style: effective.Style, ANSI: effective.ANSI, User: ctxInfo.User})
+	deps.Renderer = newRenderer(deps.Stdout, presentation{Style: effective.Style, ANSI: effective.ANSI, User: promptPresentationUser(cfg, ctxInfo.User)})
 
 	trace, err := openSessionTrace(cfg, ctxInfo)
 	if err != nil {
@@ -510,7 +510,7 @@ func usageFunc(fs *flag.FlagSet) func() {
 func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo) {
 	deps = deps.withDefaults()
 	if deps.Renderer == nil {
-		deps.Renderer = newRenderer(deps.Stdout, presentation{Style: visualStylePlain, ANSI: ui, User: ctxInfo.User})
+		deps.Renderer = newRenderer(deps.Stdout, presentation{Style: visualStylePlain, ANSI: ui, User: promptPresentationUser(cfg, ctxInfo.User)})
 	}
 	reader := bufio.NewReader(deps.Stdin)
 	history := make([]historyEntry, 0, maxHistoryEntries)
@@ -883,7 +883,7 @@ func switchInteractiveTheme(cfg *config, deps *runtimeDeps, user string, name st
 	nextRenderer := newRenderer(deps.Stdout, presentation{
 		Style: effective.Style,
 		ANSI:  effective.ANSI,
-		User:  user,
+		User:  promptPresentationUser(next, user),
 	})
 	*cfg = next
 	deps.Renderer = nextRenderer
@@ -957,7 +957,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 	}
 
 	if deps.Renderer == nil {
-		deps.Renderer = newRenderer(deps.Stdout, presentation{Style: visualStylePlain, ANSI: ui, User: ctxInfo.User})
+		deps.Renderer = newRenderer(deps.Stdout, presentation{Style: visualStylePlain, ANSI: ui, User: promptPresentationUser(cfg, ctxInfo.User)})
 	}
 	turnUI := deps.Renderer.BeginShelliaTurn(cfg, *ctxInfo)
 	defer turnUI.Close()

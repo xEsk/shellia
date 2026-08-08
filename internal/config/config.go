@@ -80,6 +80,7 @@ type Config struct {
 	Verbose          bool
 	ShowCommandPopup bool
 	VisualStyle      VisualStyle
+	PromptIdentity   PromptIdentity
 
 	// Context options control which local facts are sent to the model and shown by /context.
 	IncludeUser               bool
@@ -148,6 +149,7 @@ type FileConfig struct {
 		ShowSystemOutput *bool  `toml:"show_system_output"`
 		ShowCommandPopup *bool  `toml:"show_command_popup"`
 		Style            string `toml:"style"`
+		PromptIdentity   string `toml:"prompt_identity"`
 	} `toml:"ui"`
 
 	// [context]
@@ -194,6 +196,7 @@ func defaultConfig() Config {
 		ShowSystemOutput: true,
 		ShowCommandPopup: true,
 		VisualStyle:      VisualStylePlain,
+		PromptIdentity:   PromptIdentityUser,
 
 		// [context]
 		IncludeUser:               true,
@@ -270,6 +273,9 @@ func applyFileConfig(cfg *Config, fileCfg FileConfig) {
 	}
 	if strings.TrimSpace(fileCfg.UI.Style) != "" {
 		cfg.VisualStyle = normalizeVisualStyle(fileCfg.UI.Style, cfg.VisualStyle)
+	}
+	if strings.TrimSpace(fileCfg.UI.PromptIdentity) != "" {
+		cfg.PromptIdentity = normalizePromptIdentity(fileCfg.UI.PromptIdentity, cfg.PromptIdentity)
 	}
 	if fileCfg.Context.IncludeUser != nil {
 		cfg.IncludeUser = *fileCfg.Context.IncludeUser
@@ -663,6 +669,9 @@ truncation_strategy = "mixed"
 [ui]
 # Terminal visual structure: plain, guide, bands or cards.
 style = "plain"
+
+# Prompt identity: user shows the active terminal username; you uses a stable generic label.
+prompt_identity = "user"
 
 # Print extra information such as resolved instructions and session state on each turn.
 verbose = false

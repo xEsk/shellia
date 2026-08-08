@@ -53,3 +53,15 @@ func TestEffectivePresentation(t *testing.T) {
 		})
 	}
 }
+
+func TestPromptPresentationUserHonorsConfiguredIdentity(t *testing.T) {
+	cfg := defaultConfig()
+	if got, want := promptPresentationUser(cfg, "xesc"), "xesc"; got != want {
+		t.Fatalf("user identity label = %q, want %q", got, want)
+	}
+
+	cfg.PromptIdentity = configpkg.PromptIdentityYou
+	if got := promptPresentationUser(cfg, "xesc"); got != "" {
+		t.Fatalf("you identity label = %q, want empty renderer fallback", got)
+	}
+}
