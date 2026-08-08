@@ -102,11 +102,12 @@ Si la implementació necessita apartar-se d’un element normatiu, cal actualitz
 
 ## 5. Contracte de configuració
 
-La configuració persistent afegirà una única clau:
+La configuració persistent exposa l’estructura visual i la identitat mostrada per al torn de l’usuari:
 
 ```toml
 [ui]
 style = "plain"
+prompt_identity = "user"
 ```
 
 Valors acceptats:
@@ -115,11 +116,19 @@ Valors acceptats:
 plain | guide | bands | cards
 ```
 
+`prompt_identity` accepta:
+
+```text
+user | you
+```
+
+`user` mostra el nom de l’usuari actiu del terminal a tots quatre renderers. `you` força una identitat genèrica estable. La mateixa decisió s’aplica al prompt editable i a l’etiqueta del torn enviat; si el nom de l’usuari no està disponible, el renderer usa `you` com a fallback.
+
 El tipus runtime viurà a `internal/config`, al mateix límit que `NoColor`, `Verbose`, `ShowSystemOutput` i `ShowCommandPopup`. No es mourà a `internal/core` perquè és una decisió exclusiva de presentació.
 
-El valor es normalitzarà amb `strings.TrimSpace` i minúscules, seguint els normalitzadors de configuració existents. Un valor buit o desconegut conservarà el fallback actual, que per defecte serà `plain`. No s’introduirà un nou règim d’errors només per a aquesta clau.
+Els dos valors es normalitzen amb `strings.TrimSpace` i minúscules, seguint els normalitzadors de configuració existents. Un estil buit o desconegut conserva el fallback actual, que per defecte és `plain`. Una identitat buida o desconeguda conserva el fallback actual, que per defecte és `user`. No s’introdueix un nou règim d’errors només per a aquestes claus.
 
-La plantilla generada documentarà `style = "plain"` i els quatre valors. Aquesta feature no afegirà un flag CLI, variable d’entorn ni slash command per canviar l’estil.
+La plantilla generada documenta `style = "plain"`, els quatre estils i `prompt_identity = "user"` amb els seus dos valors. No hi ha cap flag CLI ni variable d’entorn per canviar la identitat del prompt.
 
 ## 6. Estil configurat i presentació efectiva
 
@@ -148,14 +157,14 @@ La capacitat es resoldrà una vegada per procés a partir de l’stdout real de 
 
 ### 7.1 `plain`
 
-Manté els renderers, espais, separadors, prefixes i ordre actuals. És el fallback per compatibilitat i per a sortides no interactives.
+Manté els renderers, espais, separadors i ordre compactes originals. És el fallback per compatibilitat i per a sortides no interactives. El prefix d’usuari respecta `prompt_identity`, igual que la resta d’estils.
 
 La feature haurà de demostrar amb proves de regressió que la selecció implícita o explícita de `plain` no introdueix canvis visuals no relacionats.
 
 ### 7.2 `guide`
 
-- Mentre espera entrada, el prompt interactiu identifica l’usuari actiu (`xesc ›`); `›` és un indicador d’edició i no forma part del transcript consolidat.
-- En enviar-se, el torn de l’usuari rep una guia vertical gruixuda cian (`┃`), una sola etiqueta amb el nom de l’usuari actiu i el text en una fila separada sense `you` ni `›`.
+- Mentre espera entrada, el prompt interactiu mostra la identitat configurada (`xesc ›` amb `user`, `you ›` amb `you`); `›` és un indicador d’edició i no forma part del transcript consolidat.
+- En enviar-se, el torn de l’usuari rep una guia vertical gruixuda cian (`┃`), una sola etiqueta amb la mateixa identitat configurada i el text en una fila separada sense `›`.
 - Totes les files del torn d’usuari comparteixen una superfície compacta de fons blau-petroli `#11313A`, compartit amb `bands`, sense vores, que acaba poc després del contingut més ample en lloc d’omplir el terminal.
 - La superfície comença immediatament després de `┃`, sense cap cel·la amb el fons del terminal entre la guia i el bloc, i aporta dues columnes de padding intern a cada costat. La seva amplada és la de la fila visible més llarga més aquest padding, limitada per l’amplada disponible del terminal, i s’aplica a totes les files d’un prompt multilínia.
 - Una fila buida amb el mateix fons obre i tanca la superfície per donar padding vertical al contingut. Després de la fila inferior es conserva una fila amb el fons normal del terminal per separar el torn de l’usuari del torn de Shellia.
@@ -168,8 +177,8 @@ Sense color, la superfície de l’usuari conserva el text, el padding i l’aju
 
 ### 7.3 `bands`
 
-- `bands` conserva les decisions semàntiques de `guide`, però no en reutilitza la geometria: el prompt actiu mostra el nom de l’usuari i `›`, mentre que el transcript enviat mostra una sola vegada el nom real i omet `you`, `Tu`, `›` i la pregunta introductòria.
-- El torn de l’usuari usa una banda cian d’amplada completa amb dues columnes de padding intern i una fila buida de fons a dalt i a baix. La paleta truecolor usa el blau petroli compartit `#11313A` per a l’usuari, pruna `#482F4F` per a Shellia i grafit `#232729` per a l’execució. Els tres fons continuen sent foscos i subtils, però se separen per lluminositat perquè els actors i la part tècnica es puguin distingir en escanejar la conversa.
+- `bands` conserva les decisions semàntiques de `guide`, però no en reutilitza la geometria: el prompt actiu mostra la identitat configurada i `›`, mentre que el transcript enviat mostra aquesta identitat una sola vegada i omet `›` i la pregunta introductòria.
+- El torn de l’usuari usa una banda cian d’amplada completa amb dues columnes de padding intern i una fila buida de fons a dalt i a baix. La paleta truecolor usa el blau petroli compartit `#11313A` per a l’usuari, pruna `#402D46` per a Shellia i grafit `#232729` per a l’execució. Els tres fons continuen sent foscos i subtils, però se separen per lluminositat perquè els actors i la part tècnica es puguin distingir en escanejar la conversa.
 - El torn de Shellia s’articula en superfícies consecutives però diferenciades: una banda de capçalera amb la marca multicolor `Shellia`, mode i context; una banda de pla; una banda tècnica neutra; i una banda final de resposta.
 - La marca `Shellia` no es duplica dins de la mateixa superfície. `Thinking…` continua visualment la superfície de Shellia i conserva aire respecte de la capçalera.
 - La banda de pla usa el magenta de Shellia per a la identitat i el resum. La banda tècnica usa un fons grafit subordinat i conserva el command box, els passos, el propòsit, la confirmació i l’output actuals.
@@ -181,6 +190,7 @@ Sense color, la superfície de l’usuari conserva el text, el padding i l’aju
 ### 7.4 `cards`
 
 - El torn de l’usuari i el de Shellia es presenten com targetes compactes.
+- El títol de la targeta d’usuari i el prompt editable comparteixen la identitat seleccionada per `prompt_identity`.
 - Plans i execucions poden usar superfícies internes, però no creen una targeta independent per cada línia.
 - Les vores es dibuixen amb caràcters Unicode ja coherents amb la UI actual.
 - La targeta de Shellia és incremental: s’obre abans del primer contingut, emet laterals mentre arriben plans i outputs, i es tanca quan el torn arriba al resultat terminal.
@@ -267,8 +277,8 @@ No es farà un refactor general de tot `internal/ui`. Només es mouran o extraur
 
 ## 10. Flux de dades
 
-1. Es carrega `ui.style` amb la resta de la configuració.
-2. El default explícit és `plain`.
+1. Es carreguen `ui.style` i `ui.prompt_identity` amb la resta de la configuració.
+2. Els defaults explícits són `plain` i `user`.
 3. `runApp` determina si l’stdout real és un TTY utilitzable.
 4. Es deriva l’estil efectiu i la capacitat ANSI segons la matriu definida.
 5. El selector crea una única implementació de renderer per a l’estil efectiu.
@@ -284,6 +294,8 @@ L’estil no entra al prompt del model, l’estat de workflow, la memòria de se
 
 - Config sense `ui.style`: `plain`.
 - Valor buit o desconegut: conserva el valor runtime anterior durant el merge; com que el default inicial és `plain` i no hi ha cap altra font per a aquesta clau, una configuració invàlida acaba efectivament en `plain`.
+- Config sense `ui.prompt_identity`: `user`; un valor buit o desconegut conserva aquest fallback.
+- Usuari del terminal buit o no disponible amb `prompt_identity=user`: `you`.
 - No-TTY o `TERM=dumb`: `plain` sense ANSI.
 - `--no-color`: estil seleccionat sense ANSI propi de Shellia.
 - Amplada estreta: les primitives existents recalculen wrapping deixant espai per al rail o les vores.
@@ -316,13 +328,14 @@ Qualsevol implementació que necessiti modificar contractes del planner, workflo
 - normalització de majúscules i espais;
 - fallback d’un valor desconegut;
 - plantilla generada amb la clau documentada;
+- càrrega de `prompt_identity=user|you`, default `user` i fallback de valors desconeguts;
 - configuracions antigues i claus obsoletes continuen acceptades.
 
 ### 13.2 Renderers
 
 - snapshots o assertions estructurals per estil;
 - fixtures de conversa derivats dels mateixos blocs semàntics de la referència visual canònica;
-- `plain` conserva la sortida actual;
+- `plain` conserva la geometria actual i aplica la identitat configurada;
 - els renderers amb `--no-color` no generen escapes propis de Shellia però conserven geometria;
 - wrapping amb rails i vores a diferents amplades;
 - resposta Markdown, command boxes, session banner i prompts continuen alineats;

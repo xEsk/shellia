@@ -203,6 +203,8 @@ Useful commands in interactive mode:
 - `/mode` to show the current mode
 - `/model` to list configured model profiles
 - `/model <name>` to switch model profile and persist it as `default_model`
+- `/theme` to list the four visual themes and mark the active one
+- `/theme <plain|guide|bands|cards>` to switch theme immediately and persist it as `ui.style`
 - `/clear`, `/context`, `exit`, `/exit`, `/quit`
 
 ### One-shot mode
@@ -322,6 +324,7 @@ observation_output_chars = 1200
 
 [ui]
 style              = "plain" # plain | guide | bands | cards
+prompt_identity    = "user"  # user | you
 verbose            = false
 no_color           = false
 show_system_output = true
@@ -374,8 +377,13 @@ Compatibility fallback variables:
 
 - `style`
   - selects the terminal structure: `plain`, `guide`, `bands`, or `cards`
-  - defaults to `plain`, which preserves Shellia's original output
+  - defaults to `plain`, Shellia's compact original structure
   - each style uses a fixed built-in colour theme; colours are not configurable
+- `prompt_identity`
+  - `user` shows the active terminal username, such as `xesc ›` or `root ›`
+  - `you` uses the stable generic label `you ›`
+  - defaults to `user`; if Shellia cannot detect a username, it falls back to `you`
+  - applies consistently to the live prompt and the submitted user block in every visual theme
 - `show_command_popup`
   - shows the slash-command popup while typing `/` when set to `true`
 - `show_system_output`
@@ -386,6 +394,17 @@ Compatibility fallback variables:
   - shows extra technical details in plans
 
 The `--no-color` flag applies the same no-ANSI behavior for one run. When stdout is piped or redirected, or when `TERM=dumb`, Shellia automatically uses `plain` output without ANSI even if another style is configured. Output produced by a child process running in an interactive PTY is passed through unchanged: Shellia does not filter or rewrite the child's ANSI sequences.
+
+The four visual themes present the same plans, confirmations, command output, and Markdown answers with different hierarchy:
+
+| Theme | Visual structure |
+| --- | --- |
+| `plain` | Compact transcript with the original separators and command boxes. |
+| `guide` | Thick actor rails with technical execution nested under a thinner rail. |
+| `bands` | Full-width user, Shellia, plan, execution, and answer bands. |
+| `cards` | Rounded actor cards with a nested execution surface. |
+
+Inside an interactive session, `/theme` shows the available themes and `/theme <name>` applies and persists the selection without restarting Shellia. `--no-color` removes only colour: the selected theme keeps its rails, bands, borders, spacing, and indentation.
 
 ### Output capture controls
 

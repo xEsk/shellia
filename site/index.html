@@ -872,7 +872,7 @@ p{margin:0}
         <div class="term-body">
           <p class="tline muted">What do you want <span class="shellia">Shell<span class="ia">ia</span></span> to do?</p>
           <p class="tline">
-            <span class="prompt">you</span><span class="prompt-arr">›</span><span class="typed-text tcursor" data-typed></span>
+            <span class="prompt">dev</span><span class="prompt-arr">›</span><span class="typed-text tcursor" data-typed></span>
           </p>
           <div class="term-mock" data-term-mock></div>
         </div>
@@ -925,7 +925,7 @@ p{margin:0}
       <h2 style="margin-top:18px">One tool. Three ways to drive it.</h2>
     </div>
     <div class="modes-tabs" role="tablist">
-      <button class="modes-tab on" data-mode="prompt"><span class="key">you ›</span>prompt</button>
+      <button class="modes-tab on" data-mode="prompt"><span class="key">user ›</span>prompt</button>
       <button class="modes-tab" data-mode="direct"><span class="key">!</span>direct</button>
       <button class="modes-tab" data-mode="shell"><span class="key">/shell</span>loop</button>
     </div>
@@ -935,7 +935,7 @@ p{margin:0}
 
   <div class="modes-pane" data-mode-pane="prompt">
     <div class="modes-copy">
-      <div class="pane-label">prompt mode — <code>you ›</code></div>
+      <div class="pane-label">prompt mode — <code>user ›</code> or <code>you ›</code></div>
       <h3>Ask for what you want. Read what it plans.</h3>
       <p>The default. Type intent in plain English and Shellia comes back with a structured plan: one step per command, each tagged with its risk grade. Approve, edit (<code>e</code>), or bail (<code>n</code>) per step.</p>
       <ul class="pane-list">
@@ -948,7 +948,7 @@ p{margin:0}
       <div class="terminal">
         <div class="term-chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="term-title">prompt mode</span></div>
         <div class="term-body" style="min-height:380px">
-          <p class="tline"><span class="prompt">you</span><span class="prompt-arr">›</span>which branches were merged into main last month?</p>
+          <p class="tline"><span class="prompt">dev</span><span class="prompt-arr">›</span>which branches were merged into main last month?</p>
           <div class="tdiv"></div>
           <p class="tbtitle">plan</p>
           <p class="tline"><span class="bullet">•</span> list merged branches with their merge dates</p>
@@ -971,23 +971,23 @@ p{margin:0}
       <ul class="pane-list">
         <li><b>Two engines</b><span><code>command_mode = "plain"</code> for structured output, <code>"interactive"</code> for a real TTY pass-through.</span></li>
         <li><b>State preserved</b><span>cwd survives and bounded captured output feeds future plans.</span></li>
-        <li><b>Zero friction</b><span>No "you" prefix, no plan, no confirmation. It's a shell.</span></li>
+        <li><b>Zero friction</b><span>No AI prompt prefix, no plan, no confirmation. It's a shell.</span></li>
       </ul>
     </div>
     <div class="modes-demo">
       <div class="terminal">
         <div class="term-chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="term-title">direct mode</span></div>
         <div class="term-body" style="min-height:380px">
-          <p class="tline"><span class="prompt">you</span><span class="prompt-arr">›</span>!cd packages/web</p>
+          <p class="tline"><span class="prompt">dev</span><span class="prompt-arr">›</span>!cd packages/web</p>
           <p class="tline output"><span class="bullet">•</span> cwd → ~/projects/api/packages/web</p>
           <div class="tdiv"></div>
-          <p class="tline"><span class="prompt">you</span><span class="prompt-arr">›</span>!pnpm test --filter checkout</p>
+          <p class="tline"><span class="prompt">dev</span><span class="prompt-arr">›</span>!pnpm test --filter checkout</p>
           <p class="tline output"><span class="bullet">•</span> system output</p>
           <p class="tline output-text">PASS  src/checkout/total.test.ts</p>
           <p class="tline output-text">PASS  src/checkout/coupon.test.ts</p>
           <p class="tline output-text">Tests: 24 passed, 24 total · 1.4s</p>
           <div class="tdiv"></div>
-          <p class="tline"><span class="prompt">you</span><span class="prompt-arr">›</span>now run only the ones that took longer than 100ms</p>
+          <p class="tline"><span class="prompt">dev</span><span class="prompt-arr">›</span>now run only the ones that took longer than 100ms</p>
           <p class="tline muted">↳ session memory: 24 tests passed · cwd packages/web</p>
         </div>
       </div>
@@ -1009,7 +1009,7 @@ p{margin:0}
       <div class="terminal">
         <div class="term-chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="term-title">shell loop</span></div>
         <div class="term-body" style="min-height:380px">
-          <p class="tline"><span class="prompt">you</span><span class="prompt-arr">›</span>/shell</p>
+          <p class="tline"><span class="prompt">dev</span><span class="prompt-arr">›</span>/shell</p>
           <p class="tline muted">→ shell mode (interactive)</p>
           <div class="tdiv"></div>
           <p class="tline"><span class="prompt" style="color:var(--risky)">shell</span><span class="prompt-arr">›</span>git status --short</p>
@@ -1019,7 +1019,7 @@ p{margin:0}
           <p class="tline output-text">ok  internal/runtime  0.21s</p>
           <p class="tline"><span class="prompt" style="color:var(--risky)">shell</span><span class="prompt-arr">›</span>/ai</p>
           <div class="tdiv"></div>
-          <p class="tline"><span class="prompt">you</span><span class="prompt-arr">›</span>commit the docs change with a useful message</p>
+          <p class="tline"><span class="prompt">dev</span><span class="prompt-arr">›</span>commit the docs change with a useful message</p>
         </div>
       </div>
     </div>
@@ -1132,12 +1132,14 @@ p{margin:0}
     <div class="runtime-copy">
       <span class="eyebrow">runtime</span>
       <h2 style="margin-top:18px">Configure once. Stay weird.</h2>
-      <p>One config file, named model profiles, three engines, sensible defaults. <code>shellia config init</code> creates <code>~/.config/shellia/config.toml</code>; the old <code>~/.shellia/config.toml</code> path is only a fallback. <code>default_model</code> picks the LLM profile. <code>shell_mode</code> picks how <code>/shell</code> runs. <code>command_mode</code> picks how <code>!cmd</code> runs.</p>
+      <p>One config file, named model profiles, four visual themes, sensible defaults. <code>shellia config init</code> creates <code>~/.config/shellia/config.toml</code>; the old <code>~/.shellia/config.toml</code> path is only a fallback. <code>default_model</code> picks the LLM profile. <code>shell_mode</code> picks how <code>/shell</code> runs. <code>ui.style</code> picks how the conversation is structured.</p>
       <ul>
         <li><b>[[models]]</b><span>name each endpoint and select it with <code>default_model</code> or <code>--model-name</code></span></li>
         <li><b>supports_response_format</b><span>leave enabled for OpenAI/llama.cpp · disable for MLX LM Server</span></li>
         <li><b>shell_mode</b><span><code>"interactive"</code> drops into a real TTY · <code>"plain"</code> stays structured</span></li>
         <li><b>command_mode</b><span>same toggle for <code>!&lt;cmd&gt;</code></span></li>
+        <li><b>ui.style</b><span><code>plain</code> · <code>guide</code> · <code>bands</code> · <code>cards</code>; switch live with <code>/theme</code></span></li>
+        <li><b>prompt_identity</b><span><code>user</code> shows the terminal username · <code>you</code> keeps the prompt generic</span></li>
         <li><b>confirmation_default</b><span><code>none</code> · <code>yes</code> · <code>no</code> · <code>edit</code> · <code>interactive</code></span></li>
         <li><b>--yes-safe</b><span>auto-runs commands the local classifier already marked safe</span></li>
         <li><b>continue_on_error</b><span>after a failure, skips dependent steps and runs only explicitly independent ones</span></li>
@@ -1185,6 +1187,9 @@ p{margin:0}
 <span class="cb-key">capture_stderr_bytes</span> = <span class="cb-num">262144</span>
 
 <span class="cb-section">[ui]</span>
+<span class="cb-key">style</span>              = <span class="cb-str">"plain"</span> <span class="cb-comment"># plain · guide · bands · cards</span>
+<span class="cb-key">prompt_identity</span>    = <span class="cb-str">"user"</span> <span class="cb-comment"># user · you</span>
+<span class="cb-key">no_color</span>           = <span class="cb-num">false</span>
 <span class="cb-key">show_system_output</span> = <span class="cb-num">true</span>
 <span class="cb-key">show_command_popup</span> = <span class="cb-num">true</span></pre>
     </div>

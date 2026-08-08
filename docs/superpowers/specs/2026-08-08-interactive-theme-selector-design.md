@@ -22,7 +22,7 @@ El canvi estendrà els propietaris existents, sense crear un sistema nou de sele
 - `internal/config` serà l’únic propietari de la validació i la persistència del tema. Una actualització textual focalitzada modificarà només `style` dins de `[ui]`, preservant la resta del fitxer i els comentaris. Si `[ui]` o `style` no existeixen, s’afegiran sense reordenar les altres seccions.
 - `internal/app` coordinarà la selecció. Primer validarà i persistirà el nou valor; només després actualitzarà `cfg.VisualStyle` i substituirà `deps.Renderer`.
 
-El nou renderer es construirà amb `effectivePresentation(cfg, deps)`. Això conserva el comportament existent de `--no-color`, `TERM=dumb`, sortides no TTY i terminals sense capacitat visual. La sessió, l’historial, el mode interactiu i la memòria no es reiniciaran.
+El nou renderer es construirà amb `effectivePresentation(cfg, deps)` i conservarà la identitat resolta per `[ui].prompt_identity` (`user` o `you`). Això manté també el comportament existent de `--no-color`, `TERM=dumb`, sortides no TTY i terminals sense capacitat visual. La sessió, l’historial, el mode interactiu i la memòria no es reiniciaran.
 
 ## Flux de dades i errors
 

@@ -137,8 +137,9 @@
 <main>
   <header class="reference-heading">
     <h1>Estils visuals de terminal</h1>
-    <p>Contracte visual canònic per implementar <code>plain</code>, <code>guide</code>, <code>bands</code> i <code>cards</code> amb la conversa real facilitada durant el disseny.</p>
+    <p>Referència visual dels quatre temes <code>plain</code>, <code>guide</code>, <code>bands</code> i <code>cards</code> amb la conversa real facilitada durant el disseny.</p>
     <p class="reference-note">Aquesta pàgina fixa la jerarquia, el niament, la densitat i les superfícies. El renderer de terminal n’adapta el wrapping i els glifs, però no la relació visual entre blocs.</p>
+    <p class="reference-note">La mostra usa <code>prompt_identity = "user"</code> amb l’usuari <code>xesc</code>. Amb <code>prompt_identity = "you"</code>, tant el prompt com l’etiqueta del torn mostren <code>you</code>.</p>
   </header>
 
 <section id="shellia-real" data-mode="plain" aria-labelledby="shellia-real-title">
@@ -374,6 +375,11 @@
       display: none;
     }
 
+    #shellia-real:not([data-mode="plain"]) .shellia-question,
+    #shellia-real:not([data-mode="plain"]) .shellia-prompt-prefix {
+      display: none;
+    }
+
     #shellia-real[data-mode="plain"] .shellia-agent-turn {
       padding-bottom: 18px;
       border-bottom: 1px solid var(--shellia-line);
@@ -513,9 +519,9 @@
       </section>
 
       <section class="shellia-turn shellia-user-turn">
-        <span class="shellia-turn-label shellia-user-label">Tu</span>
+        <span class="shellia-turn-label shellia-user-label">xesc</span>
         <p class="shellia-question">What do you want Shellia to do?</p>
-        <p><span class="shellia-prompt-prefix">you › </span>quant d'espai queda al disc?</p>
+        <p><span class="shellia-prompt-prefix">xesc › </span>quant d'espai queda al disc?</p>
       </section>
 
       <section class="shellia-turn shellia-agent-turn">
@@ -540,9 +546,9 @@
       </section>
 
       <section class="shellia-turn shellia-user-turn">
-        <span class="shellia-turn-label shellia-user-label">Tu</span>
+        <span class="shellia-turn-label shellia-user-label">xesc</span>
         <p class="shellia-question">What do you want Shellia to do?</p>
-        <p><span class="shellia-prompt-prefix">you › </span>necessit saber com s'ha instalat codex al sistema</p>
+        <p><span class="shellia-prompt-prefix">xesc › </span>necessit saber com s'ha instalat codex al sistema</p>
       </section>
 
       <section class="shellia-turn shellia-agent-turn">
@@ -578,9 +584,9 @@
       </section>
 
       <section class="shellia-turn shellia-user-turn">
-        <span class="shellia-turn-label shellia-user-label">Tu</span>
+        <span class="shellia-turn-label shellia-user-label">xesc</span>
         <p class="shellia-question">What do you want Shellia to do?</p>
-        <p><span class="shellia-prompt-prefix">you › </span>actualitza codex</p>
+        <p><span class="shellia-prompt-prefix">xesc › </span>actualitza codex</p>
       </section>
 
       <section class="shellia-turn shellia-agent-turn">
@@ -613,9 +619,9 @@ Warning: Not upgrading codex, the latest version is already installed</pre>
       </section>
 
       <section class="shellia-turn shellia-user-turn">
-        <span class="shellia-turn-label shellia-user-label">Tu</span>
+        <span class="shellia-turn-label shellia-user-label">xesc</span>
         <p class="shellia-question">What do you want Shellia to do?</p>
-        <p><span class="shellia-prompt-prefix">you › </span>pots mirar si hi ha un update nou?</p>
+        <p><span class="shellia-prompt-prefix">xesc › </span>pots mirar si hi ha un update nou?</p>
       </section>
 
       <section class="shellia-turn shellia-agent-turn">
@@ -629,7 +635,7 @@ Warning: Not upgrading codex, the latest version is already installed</pre>
 
       <section class="shellia-session-end">
         <p>What do you want Shellia to do?</p>
-        <p><span class="shellia-prompt-prefix">you ›</span></p>
+        <p><span class="shellia-prompt-prefix">xesc ›</span></p>
         <br>
         <p>Shellia Session closed.</p>
         <p class="shellia-launch">/Users/Xesc/Documents/Scripts ➜&nbsp; ;9;27~</p>
