@@ -401,9 +401,9 @@ func assertVisualAcceptanceGeometry(t *testing.T, style configpkg.VisualStyle, o
 	case configpkg.VisualStyleGuide:
 		values = []string{"┃ Shellia · dev", "┃ plan", "┃   │ step 1/1", "┃   │ • system output"}
 	case configpkg.VisualStyleBands:
-		values = []string{"▌ Shellia", "▌   plan", "▌     step 1/1", "▌     • system output"}
+		values = []string{"▌  Shellia · dev", "▌  plan", "▌    step 1/1", "▌    • system output"}
 	case configpkg.VisualStyleCards:
-		values = []string{"┌─ Shellia", "│ plan", "│ ┌─ step 1/1", "│ │ • system output", "└"}
+		values = []string{"╭─ Shellia · dev", "│   plan", "│   ┌─ step 1/1", "│   │ • system output", "╰"}
 	default:
 		t.Fatalf("unsupported visual style %q", style)
 	}
@@ -414,11 +414,19 @@ func assertVisualAcceptanceGeometry(t *testing.T, style configpkg.VisualStyle, o
 			if err != nil {
 				t.Fatalf("user.Current() error = %v", err)
 			}
-			values = append(values, "┃  "+currentUser.Username, currentUser.Username+" ›")
+			values = append(values, "┃ "+currentUser.Username, currentUser.Username+" ›")
 		case configpkg.VisualStyleBands:
-			values = append(values, "▌ Tu")
+			currentUser, err := user.Current()
+			if err != nil {
+				t.Fatalf("user.Current() error = %v", err)
+			}
+			values = append(values, "▌  "+currentUser.Username, currentUser.Username+" ›")
 		case configpkg.VisualStyleCards:
-			values = append(values, "┌─ Tu")
+			currentUser, err := user.Current()
+			if err != nil {
+				t.Fatalf("user.Current() error = %v", err)
+			}
+			values = append(values, "╭─ "+currentUser.Username, currentUser.Username+" ›")
 		}
 	}
 	for _, value := range values {
@@ -493,7 +501,7 @@ func TestVisualStylesFitEffectiveTerminalWidths(t *testing.T) {
 				t.Run(name, func(t *testing.T) {
 					output := renderVisualWidthFixture(t, style, ansi, width)
 					for _, rawLine := range strings.Split(output, "\n") {
-						line := strings.TrimSuffix(stripVisualAcceptanceANSI(rawLine), "\r")
+						line := strings.TrimRight(stripVisualAcceptanceANSI(rawLine), "\r")
 						if got := utf8.RuneCountInString(line); got > width {
 							t.Fatalf("visible line width = %d, want <= %d: %q\n%s", got, width, line, output)
 						}

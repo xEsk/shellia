@@ -60,15 +60,15 @@ func NewRenderer(target io.Writer, presentation Presentation) *Renderer {
 	var impl rendererImpl
 	switch presentation.Style {
 	case configpkg.VisualStylePlain:
-		impl = newPlainRenderer(target, presentation.ANSI)
+		impl = newPlainRendererWithUser(target, presentation.ANSI, presentation.User)
 	case configpkg.VisualStyleGuide:
 		impl = newGuideRendererWithUser(target, presentation.ANSI, presentation.User)
 	case configpkg.VisualStyleBands:
-		impl = newBandsRenderer(target, presentation.ANSI)
+		impl = newBandsRendererWithUser(target, presentation.ANSI, presentation.User)
 	case configpkg.VisualStyleCards:
-		impl = newCardsRenderer(target, presentation.ANSI)
+		impl = newCardsRendererWithUser(target, presentation.ANSI, presentation.User)
 	default:
-		impl = newPlainRenderer(target, presentation.ANSI)
+		impl = newPlainRendererWithUser(target, presentation.ANSI, presentation.User)
 	}
 
 	return &Renderer{impl: impl, ansi: presentation.ANSI}

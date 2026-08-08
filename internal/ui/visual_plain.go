@@ -12,6 +12,7 @@ import (
 type plainRenderer struct {
 	target io.Writer
 	ansi   bool
+	user   string
 }
 
 type plainTurn struct {
@@ -21,11 +22,23 @@ type plainTurn struct {
 }
 
 func newPlainRenderer(target io.Writer, ansi bool) rendererImpl {
-	return &plainRenderer{target: target, ansi: ansi}
+	return newPlainRendererWithUser(target, ansi, "")
+}
+
+func newPlainRendererWithUser(target io.Writer, ansi bool, user string) rendererImpl {
+	return &plainRenderer{target: target, ansi: ansi, user: strings.TrimSpace(user)}
+}
+
+func (renderer *plainRenderer) interactivePromptPrefix(mode core.InteractiveMode) string {
+	if mode != core.InteractiveModeAI {
+		return promptPrefix(renderer.ansi, mode)
+	}
+	user := fallbackValue(renderer.user, "you")
+	return style(renderer.ansi, colorCyan+colorBold, user) + style(renderer.ansi, colorWhite, " › ")
 }
 
 func (renderer *plainRenderer) userTurn(mode core.InteractiveMode, text string) {
-	prompt := promptPrefix(renderer.ansi, mode)
+	prompt := renderer.interactivePromptPrefix(mode)
 	printSubmittedPromptTo(renderer.target, renderer.ansi, prompt, []rune(text))
 	fmt.Fprint(renderer.target, "\r\n")
 }

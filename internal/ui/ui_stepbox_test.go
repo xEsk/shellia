@@ -61,7 +61,7 @@ func TestStepBoxLifecycleRowsStayInsideCardsAndCloseOnce(t *testing.T) {
 
 	for _, line := range strings.Split(output.String(), "\n") {
 		for _, status := range []string{"confirmation", "skipped", "completed", "timed out"} {
-			if strings.Contains(line, status) && !strings.HasPrefix(line, "│ │ ") {
+			if strings.Contains(line, status) && !strings.HasPrefix(line, "│   │ ") {
 				t.Fatalf("status %q escaped the active card step: %q", status, line)
 			}
 		}

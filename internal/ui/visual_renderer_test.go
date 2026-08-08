@@ -82,9 +82,9 @@ func TestNewRendererSelectsEveryVisualStyle(t *testing.T) {
 		want  string
 	}{
 		{name: "plain", style: configpkg.VisualStylePlain, want: "you › selected"},
-		{name: "guide", style: configpkg.VisualStyleGuide, want: "┃  you"},
-		{name: "bands", style: configpkg.VisualStyleBands, want: "▌ Tu"},
-		{name: "cards", style: configpkg.VisualStyleCards, want: "┌─ Tu"},
+		{name: "guide", style: configpkg.VisualStyleGuide, want: "┃ you"},
+		{name: "bands", style: configpkg.VisualStyleBands, want: "▌  you"},
+		{name: "cards", style: configpkg.VisualStyleCards, want: "╭─ you"},
 	}
 
 	for _, tt := range tests {
@@ -94,6 +94,24 @@ func TestNewRendererSelectsEveryVisualStyle(t *testing.T) {
 			renderer.UserTurn(core.InteractiveModeAI, "selected")
 			if !strings.Contains(out.String(), tt.want) {
 				t.Fatalf("NewRenderer(%q) output lacks %q: %q", tt.style, tt.want, out.String())
+			}
+		})
+	}
+}
+
+func TestEveryVisualStyleUsesConfiguredPromptUser(t *testing.T) {
+	styles := []configpkg.VisualStyle{
+		configpkg.VisualStylePlain,
+		configpkg.VisualStyleGuide,
+		configpkg.VisualStyleBands,
+		configpkg.VisualStyleCards,
+	}
+
+	for _, visualStyle := range styles {
+		t.Run(string(visualStyle), func(t *testing.T) {
+			renderer := NewRenderer(io.Discard, Presentation{Style: visualStyle, User: "xesc"})
+			if got, want := renderer.interactivePromptPrefix(false, core.InteractiveModeAI), "xesc › "; got != want {
+				t.Fatalf("interactive prompt = %q, want %q", got, want)
 			}
 		})
 	}

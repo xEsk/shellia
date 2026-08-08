@@ -19,8 +19,8 @@ import (
 func TestGuideRendererNestsTechnicalActivity(t *testing.T) {
 	output := renderConversationFixture(t, newGuideRenderer, false)
 	assertOrdered(t, output,
-		"┃  you",
-		"┃  quant d'espai queda al disc?",
+		"┃ you",
+		"┃   quant d'espai queda al disc?",
 		"┃ Shellia · dev",
 		"┃ plan",
 		"┃   │ step 1/1",
@@ -32,16 +32,16 @@ func TestGuideRendererNestsTechnicalActivity(t *testing.T) {
 func TestGuideRendererMatchesCanonicalTemplateHierarchy(t *testing.T) {
 	output := stripANSISequences(renderConversationFixture(t, newGuideRenderer, false))
 	assertOrdered(t, output,
-		"┃  you",
-		"┃  quant d'espai queda al disc?",
+		"┃ you",
+		"┃   quant d'espai queda al disc?",
 		"┃ Shellia · dev",
 		"┃ /Users/Xesc/Documents/Scripts",
 		"┃ plan",
-		"┃ Cal consultar l'espai disponible.",
+		"┃   Cal consultar l'espai disponible.",
 		"┃   │ step 1/1",
 		"┃   │ • system output",
 		"┃ Shellia",
-		"┃ Queden 419Gi lliures al disc arrel (/).",
+		"┃   Queden 419Gi lliures al disc arrel (/).",
 	)
 
 	if strings.Contains(output, "──") {
@@ -54,6 +54,22 @@ func TestGuideRendererMatchesCanonicalTemplateHierarchy(t *testing.T) {
 	}
 }
 
+func TestGuideUsesConsistentHeadingAndBodyIndentation(t *testing.T) {
+	output := stripANSISequences(renderConversationFixture(t, newGuideRenderer, false))
+	for _, want := range []string{
+		"┃ you",
+		"┃   quant d'espai queda al disc?",
+		"┃ plan",
+		"┃   Cal consultar l'espai disponible.",
+		"┃ Shellia",
+		"┃   Queden 419Gi lliures al disc arrel (/).",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("guide transcript lacks aligned row %q:\n%s", want, output)
+		}
+	}
+}
+
 func TestGuideSubmittedPromptUsesActiveUserAndRemovesStandaloneQuestion(t *testing.T) {
 	var output bytes.Buffer
 	renderer := NewRenderer(&output, Presentation{Style: configpkg.VisualStyleGuide, User: "xesc"})
@@ -62,8 +78,8 @@ func TestGuideSubmittedPromptUsesActiveUserAndRemovesStandaloneQuestion(t *testi
 
 	raw := output.String()
 	plain := stripANSISequences(raw)
-	if !strings.Contains(raw, "\033[1A\r\033[2K") || !strings.Contains(plain, "┃  xesc") ||
-		!strings.Contains(plain, "┃  quant d'espai queda al disc?") {
+	if !strings.Contains(raw, "\033[1A\r\033[2K") || !strings.Contains(plain, "┃ xesc") ||
+		!strings.Contains(plain, "┃   quant d'espai queda al disc?") {
 		t.Fatalf("guide prompt submission did not replace the standalone question:\n%q", output.String())
 	}
 	if strings.Contains(output.String(), "What do you want Shellia to do?") || strings.Contains(plain, "›") {
@@ -89,7 +105,7 @@ func TestGuideSubmittedUserTurnUsesCompactBackground(t *testing.T) {
 		t.Fatalf("guide user surface rows = %d, want top padding, content and bottom padding: %q", len(rows), output.String())
 	}
 	for _, row := range rows {
-		if !strings.HasPrefix(stripANSISequences(row), "┃  ") {
+		if !strings.HasPrefix(stripANSISequences(row), "┃ ") {
 			t.Fatalf("guide user row lacks thick rail and padding: %q", row)
 		}
 		if !strings.HasPrefix(row, style(true, colorCyan, "┃")+guideUserBackground) {
@@ -149,7 +165,7 @@ func TestGuideUserTurnReturnsToColumnZeroInRawTerminal(t *testing.T) {
 		t.Fatalf("read PTY output: %v", err)
 	}
 
-	want := "┃        \r\n┃  you   \r\n┃  hola  \r\n┃        \r\n"
+	want := "┃         \r\n┃ you     \r\n┃   hola  \r\n┃         \r\n"
 	if got := output.String(); got != want {
 		t.Fatalf("raw guide user turn = %q, want %q", got, want)
 	}
@@ -212,6 +228,52 @@ func TestGuideThinkingFrameContinuesShelliaRail(t *testing.T) {
 	}
 }
 
+func TestGuideReusesOneSpacerBetweenHeaderThinkingAndPlan(t *testing.T) {
+	var output bytes.Buffer
+	turn := NewRenderer(&output, Presentation{Style: configpkg.VisualStyleGuide}).
+		BeginShelliaTurn(testConfig(), core.ContextInfo{CWD: "/tmp"})
+	turn.ThinkingPrefix()
+	turn.Plan(testConfig(), "Comprovar l'espai disponible.", nil, false)
+
+	plain := strings.ReplaceAll(stripANSISequences(output.String()), "\r", "")
+	between := textBetween(t, plain, "┃ /tmp\n", "┃ plan")
+	if got := strings.Count(between, "┃ \n"); got != 1 {
+		t.Fatalf("guide spacer rows between header and plan = %d, want 1:\n%s", got, plain)
+	}
+}
+
+func TestGuideThinkingAfterExecutionHasOneSpacerRow(t *testing.T) {
+	var output bytes.Buffer
+	turn := NewRenderer(&output, Presentation{Style: configpkg.VisualStyleGuide}).
+		BeginShelliaTurn(testConfig(), core.ContextInfo{CWD: "/tmp"})
+	step := turn.BeginStep(testConfig(), 1, 1, testPlan())
+	step.OutputLine("done")
+	step.Close()
+	output.Reset()
+
+	renderThinkingFrame(&output, false, 0, true, turn.ThinkingPrefix())
+
+	plain := strings.ReplaceAll(stripANSISequences(output.String()), "\r", "")
+	want := "┃ \n┃   " + thinkingStatusLineText
+	if !strings.HasPrefix(plain, want) {
+		t.Fatalf("guide thinking spacing = %q, want prefix %q", plain, want)
+	}
+}
+
+func textBetween(t *testing.T, text string, start string, end string) string {
+	t.Helper()
+	startIndex := strings.Index(text, start)
+	if startIndex < 0 {
+		t.Fatalf("text lacks start marker %q:\n%s", start, text)
+	}
+	startIndex += len(start)
+	endIndex := strings.Index(text[startIndex:], end)
+	if endIndex < 0 {
+		t.Fatalf("text lacks end marker %q after %q:\n%s", end, start, text)
+	}
+	return text[startIndex : startIndex+endIndex]
+}
+
 func TestGuideExecutionUsesCommandAccentAndSecondaryPurpose(t *testing.T) {
 	output := renderConversationFixture(t, newGuideRenderer, true)
 
@@ -254,7 +316,7 @@ func TestGuideUserTurnPreservesSubmittedPromptWhitespace(t *testing.T) {
 	var output bytes.Buffer
 	renderer := newGuideRenderer(&output, false)
 	renderer.userTurn(core.InteractiveModeAI, "  spaced  ")
-	if !strings.Contains(output.String(), "┃    spaced  ") {
+	if !strings.Contains(output.String(), "┃     spaced  ") {
 		t.Fatalf("guide user turn = %q", output.String())
 	}
 }
@@ -302,11 +364,11 @@ func TestGuideWrapsSubmittedPromptWithin48Columns(t *testing.T) {
 		text  = "alpha  beta\n12345678901234567890123456789012345678901234567890\nsecond  line"
 	)
 	wantLines := []string{
-		"┃  you",
-		"┃  alpha  beta",
-		"┃  1234567890123456789012345678901234567890123",
-		"┃  4567890",
-		"┃  second  line",
+		"┃ you",
+		"┃   alpha  beta",
+		"┃   12345678901234567890123456789012345678901",
+		"┃   234567890",
+		"┃   second  line",
 	}
 
 	for _, ansi := range []bool{false, true} {

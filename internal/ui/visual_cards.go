@@ -11,19 +11,27 @@ import (
 	"shellia/internal/core"
 )
 
+const (
+	cardsUserBackground      = "\033[48;2;17;49;58m"
+	cardsShelliaBackground   = "\033[48;2;64;45;70m"
+	cardsExecutionBackground = "\033[48;2;35;39;41m"
+)
+
 type cardsRenderer struct {
 	target io.Writer
 	ansi   bool
+	user   string
 }
 
 type cardsTurn struct {
-	target     io.Writer
-	ansi       bool
-	width      int
-	open       bool
-	suspended  bool
-	closed     bool
-	activeStep *cardsStepSurface
+	target       io.Writer
+	ansi         bool
+	width        int
+	open         bool
+	lastRowBlank bool
+	suspended    bool
+	closed       bool
+	activeStep   *cardsStepSurface
 }
 
 type cardsStepSurface struct {
@@ -36,10 +44,26 @@ type cardsStepSurface struct {
 }
 
 func newCardsRenderer(target io.Writer, ansi bool) rendererImpl {
+	return newCardsRendererWithUser(target, ansi, "")
+}
+
+func newCardsRendererWithUser(target io.Writer, ansi bool, user string) rendererImpl {
 	if target == nil {
 		target = io.Discard
 	}
-	return &cardsRenderer{target: target, ansi: ansi}
+	return &cardsRenderer{target: target, ansi: ansi, user: strings.TrimSpace(user)}
+}
+
+func (renderer *cardsRenderer) ownsUserTurnQuestion() bool {
+	return true
+}
+
+func (renderer *cardsRenderer) interactivePromptPrefix(mode core.InteractiveMode) string {
+	if mode != core.InteractiveModeAI {
+		return promptPrefix(renderer.ansi, mode)
+	}
+	user := fallbackValue(renderer.user, "you")
+	return style(renderer.ansi, colorCyan+colorBold, user) + style(renderer.ansi, colorWhite, " › ")
 }
 
 func (renderer *cardsRenderer) userTurn(mode core.InteractiveMode, text string) {
@@ -48,18 +72,22 @@ func (renderer *cardsRenderer) userTurn(mode core.InteractiveMode, text string) 
 	}
 
 	width := boxWidthFor(renderer.target)
-	fmt.Fprintln(renderer.target)
-	fmt.Fprintln(renderer.target, cardsBorderLine(renderer.ansi, colorCyan, "Tu", width, true))
+	user := fallbackValue(renderer.user, "you")
+	cardsWriteBlank(renderer.target)
+	cardsWriteLine(renderer.target, cardsBorderLine(renderer.ansi, colorCyan, cardsUserBackground, true, style(renderer.ansi, colorCyan+colorBold, user), width, true))
+	row, _ := cardsFormattedRow(renderer.ansi, colorCyan, cardsUserBackground, width, "")
+	cardsWriteLine(renderer.target, row)
 	cardsWriteSubmittedRows(
 		renderer.target,
 		renderer.ansi,
 		colorCyan,
+		cardsUserBackground,
 		width,
-		promptPrefix(renderer.ansi, mode),
-		promptPrefix(false, mode),
 		text,
 	)
-	fmt.Fprintln(renderer.target, cardsBorderLine(renderer.ansi, colorCyan, "", width, false))
+	row, _ = cardsFormattedRow(renderer.ansi, colorCyan, cardsUserBackground, width, "")
+	cardsWriteLine(renderer.target, row)
+	cardsWriteLine(renderer.target, cardsBorderLine(renderer.ansi, colorCyan, cardsUserBackground, true, "", width, false))
 }
 
 func (renderer *cardsRenderer) beginShelliaTurn(cfg configpkg.Config, ctxInfo core.ContextInfo) turnImpl {
@@ -72,10 +100,10 @@ func (renderer *cardsRenderer) beginShelliaTurn(cfg configpkg.Config, ctxInfo co
 		ansi:   renderer.ansi,
 		width:  boxWidthFor(renderer.target),
 	}
-	turn.openCard("Shellia")
-	turn.writeRow(shelliaBrand(turn.ansi, false) + style(turn.ansi, colorDim, " · ") + shelliaVersionBadge(turn.ansi))
+	turn.openCard(shelliaBrand(turn.ansi, false) + style(turn.ansi, colorDim, " · ") + shelliaVersionBadge(turn.ansi))
+	turn.writeRow("")
 	if cfg.IncludeCWD && strings.TrimSpace(ctxInfo.CWD) != "" {
-		turn.writeRow(style(turn.ansi, colorDim, ctxInfo.CWD))
+		turn.writeRow("  " + style(turn.ansi, colorDim, ctxInfo.CWD))
 	}
 	return turn
 }
@@ -84,6 +112,7 @@ func (turn *cardsTurn) plan(cfg configpkg.Config, summary string, plans []core.C
 	if !turn.canWrite() {
 		return
 	}
+	turn.ensurePaddingRow()
 
 	title := "plan"
 	titleColor := colorMagenta
@@ -91,21 +120,20 @@ func (turn *cardsTurn) plan(cfg configpkg.Config, summary string, plans []core.C
 		title = "discovery"
 		titleColor = colorCyan
 	}
-	turn.writeRow("")
-	turn.writeRow(style(turn.ansi, titleColor+colorBold, title))
-	turn.writeWrapped("  ", style(turn.ansi, colorDim, "  "), summary)
+	turn.writeRow("  " + style(turn.ansi, titleColor+colorBold, title))
+	turn.writeWrapped("    ", style(turn.ansi, colorDim, "    "), summary)
 
 	if len(plans) == 0 || (!cfg.Verbose && !cfg.PlanOnly && !cfg.AskConfirmPlan) {
 		return
 	}
 	turn.writeRow("")
-	turn.writeRow(style(turn.ansi, colorDim+colorBold, "steps"))
+	turn.writeRow("  " + style(turn.ansi, colorDim+colorBold, "steps"))
 	for index, plan := range plans {
-		purposePrefix := fmt.Sprintf("  %d. ", index+1)
+		purposePrefix := fmt.Sprintf("    %d. ", index+1)
 		turn.writeWrapped(purposePrefix, style(turn.ansi, colorDim, purposePrefix), plan.Purpose)
-		turn.writeWrapped("  run › ", style(turn.ansi, colorCyan+colorBold, "  run › "), plan.Command)
+		turn.writeWrapped("    run › ", style(turn.ansi, colorCyan+colorBold, "    run › "), plan.Command)
 		if cfg.Verbose {
-			turn.writeWrapped("  ", style(turn.ansi, colorDim, "  "), fmt.Sprintf("risk %s", plainRiskLabel(plan.Risk)))
+			turn.writeWrapped("    ", style(turn.ansi, colorDim, "    "), fmt.Sprintf("risk %s", plainRiskLabel(plan.Risk)))
 		}
 	}
 }
@@ -123,7 +151,10 @@ func (turn *cardsTurn) beginStep(cfg configpkg.Config, index int, total int, pla
 	surface := &cardsStepSurface{
 		turn:  turn,
 		title: title,
-		width: cardsContentWidth(turn.width),
+		width: cardsContentWidth(turn.width) - 4,
+	}
+	if surface.width < 4 {
+		surface.width = 4
 	}
 	turn.activeStep = surface
 	surface.openSurface(title)
@@ -149,12 +180,24 @@ func (turn *cardsTurn) final(message string) {
 		turn.activeStep.close()
 	}
 
-	turn.writeRow("")
-	turn.writeRow(style(turn.ansi, colorMagenta+colorBold, "Shellia"))
-	lines := renderAnswerMarkdown(message, cardsContentWidth(turn.width)-2, turn.ansi)
+	turn.ensurePaddingRow()
+	turn.writeRow("  " + shelliaBrand(turn.ansi, false))
+	lines := renderAnswerMarkdown(message, cardsContentWidth(turn.width)-4, turn.ansi)
 	for _, line := range lines {
-		turn.writeRow("  " + line)
+		turn.writeRow("    " + line)
 	}
+	turn.writeRow("")
+}
+
+func (turn *cardsTurn) thinkingPrefix() string {
+	if !turn.canWrite() {
+		return ""
+	}
+	turn.ensurePaddingRow()
+	if !turn.ansi {
+		return "│   "
+	}
+	return cardsShelliaBackground + colorMagenta + "│ " + colorReset + cardsShelliaBackground + "  "
 }
 
 func (turn *cardsTurn) suspend() {
@@ -199,16 +242,17 @@ func (turn *cardsTurn) openCard(label string) {
 	if turn == nil || turn.closed || turn.open {
 		return
 	}
-	fmt.Fprintln(turn.target)
-	fmt.Fprintln(turn.target, cardsBorderLine(turn.ansi, colorMagenta, label, turn.width, true))
+	cardsWriteBlank(turn.target)
+	cardsWriteLine(turn.target, cardsBorderLine(turn.ansi, colorMagenta, cardsShelliaBackground, true, label, turn.width, true))
 	turn.open = true
+	turn.lastRowBlank = false
 }
 
 func (turn *cardsTurn) closeCard() {
 	if turn == nil || !turn.open {
 		return
 	}
-	fmt.Fprintln(turn.target, cardsBorderLine(turn.ansi, colorMagenta, "", turn.width, false))
+	cardsWriteLine(turn.target, cardsBorderLine(turn.ansi, colorMagenta, cardsShelliaBackground, true, "", turn.width, false))
 	turn.open = false
 }
 
@@ -216,15 +260,24 @@ func (turn *cardsTurn) writeRow(rendered string) {
 	if !turn.canWrite() {
 		return
 	}
-	row, _ := cardsFormattedRow(turn.ansi, colorMagenta, turn.width, rendered)
-	fmt.Fprintln(turn.target, row)
+	row, _ := cardsFormattedRow(turn.ansi, colorMagenta, cardsShelliaBackground, turn.width, rendered)
+	cardsWriteLine(turn.target, row)
+	turn.lastRowBlank = rendered == ""
 }
 
 func (turn *cardsTurn) writeWrapped(prefixPlain string, prefixRendered string, text string) {
 	if !turn.canWrite() {
 		return
 	}
-	cardsWriteWrappedRow(turn.target, turn.ansi, colorMagenta, turn.width, prefixRendered, prefixPlain, text)
+	cardsWriteWrappedRow(turn.target, turn.ansi, colorMagenta, cardsShelliaBackground, turn.width, prefixRendered, prefixPlain, text)
+	turn.lastRowBlank = false
+}
+
+func (turn *cardsTurn) ensurePaddingRow() {
+	if !turn.canWrite() || turn.lastRowBlank {
+		return
+	}
+	turn.writeRow("")
 }
 
 func (surface *cardsStepSurface) writer() io.Writer {
@@ -250,8 +303,8 @@ func (surface *cardsStepSurface) writeRow(rendered string) {
 		return
 	}
 	for _, row := range wrapRenderedRows(rendered, surface.contentWidth()) {
-		nested, _ := cardsFormattedRow(surface.turn.ansi, colorDim, surface.width, row)
-		surface.turn.writeRow(nested)
+		nested, _ := cardsFormattedRow(surface.turn.ansi, colorDim, cardsExecutionBackground, surface.width, row)
+		surface.turn.writeRow("  " + nested)
 	}
 }
 
@@ -267,7 +320,7 @@ func (surface *cardsStepSurface) replaceLastRenderedRow(rendered string) {
 
 	row, _ := surface.formattedRow(rendered)
 	fmt.Fprint(surface.turn.target, "\033[1A\r\033[2K")
-	fmt.Fprintln(surface.turn.target, row)
+	cardsWriteLine(surface.turn.target, row)
 }
 
 func (surface *cardsStepSurface) renderEditableRow(rendered string, moveLeft int) {
@@ -287,7 +340,7 @@ func (surface *cardsStepSurface) close() {
 		return
 	}
 	if surface.open && surface.turn != nil && surface.turn.canWrite() {
-		surface.turn.writeRow(cardsBorderLine(surface.turn.ansi, colorDim, "", surface.width, false))
+		surface.turn.writeRow("  " + cardsBorderLine(surface.turn.ansi, colorDim, cardsExecutionBackground, false, "", surface.width, false))
 	}
 	surface.open = false
 	surface.suspended = false
@@ -305,7 +358,7 @@ func (surface *cardsStepSurface) openSurface(label string) {
 	if surface == nil || surface.turn == nil || surface.closed || surface.open || !surface.turn.canWrite() {
 		return
 	}
-	surface.turn.writeRow(cardsBorderLine(surface.turn.ansi, colorDim, label, surface.width, true))
+	surface.turn.writeRow("  " + cardsBorderLine(surface.turn.ansi, colorDim, cardsExecutionBackground, false, style(surface.turn.ansi, colorBlue+colorBold, label), surface.width, true))
 	surface.open = true
 }
 
@@ -313,7 +366,7 @@ func (surface *cardsStepSurface) suspendSurface() {
 	if !surface.canWrite() {
 		return
 	}
-	surface.turn.writeRow(cardsBorderLine(surface.turn.ansi, colorDim, "", surface.width, false))
+	surface.turn.writeRow("  " + cardsBorderLine(surface.turn.ansi, colorDim, cardsExecutionBackground, false, "", surface.width, false))
 	surface.open = false
 	surface.suspended = true
 }
@@ -327,12 +380,12 @@ func (surface *cardsStepSurface) resumeSurface() {
 }
 
 func (surface *cardsStepSurface) formattedRow(rendered string) (string, int) {
-	nested, nestedTrailing := cardsFormattedRow(surface.turn.ansi, colorDim, surface.width, rendered)
-	row, outerTrailing := cardsFormattedRow(surface.turn.ansi, colorMagenta, surface.turn.width, nested)
+	nested, nestedTrailing := cardsFormattedRow(surface.turn.ansi, colorDim, cardsExecutionBackground, surface.width, rendered)
+	row, outerTrailing := cardsFormattedRow(surface.turn.ansi, colorMagenta, cardsShelliaBackground, surface.turn.width, "  "+nested)
 	return row, nestedTrailing + outerTrailing
 }
 
-func cardsWriteWrappedRow(target io.Writer, ansi bool, borderColor string, width int, prefixRendered string, prefixPlain string, text string) {
+func cardsWriteWrappedRow(target io.Writer, ansi bool, borderColor string, background string, width int, prefixRendered string, prefixPlain string, text string) {
 	available := cardsContentWidth(width) - visibleWidth(prefixPlain)
 	if available < 1 {
 		available = 1
@@ -343,24 +396,21 @@ func cardsWriteWrappedRow(target io.Writer, ansi bool, borderColor string, width
 		if index == 0 {
 			prefix = prefixRendered
 		}
-		row, _ := cardsFormattedRow(ansi, borderColor, width, prefix+line)
-		fmt.Fprintln(target, row)
+		row, _ := cardsFormattedRow(ansi, borderColor, background, width, prefix+line)
+		cardsWriteLine(target, row)
 	}
 }
 
-func cardsWriteSubmittedRows(target io.Writer, ansi bool, borderColor string, width int, prefixRendered string, prefixPlain string, text string) {
-	available := cardsContentWidth(width) - visibleWidth(prefixPlain)
+func cardsWriteSubmittedRows(target io.Writer, ansi bool, borderColor string, background string, width int, text string) {
+	const indent = "  "
+	available := cardsContentWidth(width) - visibleWidth(indent)
 	if available < 1 {
 		available = 1
 	}
 	lines := cardsWrapSubmittedText(text, available)
-	for index, line := range lines {
-		prefix := strings.Repeat(" ", visibleWidth(prefixPlain))
-		if index == 0 {
-			prefix = prefixRendered
-		}
-		row, _ := cardsFormattedRow(ansi, borderColor, width, prefix+line)
-		fmt.Fprintln(target, row)
+	for _, line := range lines {
+		row, _ := cardsFormattedRow(ansi, borderColor, background, width, indent+style(ansi, colorWhite, line))
+		cardsWriteLine(target, row)
 	}
 }
 
@@ -385,29 +435,37 @@ func cardsWrapSubmittedText(text string, width int) []string {
 	return lines
 }
 
-func cardsFormattedRow(ansi bool, borderColor string, width int, rendered string) (string, int) {
+func cardsFormattedRow(ansi bool, borderColor string, background string, width int, rendered string) (string, int) {
 	padding := cardsContentWidth(width) - visibleWidth(rendered)
 	if padding < 0 {
 		padding = 0
 	}
 	row := style(ansi, borderColor, "│ ") + rendered + strings.Repeat(" ", padding) + style(ansi, borderColor, " │")
-	return row, padding + visibleWidth(" │")
+	return cardsApplyBackground(ansi, background, row), padding + visibleWidth(" │")
 }
 
-func cardsBorderLine(ansi bool, borderColor string, label string, width int, top bool) string {
+func cardsBorderLine(ansi bool, borderColor string, background string, rounded bool, label string, width int, top bool) string {
 	if width < 4 {
 		width = 4
 	}
+	topLeft, topRight := "┌", "┐"
+	bottomLeft, bottomRight := "└", "┘"
+	if rounded {
+		topLeft, topRight = "╭", "╮"
+		bottomLeft, bottomRight = "╰", "╯"
+		background = ""
+	}
 	if !top {
-		return style(ansi, borderColor, "└"+strings.Repeat("─", width-2)+"┘")
+		return cardsApplyBackground(ansi, background, style(ansi, borderColor, bottomLeft+strings.Repeat("─", width-2)+bottomRight))
 	}
 
-	prefix := "┌─ " + label + " "
-	remaining := width - visibleWidth(prefix) - visibleWidth("┐")
+	prefix := topLeft + "─ "
+	remaining := width - visibleWidth(prefix) - visibleWidth(label) - visibleWidth(" "+topRight)
 	if remaining < 0 {
 		remaining = 0
 	}
-	return style(ansi, borderColor, prefix+strings.Repeat("─", remaining)+"┐")
+	row := style(ansi, borderColor, prefix) + label + style(ansi, borderColor, " "+strings.Repeat("─", remaining)+topRight)
+	return cardsApplyBackground(ansi, background, row)
 }
 
 func cardsContentWidth(width int) int {
@@ -416,4 +474,23 @@ func cardsContentWidth(width int) int {
 		return 1
 	}
 	return width
+}
+
+func cardsApplyBackground(ansi bool, background string, row string) string {
+	if !ansi || background == "" {
+		return row
+	}
+	row = strings.NewReplacer(
+		colorReset, colorReset+background,
+		"\033[m", "\033[m"+background,
+	).Replace(row)
+	return background + row + colorReset
+}
+
+func cardsWriteLine(target io.Writer, row string) {
+	fmt.Fprint(target, row, "\r\n")
+}
+
+func cardsWriteBlank(target io.Writer) {
+	fmt.Fprint(target, "\r\n")
 }

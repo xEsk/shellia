@@ -9,7 +9,7 @@ import (
 	"shellia/internal/core"
 )
 
-const guideUserBackground = "\033[48;2;25;46;51m"
+const guideUserBackground = "\033[48;2;17;49;58m"
 
 type guideRenderer struct {
 	target io.Writer
@@ -18,9 +18,10 @@ type guideRenderer struct {
 }
 
 type guideTurn struct {
-	target io.Writer
-	ansi   bool
-	closed bool
+	target       io.Writer
+	ansi         bool
+	lastRowBlank bool
+	closed       bool
 }
 
 type guideStepSurface struct {
@@ -53,12 +54,16 @@ func (renderer *guideRenderer) interactivePromptPrefix(mode core.InteractiveMode
 func (renderer *guideRenderer) userTurn(mode core.InteractiveMode, text string) {
 	prefix := guideRail(renderer.ansi, colorCyan)
 	contentWidth := surfaceContentWidth(renderer.target, prefix+"    ")
+	messageWidth := contentWidth - 2
+	if messageWidth < 1 {
+		messageWidth = 1
+	}
 	rows := make([]string, 0, 3)
 	for _, line := range wrapPromptRunes([]rune(fallbackValue(renderer.user, "you")), contentWidth) {
 		rows = append(rows, style(renderer.ansi, colorCyan+colorBold, line))
 	}
-	for _, line := range wrapPromptRunes([]rune(text), contentWidth) {
-		rows = append(rows, style(renderer.ansi, colorWhite, line))
+	for _, line := range wrapPromptRunes([]rune(text), messageWidth) {
+		rows = append(rows, "  "+style(renderer.ansi, colorWhite, line))
 	}
 
 	surfaceWidth := 1
@@ -89,6 +94,7 @@ func (turn *guideTurn) plan(cfg configpkg.Config, summary string, plans []core.C
 	if turn == nil || turn.closed {
 		return
 	}
+	turn.ensurePaddingRow()
 
 	title := "plan"
 	titleColor := colorMagenta
@@ -97,8 +103,8 @@ func (turn *guideTurn) plan(cfg configpkg.Config, summary string, plans []core.C
 		titleColor = colorCyan
 	}
 	turn.write(style(turn.ansi, titleColor+colorBold, title))
-	for _, line := range wrapPlainText(summary, turn.contentWidth("")) {
-		turn.write(style(turn.ansi, colorWhite, line))
+	for _, line := range wrapPlainText(summary, turn.contentWidth("  ")) {
+		turn.write("  " + style(turn.ansi, colorWhite, line))
 	}
 
 	if len(plans) == 0 || (!cfg.Verbose && !cfg.PlanOnly && !cfg.AskConfirmPlan) {
@@ -126,6 +132,7 @@ func (turn *guideTurn) beginStep(cfg configpkg.Config, index int, total int, pla
 		prefix: nestedPrefix,
 	})
 	surface.writeRow(style(turn.ansi, commandBoxPromptForeground+colorBold, fmt.Sprintf("step %d/%d", index, total)))
+	turn.lastRowBlank = false
 	box := newStepBoxForSurface(&guideStepSurface{surface: surface})
 	box.Spacer()
 	box.Command(plan.Command)
@@ -145,10 +152,10 @@ func (turn *guideTurn) final(message string) {
 		return
 	}
 
-	turn.write("")
+	turn.ensurePaddingRow()
 	turn.write(shelliaBrand(turn.ansi, false))
-	for _, line := range renderAnswerMarkdown(message, turn.contentWidth(""), turn.ansi) {
-		turn.write(line)
+	for _, line := range renderAnswerMarkdown(message, turn.contentWidth("  "), turn.ansi) {
+		turn.write("  " + line)
 	}
 }
 
@@ -156,6 +163,7 @@ func (turn *guideTurn) thinkingPrefix() string {
 	if turn == nil || turn.closed {
 		return ""
 	}
+	turn.ensurePaddingRow()
 	return guideRail(turn.ansi, colorMagenta) + "   "
 }
 
@@ -175,6 +183,14 @@ func (turn *guideTurn) write(content string) {
 		return
 	}
 	guideWrite(turn.target, guideRail(turn.ansi, colorMagenta), content)
+	turn.lastRowBlank = content == ""
+}
+
+func (turn *guideTurn) ensurePaddingRow() {
+	if turn == nil || turn.closed || turn.lastRowBlank {
+		return
+	}
+	turn.write("")
 }
 
 func (turn *guideTurn) contentWidth(indent string) int {
@@ -261,7 +277,7 @@ func guideUserSurfaceWrite(target io.Writer, ansi bool, rail string, content str
 	if rightPadding < 2 {
 		rightPadding = 2
 	}
-	row := "  " + content + strings.Repeat(" ", rightPadding)
+	row := " " + content + strings.Repeat(" ", rightPadding)
 	if ansi {
 		row = strings.NewReplacer(
 			colorReset, colorReset+guideUserBackground,

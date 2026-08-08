@@ -220,7 +220,7 @@ func TestExecuteManualCommandUsesActiveTurn(t *testing.T) {
 	turn.Close()
 
 	output := string(readExecutorTestFile(t, stdout))
-	for _, want := range []string{"│ ┌─ step 1/1", "run › printf manual", "completed"} {
+	for _, want := range []string{"│   ┌─ step 1/1", "run › printf manual", "completed"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("manual command output lacks %q: %q", want, output)
 		}
@@ -324,7 +324,7 @@ func assertRawPTYHandoff(t *testing.T, output []byte, marker string, rawANSI str
 	if rawIndex == -1 {
 		t.Fatalf("PTY output lacks exact raw bytes %q: %q", rawANSI, output)
 	}
-	if bytes.LastIndex(output[:rawIndex], []byte("\n└")) == -1 {
+	if bytes.LastIndex(output[:rawIndex], []byte("\n╰")) == -1 {
 		t.Fatalf("renderer card was not closed before PTY output: %q", output)
 	}
 	continuedIndex := bytes.Index(output[rawIndex:], []byte("Shellia · continued"))
