@@ -658,6 +658,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 					printWarningTo(deps.Stderr, ui, err.Error())
 					continue
 				}
+				fmt.Fprintln(deps.Stdout)
 				printInfoTo(deps.Stdout, ui, "Theme switched to "+string(cfg.VisualStyle)+".")
 				continue
 			case interactiveCommandPlan:

@@ -59,6 +59,7 @@ func TestSwitchInteractiveThemePersistsAndReplacesRenderer(t *testing.T) {
 func TestSwitchInteractiveThemeFailureKeepsConfigAndRenderer(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.ConfigPath = filepath.Join(t.TempDir(), "missing.toml")
+	cfg.VisualStyle = configpkg.VisualStylePlain
 	deps := defaultRuntimeDeps()
 	deps.Renderer = newRenderer(deps.Stdout, presentation{Style: configpkg.VisualStylePlain})
 	previous := deps.Renderer
@@ -80,6 +81,7 @@ func TestRunInteractiveThemeCommandListsAndSwitchesWithoutLLM(t *testing.T) {
 	cfg := loopTestConfig(fake.URL())
 	cfg.ConfigPath = path
 	cfg.NoColor = true
+	cfg.VisualStyle = configpkg.VisualStylePlain
 	ctxInfo := loopTestContext(t)
 
 	output := captureMainLoopIO(t, "/theme\n/theme cards\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
@@ -93,6 +95,9 @@ func TestRunInteractiveThemeCommandListsAndSwitchesWithoutLLM(t *testing.T) {
 		if !strings.Contains(output, text) {
 			t.Fatalf("output = %q, missing %q", output, text)
 		}
+	}
+	if !strings.Contains(output, "\nShellia Theme switched to cards.") {
+		t.Fatalf("output = %q, want a blank line before the theme switch message", output)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
