@@ -103,6 +103,7 @@ const (
 	interactiveCommandAI      = interactivepkg.CommandAI
 	interactiveCommandMode    = interactivepkg.CommandMode
 	interactiveCommandModel   = interactivepkg.CommandModel
+	interactiveCommandTheme   = interactivepkg.CommandTheme
 	interactiveCommandPlan    = interactivepkg.CommandPlan
 
 	manualRenderInline           = executorpkg.ManualRenderInline
@@ -122,6 +123,7 @@ var (
 	parsePlanInstruction    = interactivepkg.ParsePlanInstruction
 	parseInteractiveCommand = interactivepkg.ParseCommand
 	parseModelCommandName   = interactivepkg.ParseModelCommandName
+	parseThemeCommandName   = interactivepkg.ParseThemeCommandName
 
 	defaultConfig                = configpkg.DefaultConfig
 	applyFileConfig              = configpkg.ApplyFileConfig
@@ -131,8 +133,11 @@ var (
 	settingsPath                 = configpkg.SettingsPath
 	initConfigFileTo             = configpkg.InitConfigFileTo
 	persistDefaultModel          = configpkg.PersistDefaultModel
+	persistVisualStyle           = configpkg.PersistVisualStyle
 	updateDefaultModelTOML       = configpkg.UpdateDefaultModelTOML
 	normalizeConfirmationDefault = configpkg.NormalizeConfirmationDefault
+	normalizeVisualStyle         = configpkg.NormalizeVisualStyle
+	visualStyles                 = configpkg.VisualStyles
 
 	uiEnabled                       = uipkg.Enabled
 	printErrorTo                    = uipkg.PrintErrorTo

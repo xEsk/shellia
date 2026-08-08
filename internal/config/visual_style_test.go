@@ -1,9 +1,19 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestVisualStylesListsEverySelectableStyle(t *testing.T) {
+	want := []VisualStyle{VisualStylePlain, VisualStyleGuide, VisualStyleBands, VisualStyleCards}
+	if got := visualStyles(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("visualStyles() = %#v, want %#v", got, want)
+	}
+}
 
 func TestNormalizeVisualStyle(t *testing.T) {
 	tests := []struct {
@@ -49,5 +59,56 @@ func TestVisualStyleConfigContract(t *testing.T) {
 		if !strings.Contains(defaultConfigTemplate(), style) {
 			t.Fatalf("defaultConfigTemplate() lacks documented %q style", style)
 		}
+	}
+}
+
+func TestUpdateVisualStyleTOMLReplacesStyleInsideUI(t *testing.T) {
+	input := "default_model = \"openai\"\n\n[ui]\n# keep this comment\nstyle = \"plain\"\nno_color = false\n\n[context]\ninclude_cwd = true\n"
+	want := "default_model = \"openai\"\n\n[ui]\n# keep this comment\nstyle = \"cards\"\nno_color = false\n\n[context]\ninclude_cwd = true\n"
+	if got := updateVisualStyleTOML(input, VisualStyleCards); got != want {
+		t.Fatalf("updateVisualStyleTOML() = %q, want %q", got, want)
+	}
+}
+
+func TestUpdateVisualStyleTOMLInsertsMissingUIStyle(t *testing.T) {
+	input := "default_model = \"openai\"\n\n[ui]\nno_color = false\n\n[context]\ninclude_cwd = true\n"
+	want := "default_model = \"openai\"\n\n[ui]\nno_color = false\nstyle = \"guide\"\n\n[context]\ninclude_cwd = true\n"
+	if got := updateVisualStyleTOML(input, VisualStyleGuide); got != want {
+		t.Fatalf("updateVisualStyleTOML() = %q, want %q", got, want)
+	}
+}
+
+func TestUpdateVisualStyleTOMLAppendsMissingUISection(t *testing.T) {
+	input := "default_model = \"openai\"\n"
+	want := "default_model = \"openai\"\n\n[ui]\nstyle = \"bands\"\n"
+	if got := updateVisualStyleTOML(input, VisualStyleBands); got != want {
+		t.Fatalf("updateVisualStyleTOML() = %q, want %q", got, want)
+	}
+}
+
+func TestPersistVisualStyleKeepsConfigBodyAndPermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	input := "[ui]\nstyle = \"plain\"\n\n[context]\ninclude_cwd = true\n"
+	if err := os.WriteFile(path, []byte(input), 0o640); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cfg := defaultConfig()
+	cfg.ConfigPath = path
+	if err := persistVisualStyle(cfg, VisualStyleCards); err != nil {
+		t.Fatalf("persistVisualStyle() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if got := string(data); got != "[ui]\nstyle = \"cards\"\n\n[context]\ninclude_cwd = true\n" {
+		t.Fatalf("config = %q", got)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o640 {
+		t.Fatalf("permissions = %o, want 640", got)
 	}
 }

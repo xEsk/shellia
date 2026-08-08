@@ -14,6 +14,7 @@ const (
 	interactiveCommandAI      interactiveCommand = "ai"
 	interactiveCommandMode    interactiveCommand = "mode"
 	interactiveCommandModel   interactiveCommand = "model"
+	interactiveCommandTheme   interactiveCommand = "theme"
 	interactiveCommandPlan    interactiveCommand = "plan"
 	interactiveCommandRetry   interactiveCommand = "retry"
 	interactiveCommandNew     interactiveCommand = "new"
@@ -34,6 +35,7 @@ var interactiveSlashCommands = []interactiveCommandSpec{
 	{Input: "/context", Command: interactiveCommandContext, Description: "show current local context"},
 	{Input: "/mode", Command: interactiveCommandMode, Description: "show current mode"},
 	{Input: "/model", Command: interactiveCommandModel, Description: "switch configured model profile"},
+	{Input: "/theme", Command: interactiveCommandTheme, Description: "switch visual theme"},
 	{Input: "/clear", Command: interactiveCommandClear, Description: "clear the terminal"},
 	{Input: "/exit", Command: interactiveCommandExit, Description: "close the session"},
 }
@@ -64,7 +66,8 @@ func parseInteractiveCommand(input string) interactiveCommand {
 	}
 
 	for _, spec := range interactiveSlashCommands {
-		if normalized == spec.Input || (spec.Command == interactiveCommandModel && strings.HasPrefix(normalized, spec.Input+" ")) {
+		acceptsArgument := spec.Command == interactiveCommandModel || spec.Command == interactiveCommandTheme
+		if normalized == spec.Input || (acceptsArgument && strings.HasPrefix(normalized, spec.Input+" ")) {
 			return spec.Command
 		}
 	}
@@ -113,6 +116,16 @@ func parseModelCommandName(input string) string {
 	trimmed := strings.TrimSpace(input)
 	fields := strings.Fields(trimmed)
 	if len(fields) < 2 || strings.ToLower(fields[0]) != "/model" {
+		return ""
+	}
+	return fields[1]
+}
+
+// parseThemeCommandName extracts the optional visual style from a /theme command.
+func parseThemeCommandName(input string) string {
+	trimmed := strings.TrimSpace(input)
+	fields := strings.Fields(trimmed)
+	if len(fields) < 2 || strings.ToLower(fields[0]) != "/theme" {
 		return ""
 	}
 	return fields[1]

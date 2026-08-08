@@ -1,6 +1,10 @@
 package ui
 
-import "strings"
+import (
+	"strings"
+
+	configpkg "shellia/internal/config"
+)
 
 const (
 	commandMenuBorderColor = "\033[38;5;242m"
@@ -54,8 +58,11 @@ func commandMenuLines(ui bool, input string, cfg config) []string {
 	return lines
 }
 
-// commandMenuSuggestions returns top-level slash commands or /model profile entries.
+// commandMenuSuggestions returns top-level slash commands or selector entries.
 func commandMenuSuggestions(input string, cfg config) []commandMenuItem {
+	if prefix, ok := themeMenuPrefix(input); ok {
+		return themeMenuSuggestions(prefix, cfg)
+	}
 	if prefix, ok := modelMenuPrefix(input); ok {
 		return modelMenuSuggestions(prefix, cfg)
 	}
@@ -70,6 +77,53 @@ func commandMenuSuggestions(input string, cfg config) []commandMenuItem {
 		suggestions = append(suggestions, commandMenuItem{
 			Input:       match.Input,
 			Description: match.Description,
+		})
+	}
+	return suggestions
+}
+
+// themeMenuPrefix extracts the style prefix when the prompt is editing /theme.
+func themeMenuPrefix(input string) (string, bool) {
+	if input == "" || strings.TrimLeft(input, " \t") != input || strings.ContainsAny(input, "\r\n") {
+		return "", false
+	}
+	lower := strings.ToLower(input)
+	switch {
+	case lower == "/theme":
+		return "", true
+	case strings.HasPrefix(lower, "/theme "):
+		fields := strings.Fields(input)
+		if len(fields) > 2 {
+			return "", false
+		}
+		return strings.TrimSpace(input[len("/theme"):]), true
+	default:
+		return "", false
+	}
+}
+
+// themeMenuSuggestions renders selectable visual styles for the /theme submenu.
+func themeMenuSuggestions(prefix string, cfg config) []commandMenuItem {
+	descriptions := map[configpkg.VisualStyle]string{
+		configpkg.VisualStylePlain: "classic Shellia output",
+		configpkg.VisualStyleGuide: "guided rail layout",
+		configpkg.VisualStyleBands: "full-width band layout",
+		configpkg.VisualStyleCards: "bordered card layout",
+	}
+	prefix = strings.ToLower(strings.TrimSpace(prefix))
+	styles := configpkg.VisualStyles()
+	suggestions := make([]commandMenuItem, 0, len(styles))
+	for _, visualStyle := range styles {
+		name := string(visualStyle)
+		if prefix != "" && !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		if visualStyle == cfg.VisualStyle {
+			name = "* " + name
+		}
+		suggestions = append(suggestions, commandMenuItem{
+			Input:       name,
+			Description: descriptions[visualStyle],
 		})
 	}
 	return suggestions
@@ -135,8 +189,18 @@ func commandMenuBorderLine(ui bool, left string, right string, width int) string
 	return style(ui, commandMenuBorderColor, left+strings.Repeat("─", innerWidth)+right)
 }
 
-// completeInteractiveCommand returns the first matching slash command or model profile.
+// completeInteractiveCommand returns the first matching slash command or selector entry.
 func completeInteractiveCommand(input string, cfg config) (string, bool) {
+	if prefix, ok := themeMenuPrefix(input); ok {
+		prefix = strings.ToLower(strings.TrimSpace(prefix))
+		for _, visualStyle := range configpkg.VisualStyles() {
+			name := string(visualStyle)
+			if prefix == "" || strings.HasPrefix(name, prefix) {
+				return "/theme " + name, true
+			}
+		}
+		return "", false
+	}
 	if prefix, ok := modelMenuPrefix(input); ok {
 		prefix = strings.ToLower(strings.TrimSpace(prefix))
 		for _, model := range cfg.Models {

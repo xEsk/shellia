@@ -449,6 +449,81 @@ func persistDefaultModel(cfg Config, name string) error {
 	return nil
 }
 
+// persistVisualStyle writes the selected visual style to [ui].style.
+func persistVisualStyle(cfg Config, style VisualStyle) error {
+	normalized := normalizeVisualStyle(string(style), "")
+	if normalized == "" {
+		return fmt.Errorf("unknown visual style %q", strings.TrimSpace(string(style)))
+	}
+	path := strings.TrimSpace(cfg.ConfigPath)
+	if path == "" {
+		return fmt.Errorf("cannot persist ui.style: no config file was loaded")
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("cannot inspect config file: %w", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("cannot read config file: %w", err)
+	}
+
+	updated := updateVisualStyleTOML(string(data), normalized)
+	if err := os.WriteFile(path, []byte(updated), info.Mode().Perm()); err != nil {
+		return fmt.Errorf("cannot write config file: %w", err)
+	}
+	return nil
+}
+
+// updateVisualStyleTOML updates only the style assignment inside [ui].
+func updateVisualStyleTOML(content string, style VisualStyle) string {
+	line := "style = " + strconv.Quote(string(style))
+	lines := strings.Split(content, "\n")
+	uiStart := -1
+	uiEnd := len(lines)
+
+	for index, current := range lines {
+		trimmed := strings.TrimSpace(current)
+		if trimmed == "[ui]" {
+			uiStart = index
+			continue
+		}
+		if uiStart >= 0 && strings.HasPrefix(trimmed, "[") {
+			uiEnd = index
+			break
+		}
+	}
+
+	if uiStart < 0 {
+		if content == "" {
+			return "[ui]\n" + line + "\n"
+		}
+		separator := "\n\n"
+		if strings.HasSuffix(content, "\n") {
+			separator = "\n"
+		}
+		return content + separator + "[ui]\n" + line + "\n"
+	}
+
+	for index := uiStart + 1; index < uiEnd; index++ {
+		key, _, ok := strings.Cut(strings.TrimSpace(lines[index]), "=")
+		if ok && strings.TrimSpace(key) == "style" {
+			lines[index] = line
+			return strings.Join(lines, "\n")
+		}
+	}
+
+	insertAt := uiEnd
+	for insertAt > uiStart+1 && strings.TrimSpace(lines[insertAt-1]) == "" {
+		insertAt--
+	}
+	lines = append(lines, "")
+	copy(lines[insertAt+1:], lines[insertAt:])
+	lines[insertAt] = line
+	return strings.Join(lines, "\n")
+}
+
 // updateDefaultModelTOML updates only the top-level default_model assignment.
 func updateDefaultModelTOML(content string, name string) string {
 	line := "default_model = " + strconv.Quote(name)

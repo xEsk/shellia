@@ -18,6 +18,8 @@ func TestParseInteractiveCommandSlashCommands(t *testing.T) {
 		{name: "mode", input: "/mode", want: interactiveCommandMode},
 		{name: "model", input: "/model", want: interactiveCommandModel},
 		{name: "model argument", input: "/model mlx", want: interactiveCommandModel},
+		{name: "theme", input: "/theme", want: interactiveCommandTheme},
+		{name: "theme argument", input: "/theme cards", want: interactiveCommandTheme},
 		{name: "context", input: "/context", want: interactiveCommandContext},
 		{name: "clear", input: "/clear", want: interactiveCommandClear},
 		{name: "exit slash", input: "/exit", want: interactiveCommandExit},
@@ -154,5 +156,15 @@ func TestParseModelCommandName(t *testing.T) {
 	}
 	if got := parseModelCommandName("/model"); got != "" {
 		t.Fatalf("parseModelCommandName(/model) = %q, want empty", got)
+	}
+}
+
+// TestParseThemeCommandName extracts the selected visual style from /theme.
+func TestParseThemeCommandName(t *testing.T) {
+	if got := parseThemeCommandName(" /theme CARDS "); got != "CARDS" {
+		t.Fatalf("parseThemeCommandName() = %q, want CARDS", got)
+	}
+	if got := parseThemeCommandName("/theme"); got != "" {
+		t.Fatalf("parseThemeCommandName(/theme) = %q, want empty", got)
 	}
 }

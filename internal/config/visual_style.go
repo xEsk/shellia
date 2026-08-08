@@ -12,6 +12,16 @@ const (
 	VisualStyleCards VisualStyle = "cards"
 )
 
+// visualStyles returns every selectable visual style in menu order.
+func visualStyles() []VisualStyle {
+	return []VisualStyle{
+		VisualStylePlain,
+		VisualStyleGuide,
+		VisualStyleBands,
+		VisualStyleCards,
+	}
+}
+
 // normalizeVisualStyle validates the configured terminal visual style.
 func normalizeVisualStyle(value string, fallback VisualStyle) VisualStyle {
 	switch strings.ToLower(strings.TrimSpace(value)) {

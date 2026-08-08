@@ -648,6 +648,18 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 				}
 				printModelSwitchTo(deps.Stdout, ui, cfg)
 				continue
+			case interactiveCommandTheme:
+				themeName := parseThemeCommandName(trimmed)
+				if themeName == "" {
+					printVisualThemesTo(deps.Stdout, ui, cfg)
+					continue
+				}
+				if err := switchInteractiveTheme(&cfg, &deps, ctxInfo.User, themeName); err != nil {
+					printWarningTo(deps.Stderr, ui, err.Error())
+					continue
+				}
+				printInfoTo(deps.Stdout, ui, "Theme switched to "+string(cfg.VisualStyle)+".")
+				continue
 			case interactiveCommandPlan:
 				printWarningTo(deps.Stderr, ui, "Missing plan instruction.")
 				continue
@@ -813,6 +825,19 @@ func printModelProfilesTo(target io.Writer, ui bool, cfg config) {
 	renderPanel(target, ui, "models", colorCyan, lines)
 }
 
+// printVisualThemesTo lists every selectable visual style and marks the configured one.
+func printVisualThemesTo(target io.Writer, ui bool, cfg config) {
+	lines := make([]string, 0, len(visualStyles()))
+	for _, visualStyle := range visualStyles() {
+		marker := " "
+		if visualStyle == cfg.VisualStyle {
+			marker = "*"
+		}
+		lines = append(lines, fmt.Sprintf("%s %s", marker, visualStyle))
+	}
+	renderPanel(target, ui, "themes", colorCyan, lines)
+}
+
 // switchInteractiveModel applies a configured model profile and persists it as the default.
 func switchInteractiveModel(cfg *config, name string) error {
 	if len(cfg.Models) == 0 {
@@ -838,6 +863,30 @@ func switchInteractiveModel(cfg *config, name string) error {
 	if err := persistDefaultModel(*cfg, selected.Name); err != nil {
 		return fmt.Errorf("model switched to %s, but default_model was not persisted: %w", selected.Name, err)
 	}
+	return nil
+}
+
+// switchInteractiveTheme persists and applies one visual style between turns.
+func switchInteractiveTheme(cfg *config, deps *runtimeDeps, user string, name string) error {
+	selected := normalizeVisualStyle(name, "")
+	if selected == "" {
+		return fmt.Errorf("visual theme %q not found", strings.TrimSpace(name))
+	}
+
+	next := *cfg
+	next.VisualStyle = selected
+	if err := persistVisualStyle(next, selected); err != nil {
+		return fmt.Errorf("theme was not changed: %w", err)
+	}
+
+	effective := effectivePresentation(next, *deps)
+	nextRenderer := newRenderer(deps.Stdout, presentation{
+		Style: effective.Style,
+		ANSI:  effective.ANSI,
+		User:  user,
+	})
+	*cfg = next
+	deps.Renderer = nextRenderer
 	return nil
 }
 

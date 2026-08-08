@@ -18,6 +18,7 @@ const (
 	CommandAI      = interactiveCommandAI
 	CommandMode    = interactiveCommandMode
 	CommandModel   = interactiveCommandModel
+	CommandTheme   = interactiveCommandTheme
 	CommandPlan    = interactiveCommandPlan
 )
 
@@ -44,4 +45,9 @@ func CompleteSlashCommand(input string) (string, bool) {
 // ParseModelCommandName extracts the profile name from `/model <name>`.
 func ParseModelCommandName(input string) string {
 	return parseModelCommandName(input)
+}
+
+// ParseThemeCommandName extracts the visual style from `/theme <name>`.
+func ParseThemeCommandName(input string) string {
+	return parseThemeCommandName(input)
 }

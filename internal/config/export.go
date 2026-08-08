@@ -46,6 +46,16 @@ func PersistDefaultModel(cfg Config, name string) error {
 	return persistDefaultModel(cfg, name)
 }
 
+// VisualStyles returns every selectable terminal visual style in menu order.
+func VisualStyles() []VisualStyle {
+	return visualStyles()
+}
+
+// PersistVisualStyle writes the selected terminal visual style to [ui].style.
+func PersistVisualStyle(cfg Config, style VisualStyle) error {
+	return persistVisualStyle(cfg, style)
+}
+
 // UpdateDefaultModelTOML updates only the top-level default_model assignment.
 func UpdateDefaultModelTOML(content string, name string) string {
 	return updateDefaultModelTOML(content, name)

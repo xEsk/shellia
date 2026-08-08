@@ -3,6 +3,8 @@ package ui
 import (
 	"strings"
 	"testing"
+
+	configpkg "shellia/internal/config"
 )
 
 // TestCommandMenuLinesPlain renders slash-command suggestions without ANSI.
@@ -85,5 +87,29 @@ func TestCompleteInteractiveCommandCompletesModelProfile(t *testing.T) {
 	got, ok := completeInteractiveCommand("/model m", cfg)
 	if !ok || got != "/model mlx" {
 		t.Fatalf("completeInteractiveCommand(/model m) = %q, %t; want /model mlx, true", got, ok)
+	}
+}
+
+// TestCommandMenuLinesShowsVisualThemes renders all four themes and marks the active one.
+func TestCommandMenuLinesShowsVisualThemes(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.VisualStyle = configpkg.VisualStyleBands
+	got := commandMenuLines(false, "/theme ", cfg)
+	if len(got) != 6 {
+		t.Fatalf("commandMenuLines(/theme) returned %d lines, want 6", len(got))
+	}
+	joined := strings.Join(got, "\n")
+	for _, name := range []string{"plain", "guide", "* bands", "cards"} {
+		if !strings.Contains(joined, name) {
+			t.Fatalf("commandMenuLines(/theme) = %#v, missing %q", got, name)
+		}
+	}
+}
+
+// TestCompleteInteractiveCommandCompletesVisualTheme checks Tab completion for /theme.
+func TestCompleteInteractiveCommandCompletesVisualTheme(t *testing.T) {
+	got, ok := completeInteractiveCommand("/theme ca", defaultConfig())
+	if !ok || got != "/theme cards" {
+		t.Fatalf("completeInteractiveCommand(/theme ca) = %q, %t; want /theme cards, true", got, ok)
 	}
 }
