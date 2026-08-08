@@ -156,7 +156,7 @@ La feature haurà de demostrar amb proves de regressió que la selecció implíc
 
 - Mentre espera entrada, el prompt interactiu identifica l’usuari actiu (`xesc ›`); `›` és un indicador d’edició i no forma part del transcript consolidat.
 - En enviar-se, el torn de l’usuari rep una guia vertical gruixuda cian (`┃`), una sola etiqueta amb el nom de l’usuari actiu i el text en una fila separada sense `you` ni `›`.
-- Totes les files del torn d’usuari comparteixen una superfície compacta de fons blau-petroli molt fosc, sense vores, que acaba poc després del contingut més ample en lloc d’omplir el terminal.
+- Totes les files del torn d’usuari comparteixen una superfície compacta de fons blau-petroli `#11313A`, compartit amb `bands`, sense vores, que acaba poc després del contingut més ample en lloc d’omplir el terminal.
 - La superfície comença immediatament després de `┃`, sense cap cel·la amb el fons del terminal entre la guia i el bloc, i aporta dues columnes de padding intern a cada costat. La seva amplada és la de la fila visible més llarga més aquest padding, limitada per l’amplada disponible del terminal, i s’aplica a totes les files d’un prompt multilínia.
 - Una fila buida amb el mateix fons obre i tanca la superfície per donar padding vertical al contingut. Després de la fila inferior es conserva una fila amb el fons normal del terminal per separar el torn de l’usuari del torn de Shellia.
 - El torn de Shellia rep la mateixa guia vertical gruixuda (`┃`) en magenta.
@@ -169,13 +169,13 @@ Sense color, la superfície de l’usuari conserva el text, el padding i l’aju
 ### 7.3 `bands`
 
 - `bands` conserva les decisions semàntiques de `guide`, però no en reutilitza la geometria: el prompt actiu mostra el nom de l’usuari i `›`, mentre que el transcript enviat mostra una sola vegada el nom real i omet `you`, `Tu`, `›` i la pregunta introductòria.
-- El torn de l’usuari usa una banda cian d’amplada completa amb dues columnes de padding intern i una fila buida de fons a dalt i a baix. El seu fons és una versió subtil i fosca del color de l’actor, sense la saturació dels colors ANSI de 256 tons actuals.
+- El torn de l’usuari usa una banda cian d’amplada completa amb dues columnes de padding intern i una fila buida de fons a dalt i a baix. La paleta truecolor usa el blau petroli compartit `#11313A` per a l’usuari, pruna `#482F4F` per a Shellia i grafit `#232729` per a l’execució. Els tres fons continuen sent foscos i subtils, però se separen per lluminositat perquè els actors i la part tècnica es puguin distingir en escanejar la conversa.
 - El torn de Shellia s’articula en superfícies consecutives però diferenciades: una banda de capçalera amb la marca multicolor `Shellia`, mode i context; una banda de pla; una banda tècnica neutra; i una banda final de resposta.
 - La marca `Shellia` no es duplica dins de la mateixa superfície. `Thinking…` continua visualment la superfície de Shellia i conserva aire respecte de la capçalera.
 - La banda de pla usa el magenta de Shellia per a la identitat i el resum. La banda tècnica usa un fons grafit subordinat i conserva el command box, els passos, el propòsit, la confirmació i l’output actuals.
-- La resposta final torna a una banda magenta, conserva el renderitzat Markdown i queda separada de l’execució neutra.
+- La resposta final torna directament a una banda magenta i conserva el renderitzat Markdown.
 - Totes les bandes acaben exactament dins de l’amplada disponible del terminal, comparteixen padding i wrapping, i retornen el cursor a la columna zero sense cues ni files desalineades.
-- Una fila amb el fons normal del terminal separa les superfícies principals i els torns consecutius.
+- Una fila amb el fons normal del terminal separa el torn de l’usuari del de Shellia i la capçalera del pla. Les transicions `pla → execució` i `execució → resposta final` són contínues: el canvi de fons defineix el límit sense inserir cap fila amb el fons del terminal.
 - Sense color, les bandes conserven marcador lateral, padding, separació, wrapping i jerarquia; ometen només els fons i colors ANSI i no es converteixen en `plain`.
 
 ### 7.4 `cards`
