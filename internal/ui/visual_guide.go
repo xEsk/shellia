@@ -9,7 +9,10 @@ import (
 	"shellia/internal/core"
 )
 
-const guideUserBackground = "\033[48;2;17;49;58m"
+const (
+	guideUserBackground = "\033[48;2;17;49;58m"
+	guideStepBackground = "\033[48;2;52;66;71m"
+)
 
 type guideRenderer struct {
 	target io.Writer
@@ -124,16 +127,18 @@ func (turn *guideTurn) beginStep(cfg configpkg.Config, index int, total int, pla
 	}
 
 	turn.write("")
-	nestedPrefix := guideRail(turn.ansi, colorMagenta) + "   " + guideTechnicalRail(turn.ansi, colorDim) + " "
+	nestedPrefix := guideRail(turn.ansi, colorMagenta) + "   " + guideTechnicalRail(turn.ansi, colorDim)
 	surface := newRowSurface(rowSurfaceSpec{
 		target: turn.target,
 		ansi:   turn.ansi,
 		width:  surfaceContentWidth(turn.target, nestedPrefix),
 		prefix: nestedPrefix,
 	})
-	surface.writeRow(style(turn.ansi, commandBoxPromptForeground+colorBold, fmt.Sprintf("step %d/%d", index, total)))
+	guideSurface := &guideStepSurface{surface: surface}
+	guideSurface.writeRow("")
+	guideSurface.writeRow(style(turn.ansi, commandBoxPromptForeground+colorBold, fmt.Sprintf("step %d/%d", index, total)))
 	turn.lastRowBlank = false
-	box := newStepBoxForSurface(&guideStepSurface{surface: surface})
+	box := newStepBoxForSurface(guideSurface)
 	box.Spacer()
 	box.Command(plan.Command)
 	box.Spacer()
@@ -239,25 +244,52 @@ func (surface *guideStepSurface) ansiEnabled() bool {
 }
 
 func (surface *guideStepSurface) contentWidth() int {
-	return surface.surface.contentWidth()
+	width := surface.surface.contentWidth() - 1
+	if width < 1 {
+		return 1
+	}
+	return width
 }
 
 func (surface *guideStepSurface) writeRow(rendered string) {
-	for _, row := range wrapRenderedRows(rendered, surface.surface.contentWidth()) {
-		surface.surface.writeRow(row)
+	for _, row := range wrapRenderedRows(rendered, surface.contentWidth()) {
+		surface.surface.writeRow(guideStepRow(surface.surface.ansiEnabled(), row, surface.surface.contentWidth()))
 	}
 }
 
 func (surface *guideStepSurface) replaceLastRenderedRow(rendered string) {
-	surface.surface.replaceLastRenderedRow(rendered)
+	surface.surface.replaceLastRenderedRow(guideStepRow(surface.surface.ansiEnabled(), rendered, surface.surface.contentWidth()))
 }
 
 func (surface *guideStepSurface) renderEditableRow(rendered string, moveLeft int) {
-	surface.surface.renderEditableRow(rendered, moveLeft)
+	padding := surface.contentWidth() - visibleWidth(rendered)
+	if padding < 0 {
+		padding = 0
+	}
+	surface.surface.renderEditableRow(
+		guideStepRow(surface.surface.ansiEnabled(), rendered, surface.surface.contentWidth()),
+		moveLeft+padding,
+	)
 }
 
 func (surface *guideStepSurface) close() {
+	surface.writeRow("")
 	surface.surface.close()
+}
+
+func guideStepRow(ansi bool, rendered string, width int) string {
+	rendered = " " + rendered
+	if !ansi {
+		return rendered
+	}
+	rendered = strings.NewReplacer(
+		colorReset, colorReset+guideStepBackground,
+		"\033[m", "\033[m"+guideStepBackground,
+	).Replace(rendered)
+	if padding := width - visibleWidth(rendered); padding > 0 {
+		rendered += strings.Repeat(" ", padding)
+	}
+	return guideStepBackground + rendered + colorReset
 }
 
 func guideRail(ansi bool, color string) string {

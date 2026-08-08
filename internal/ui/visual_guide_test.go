@@ -191,6 +191,63 @@ func TestGuideANSIUsesCyanForUserAndMagentaForShellia(t *testing.T) {
 	}
 }
 
+func TestGuideANSIUsesAContinuousStepBackground(t *testing.T) {
+	output := renderConversationFixture(t, newGuideRenderer, true)
+	wantBackground := "\033[48;2;52;66;71m"
+
+	for _, content := range []string{"step 1/1", "run ›", "• system output", "419Gi available"} {
+		row := guideOutputRowContaining(t, output, content)
+		if !strings.Contains(row, wantBackground) {
+			t.Fatalf("guide step row %q lacks execution background: %q", content, row)
+		}
+		wantPrefix := guideRail(true, colorMagenta) + "   " + guideTechnicalRail(true, colorDim) + wantBackground + " "
+		if !strings.HasPrefix(row, wantPrefix) {
+			t.Fatalf("guide step background starts after an unpainted gap: %q", row)
+		}
+	}
+}
+
+func TestGuideStepSurfaceHasVerticalPadding(t *testing.T) {
+	output := renderConversationFixture(t, newGuideRenderer, true)
+	rows := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
+	stepIndex, outputIndex := -1, -1
+	for index, row := range rows {
+		plain := stripANSISequences(row)
+		if strings.Contains(plain, "step 1/1") {
+			stepIndex = index
+		}
+		if strings.Contains(plain, "419Gi available") {
+			outputIndex = index
+		}
+	}
+	if stepIndex < 1 || outputIndex < 0 || outputIndex+1 >= len(rows) {
+		t.Fatalf("guide output lacks bounded step rows: %q", output)
+	}
+
+	for _, index := range []int{stepIndex - 1, outputIndex + 1} {
+		row := rows[index]
+		if strings.TrimSpace(stripANSISequences(row)) != "┃   │" ||
+			!strings.Contains(row, "\033[48;2;52;66;71m") {
+			t.Fatalf("guide step padding row is not inside the execution surface: %q", row)
+		}
+	}
+}
+
+func guideOutputRowContaining(t *testing.T, output string, content string) string {
+	t.Helper()
+	found := ""
+	for _, row := range strings.Split(output, "\n") {
+		if strings.Contains(stripANSISequences(row), content) {
+			found = row
+		}
+	}
+	if found != "" {
+		return found
+	}
+	t.Fatalf("guide output lacks row containing %q: %q", content, output)
+	return ""
+}
+
 func TestGuideShelliaIdentityUsesMulticolorBrandWithoutDuplicateLabel(t *testing.T) {
 	output := renderConversationFixture(t, newGuideRenderer, true)
 	brand := shelliaBrand(true, false)
@@ -281,8 +338,9 @@ func TestGuideExecutionUsesCommandAccentAndSecondaryPurpose(t *testing.T) {
 	if !strings.Contains(output, wantStep) {
 		t.Fatalf("guide step does not use the command accent: %q", output)
 	}
-	wantPurpose := style(true, colorDim, "• ") + style(true, colorDim, testPlan().Purpose)
-	if !strings.Contains(output, wantPurpose) {
+	purposeRow := guideOutputRowContaining(t, output, testPlan().Purpose)
+	if !strings.Contains(stripANSISequences(purposeRow), "• "+testPlan().Purpose) ||
+		strings.Count(purposeRow, colorDim) < 2 {
 		t.Fatalf("guide purpose is not secondary text: %q", output)
 	}
 }
@@ -438,7 +496,7 @@ func TestGuideWrapsStreamedOutputWithin48Columns(t *testing.T) {
 				if !strings.HasPrefix(line, "┃   │ ") {
 					t.Fatalf("streamed continuation lost nested guide: %q", line)
 				}
-				chunks = append(chunks, strings.TrimPrefix(line, "┃   │ "))
+				chunks = append(chunks, strings.TrimRight(strings.TrimPrefix(line, "┃   │ "), " "))
 			}
 
 			if len(chunks) < 2 {
