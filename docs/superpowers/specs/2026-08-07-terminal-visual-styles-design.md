@@ -168,10 +168,15 @@ Sense color, la superfície de l’usuari conserva el text, el padding i l’aju
 
 ### 7.3 `bands`
 
-- Cada torn usa un marcador lateral més ample i una superfície de fons ANSI subtil.
-- L’usuari i Shellia mantenen el mateix mapa semàntic de colors que `guide`.
-- Les execucions usen una superfície neutra subordinada, sense competir amb el torn.
-- Sense color, la banda es degrada a marcador lateral, espaiat i indentació; no es converteix en `plain`.
+- `bands` conserva les decisions semàntiques de `guide`, però no en reutilitza la geometria: el prompt actiu mostra el nom de l’usuari i `›`, mentre que el transcript enviat mostra una sola vegada el nom real i omet `you`, `Tu`, `›` i la pregunta introductòria.
+- El torn de l’usuari usa una banda cian d’amplada completa amb dues columnes de padding intern i una fila buida de fons a dalt i a baix. El seu fons és una versió subtil i fosca del color de l’actor, sense la saturació dels colors ANSI de 256 tons actuals.
+- El torn de Shellia s’articula en superfícies consecutives però diferenciades: una banda de capçalera amb la marca multicolor `Shellia`, mode i context; una banda de pla; una banda tècnica neutra; i una banda final de resposta.
+- La marca `Shellia` no es duplica dins de la mateixa superfície. `Thinking…` continua visualment la superfície de Shellia i conserva aire respecte de la capçalera.
+- La banda de pla usa el magenta de Shellia per a la identitat i el resum. La banda tècnica usa un fons grafit subordinat i conserva el command box, els passos, el propòsit, la confirmació i l’output actuals.
+- La resposta final torna a una banda magenta, conserva el renderitzat Markdown i queda separada de l’execució neutra.
+- Totes les bandes acaben exactament dins de l’amplada disponible del terminal, comparteixen padding i wrapping, i retornen el cursor a la columna zero sense cues ni files desalineades.
+- Una fila amb el fons normal del terminal separa les superfícies principals i els torns consecutius.
+- Sense color, les bandes conserven marcador lateral, padding, separació, wrapping i jerarquia; ometen només els fons i colors ANSI i no es converteixen en `plain`.
 
 ### 7.4 `cards`
 
