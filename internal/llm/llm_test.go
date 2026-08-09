@@ -4,17 +4,92 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	configpkg "github.com/xEsk/shellia/internal/config"
+	"github.com/xEsk/shellia/internal/core"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return fn(request)
+}
+
+// TestBuildUserPromptGoldenCharacterizes the complete prompt contract before
+// extracting its sections into prompt.go.
+func TestBuildUserPromptGoldenCharacterizes(t *testing.T) {
+	request := representativePromptRequest()
+	want, err := os.ReadFile("testdata/build_user_prompt.golden")
+	if err != nil {
+		t.Logf("buildUserPrompt() current output:\n%s", buildUserPrompt(request))
+		t.Fatalf("read golden prompt: %v", err)
+	}
+
+	got := buildUserPrompt(request)
+	if got != string(want) {
+		t.Fatalf("buildUserPrompt() changed\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+
+	request.Config.PlanOnly = false
+	if buildUserPrompt(request) == string(want) {
+		t.Fatal("golden prompt did not detect execution-authority drift")
+	}
+}
+
+// representativePromptRequest exercises every prompt section with stable data.
+func representativePromptRequest() PromptRequest {
+	cfg := configpkg.DefaultConfig()
+	cfg.PlanOnly = true
+	cfg.MaxObservationEntries = 2
+	cfg.ObservationOutputChars = 24
+
+	previous := Response{Action: "execute", ObjectiveMode: "observe", Summary: "Inspect the deployment state."}
+	return PromptRequest{
+		Config:              promptOptionsForTest(cfg),
+		Instruction:         "complete the maintenance task",
+		ResolvedInstruction: "complete the maintenance task for /srv/demo",
+		ContextInfo:         contextInfo{CWD: "/srv/demo", User: "demo-user", OS: "demo-os", Shell: "/bin/zsh"},
+		History:             []historyEntry{{Instruction: "inspect the old deployment", Result: "The old deployment needs maintenance."}},
+		State: sessionState{
+			PendingIntent:        "finish maintenance",
+			LastRetryInstruction: "complete the maintenance task",
+			PendingProposal:      pendingProposal{Objective: "restart demo", Summary: "Restart the demo service"},
+			LastRuntimeHint:      "service is managed by launchd",
+			LastCreatedFiles:     []string{"/srv/demo/report.txt"},
+			LastReferencedFile:   "/srv/demo/config.toml",
+			LastBlockerKind:      "missing_input",
+			LastBlockerReason:    "service name was not provided",
+			LastObservations:     []core.ObservationMemory{{Purpose: "Old observation", Command: "launchctl list", Transcript: "old service output"}},
+		},
+		Observations: []commandExecution{
+			{Command: "launchctl print system/demo", Purpose: "Inspect the demo service", ExitCode: 1, Stderr: capturedStream{Text: "service-marker failed"}},
+			{Command: "cat /srv/demo/config.toml", Purpose: "Read the demo configuration", ExitCode: 0, Stdout: capturedStream{Text: "config-marker enabled=true"}},
+		},
+		Skipped:                   []skippedCommand{{Command: "launchctl kickstart system/demo", Purpose: "Restart the demo service", Reason: "awaiting confirmation"}},
+		LatestBatchExecutionStart: 0,
+		LatestBatchSkippedStart:   0,
+		EvidenceRevision:          4,
+		PlanningRoundsRemaining:   2,
+		ObjectiveMode:             "observe",
+		SuccessCriteria:           "The current demo service state is reported.",
+		DecisionError:             "completion basis references an unavailable attempt",
+		PriorEvidenceAvailable:    true,
+		PreviousDecision:          &previous,
+		Attempts: []workflowAttempt{{
+			ID:               7,
+			Round:            1,
+			PlannedCommand:   "launchctl print system/demo",
+			EffectiveCommand: "launchctl print system/demo",
+			Outcome:          "failed",
+			ExitCode:         1,
+			EvidenceBefore:   3,
+			EvidenceAfter:    4,
+		}},
+	}
 }
 
 // TestParseResponseValidatesWorkflowDecisionContract checks malformed model
@@ -67,7 +142,7 @@ func TestParseResponseValidatesWorkflowDecisionContract(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			response, err := parseResponse(tt.raw)
+			response, err := parseResponse(tt.raw, ResponseModeStrict)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("parseResponse() error = nil, want rejection")
@@ -92,7 +167,7 @@ func TestParseResponseValidatesWorkflowDecisionContract(t *testing.T) {
 func TestParseResponseAcceptsExtraTrailingBrace(t *testing.T) {
 	raw := `{"action":"execute","objective_mode":"observe","success_criteria":"Files listed","summary":"Showing files.","commands":[{"command":"ls","purpose":"List files","risk":"safe","requires_confirmation":false}]}}`
 
-	response, err := parseResponse(raw)
+	response, err := parseResponse(raw, ResponseModeCompatible)
 	if err != nil {
 		t.Fatalf("parseResponse() error = %v", err)
 	}
@@ -106,12 +181,50 @@ func TestParseResponseAcceptsExtraTrailingBrace(t *testing.T) {
 func TestParseResponseKeepsBracesInsideStrings(t *testing.T) {
 	raw := `prefix {"action":"complete","objective_mode":"explain","success_criteria":"Braces explained","summary":"Use {literal} braces.","completion_basis":{"type":"model_knowledge"},"commands":[]} suffix`
 
-	response, err := parseResponse(raw)
+	response, err := parseResponse(raw, ResponseModeCompatible)
 	if err != nil {
 		t.Fatalf("parseResponse() error = %v", err)
 	}
 	if response.Summary != "Use {literal} braces." {
 		t.Fatalf("Summary = %q, want braces preserved", response.Summary)
+	}
+}
+
+// TestParseResponseStrictRejectsDocumentBoundaries checks response-format
+// providers cannot smuggle text or multiple documents past the decoder.
+func TestParseResponseStrictRejectsDocumentBoundaries(t *testing.T) {
+	valid := `{"action":"complete","objective_mode":"explain","success_criteria":"Answer provided","summary":"Done.","completion_basis":{"type":"model_knowledge"},"commands":[]}`
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "prefix", raw: "prefix " + valid},
+		{name: "suffix", raw: valid + " suffix"},
+		{name: "extra brace", raw: valid + "}"},
+		{name: "two objects", raw: valid + valid},
+		{name: "non object", raw: `[]`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := parseResponse(tt.raw, ResponseModeStrict); err == nil {
+				t.Fatal("parseResponse() error = nil, want strict document rejection")
+			}
+		})
+	}
+}
+
+// TestParseResponseStrictAcceptsUnknownFields preserves provider compatibility
+// while strict mode enforces exactly one response document.
+func TestParseResponseStrictAcceptsUnknownFields(t *testing.T) {
+	raw := `{"action":"complete","objective_mode":"explain","success_criteria":"Answer provided","summary":"Done.","completion_basis":{"type":"model_knowledge"},"commands":[],"provider_metadata":{"request_id":"provider-123"}}`
+
+	response, err := parseResponse(raw, ResponseModeStrict)
+	if err != nil {
+		t.Fatalf("parseResponse() error = %v", err)
+	}
+	if response.Summary != "Done." {
+		t.Fatalf("Summary = %q, want Done.", response.Summary)
 	}
 }
 

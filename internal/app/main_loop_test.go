@@ -1094,6 +1094,92 @@ func TestRunPlanningRoundPreservesStructuralParseCause(t *testing.T) {
 	}
 }
 
+// TestRunPlanningRoundSelectsResponseModeForProviderCapabilities checks both
+// response modes at the initial and structural-repair parse sites.
+func TestRunPlanningRoundSelectsResponseModeForProviderCapabilities(t *testing.T) {
+	valid := `{"action":"complete","objective_mode":"explain","success_criteria":"Answer provided","summary":"Done.","completion_basis":{"type":"model_knowledge"},"commands":[]}`
+	tests := []struct {
+		name                   string
+		supportsResponseFormat bool
+		responses              []loopLLMResponse
+		wantRepair             bool
+		wantStructuralError    bool
+		wantRequests           int
+	}{
+		{
+			name:                   "strict response format repairs trailing brace",
+			supportsResponseFormat: true,
+			responses: []loopLLMResponse{
+				{content: valid + "}"},
+				{content: valid},
+			},
+			wantRepair:   true,
+			wantRequests: 2,
+		},
+		{
+			name:                   "compatible response format accepts trailing brace initially",
+			supportsResponseFormat: false,
+			responses: []loopLLMResponse{
+				{content: valid + "}"},
+			},
+			wantRequests: 1,
+		},
+		{
+			name:                   "strict response format rejects trailing brace during repair",
+			supportsResponseFormat: true,
+			responses: []loopLLMResponse{
+				{content: "not json"},
+				{content: valid + "}"},
+			},
+			wantStructuralError: true,
+			wantRequests:        2,
+		},
+		{
+			name:                   "compatible response format repairs with tolerated trailing brace",
+			supportsResponseFormat: false,
+			responses: []loopLLMResponse{
+				{content: "not json"},
+				{content: valid + "}"},
+			},
+			wantRepair:   true,
+			wantRequests: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newLoopLLMClient(t, tt.responses...)
+			cfg := loopTestConfig(fake.URL())
+			cfg.SupportsResponseFormat = tt.supportsResponseFormat
+
+			captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+				result, err := runPlanningRound(t.Context(), planningRoundRequest{
+					Deps:   deps,
+					Client: llmClientOptions(cfg),
+					Prompt: llmPromptRequest{
+						Config:      llmPromptOptions(cfg),
+						Instruction: "explain the result",
+					},
+					AllowStructuralRepair: true,
+				})
+				if tt.wantStructuralError {
+					if !errors.Is(err, errStructuralResponse) {
+						t.Fatalf("runPlanningRound() error = %v, want structural response error", err)
+					}
+				} else if err != nil {
+					t.Fatalf("runPlanningRound() error = %v", err)
+				}
+				if !tt.wantStructuralError && result.StructuralRepairUsed != tt.wantRepair {
+					t.Fatalf("StructuralRepairUsed = %t, want %t", result.StructuralRepairUsed, tt.wantRepair)
+				}
+				if fake.requestCount() != tt.wantRequests {
+					t.Fatalf("requests = %d, want %d", fake.requestCount(), tt.wantRequests)
+				}
+			})
+		})
+	}
+}
+
 // TestDoLLMRequestPropagatesContextCancellation checks LLM calls preserve cancellation identity.
 func TestDoLLMRequestPropagatesContextCancellation(t *testing.T) {
 	cfg := loopTestConfig("http://shellia.test")

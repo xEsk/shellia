@@ -30,9 +30,9 @@ func CallPlanningPrompt(ctx context.Context, client *http.Client, options Client
 	return callPlanningPrompt(ctx, client, options, systemPrompt, userPrompt)
 }
 
-// ParseResponse parses one raw model response.
-func ParseResponse(raw string) (Response, error) {
-	return parseResponse(raw)
+// ParseResponse parses one raw model response using the selected mode.
+func ParseResponse(raw string, mode ResponseMode) (Response, error) {
+	return parseResponse(raw, mode)
 }
 
 // NormalizePlan converts a parsed LLM response into a local plan.

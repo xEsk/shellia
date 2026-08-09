@@ -1,0 +1,75 @@
+User instruction:
+complete the maintenance task
+Planning rounds remaining: 2
+
+Resolved planning context:
+complete the maintenance task for /srv/demo
+
+Session memory:
+- pending_intent: finish maintenance
+- last_retry_instruction: complete the maintenance task
+- pending_proposal_objective: restart demo
+- pending_proposal_summary: Restart the demo service
+- last_runtime_hint: service is managed by launchd
+- last_created_files: /srv/demo/report.txt
+- last_referenced_file: /srv/demo/config.toml
+- last_blocker_kind: missing_input
+- last_blocker_reason: service name was not provided
+
+Immutable objective contract:
+- objective_mode: observe
+- success_criteria: The current demo service state is reported.
+
+Previous workflow decision:
+- action: execute
+- summary: Inspect the deployment state.
+
+Decision repair required:
+completion basis references an unavailable attempt
+Return a coherent decision without changing the decision's authority group or any locked objective contract.
+Observe repair contract:
+
+Recent workflow attempts:
+- attempt 7 (round 1): outcome=failed exit_code=1
+  planned: launchctl print system/demo
+  effective: launchctl print system/demo
+  evidence_revision: 3 -> 4
+Valid completion references:
+- evidence_revision 4: attempt_ids [7]
+Use one evidence_revision and only its listed attempt_ids; current_execution may reference successful attempts only.
+
+Observed outputs from the current task:
+evidence_revision: 4
+output evidence budget: 24 chars
+1. Purpose: Inspect the demo service
+   Command: launchctl print system/demo
+   Exit code: 1
+   stderr:
+   servic
+   ...
+   failed
+2. Purpose: Read the demo configuration
+   Command: cat /srv/demo/config.toml
+   Exit code: 0
+   stdout:
+   config
+   ...
+   d=true
+Skipped commands from the current task:
+1. Purpose: Restart the demo service
+   Command: launchctl kickstart system/demo
+   Reason: awaiting confirmation
+
+Current context:
+- cwd: /srv/demo
+- user: demo-user
+- os: demo-os
+- shell: /bin/zsh
+Recent session context:
+1. User: inspect the old deployment
+   Result: The old deployment needs maintenance.
+
+Prior session evidence: eligible for this same-objective retry.
+
+
+Execution authority: plan_only; commands may be shown but must not be executed.

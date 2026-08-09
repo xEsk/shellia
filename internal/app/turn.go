@@ -530,7 +530,11 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 		fmt.Fprintln(deps.Stdout)
 	}
 
-	parsed, err := llmpkg.ParseResponse(rawResponse)
+	responseMode := llmpkg.ResponseModeCompatible
+	if clientOptions.SupportsResponseFormat {
+		responseMode = llmpkg.ResponseModeStrict
+	}
+	parsed, err := llmpkg.ParseResponse(rawResponse, responseMode)
 	structuralRepairUsed := false
 	if err != nil {
 		deps.Trace.Record("llm_error", request.TurnID, "planning", request.Round, map[string]any{
@@ -554,7 +558,7 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 		deps.Trace.Record("llm_response", request.TurnID, "structural_repair", request.Round, map[string]any{
 			"raw_response": repairedRaw,
 		})
-		parsed, err = llmpkg.ParseResponse(repairedRaw)
+		parsed, err = llmpkg.ParseResponse(repairedRaw, responseMode)
 		if err != nil {
 			return planningRoundResult{}, fmt.Errorf("%w: %w", errStructuralResponse, err)
 		}
