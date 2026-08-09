@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,7 @@ import (
 	"github.com/creack/pty"
 	configpkg "shellia/internal/config"
 	"shellia/internal/core"
+	uipkg "shellia/internal/ui"
 )
 
 type loopLLMResponse struct {
@@ -758,6 +760,62 @@ func TestRunAppTraceWritesSingleSessionFile(t *testing.T) {
 	}
 	if len(traceEventsByName(events, "turn_start")) != 1 || len(traceEventsByName(events, "turn_end")) != 1 {
 		t.Fatalf("turn events start=%d end=%d, want 1 and 1", len(traceEventsByName(events, "turn_start")), len(traceEventsByName(events, "turn_end")))
+	}
+}
+
+// TestRunAppInteractiveReadErrorReturnsOneAndClosesTrace checks interactive prompt failures return to the caller and finalize tracing.
+func TestRunAppInteractiveReadErrorReturnsOneAndClosesTrace(t *testing.T) {
+	traceDir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	stderr, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatalf("CreateTemp(stderr) error = %v", err)
+	}
+	t.Cleanup(func() {
+		stderr.Close() //nolint:errcheck // best-effort cleanup of the temporary error output.
+	})
+
+	var code int
+	captureMainLoopIO(t, "", &http.Client{}, func(deps runtimeDeps) {
+		deps.Stderr = stderr
+		deps.ReadInteractivePrompt = func(bool, *bufio.Reader, *os.File, io.Writer, interactiveMode, config, *uipkg.Renderer) (string, error) {
+			return "", errors.New("injected read failure")
+		}
+		code = runApp(t.Context(), []string{
+			"--interactive",
+			"--base-url", "http://localhost:8080/v1",
+			"--model", "test-model",
+			"--trace",
+			"--trace-dir", traceDir,
+		}, deps)
+	})
+
+	if code != 1 {
+		t.Errorf("runApp() code = %d, want 1", code)
+	}
+	if _, err := stderr.Seek(0, io.SeekStart); err != nil {
+		t.Fatalf("Seek(stderr) error = %v", err)
+	}
+	stderrOutput, err := io.ReadAll(stderr)
+	if err != nil {
+		t.Fatalf("ReadAll(stderr) error = %v", err)
+	}
+	if !strings.Contains(string(stderrOutput), "cannot read prompt: injected read failure") {
+		t.Errorf("stderr = %q, want prompt read error", stderrOutput)
+	}
+
+	entries, err := os.ReadDir(traceDir)
+	if err != nil {
+		t.Fatalf("ReadDir(%q) error = %v", traceDir, err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("trace files = %d, want 1", len(entries))
+	}
+	events := readTraceEvents(t, filepath.Join(traceDir, entries[0].Name()))
+	if len(traceEventsByName(events, "session_end")) != 1 {
+		t.Errorf("session_end events = %d, want 1", len(traceEventsByName(events, "session_end")))
 	}
 }
 

@@ -137,7 +137,10 @@ func runApp(parentCtx context.Context, args []string, deps runtimeDeps) int {
 	}
 
 	if cfg.Interactive {
-		runInteractive(appCtx, deps, ui, cfg, &ctxInfo)
+		if err := runInteractive(appCtx, deps, ui, cfg, &ctxInfo); err != nil {
+			printErrorTo(deps.Stderr, ui, err.Error())
+			return 1
+		}
 		return 0
 	}
 
@@ -506,8 +509,8 @@ func usageFunc(fs *flag.FlagSet) func() {
 
 // runInteractive opens a persistent session where each prompt extends the conversation context.
 // A fresh signal context is created per turn so Ctrl+C cancels only the current LLM call,
-// allowing the loop to continue for the next request.
-func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo) {
+// allowing the loop to continue for the next request. It returns unrecoverable prompt read errors.
+func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo) error {
 	deps = deps.withDefaults()
 	if deps.Renderer == nil {
 		deps.Renderer = newRenderer(deps.Stdout, presentation{Style: visualStylePlain, ANSI: ui, User: promptPresentationUser(cfg, ctxInfo.User)})
@@ -551,16 +554,17 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 	for {
 		// Check if the parent context was cancelled (e.g. second Ctrl+C).
 		if ctx.Err() != nil {
-			return
+			//nolint:nilerr // Parent context cancellation is normal interactive-session completion.
+			return nil
 		}
 
-		input, err := readInteractivePrompt(ui, reader, deps.Stdin, deps.Stdout, mode, cfg, deps.Renderer)
+		input, err := deps.ReadInteractivePrompt(ui, reader, deps.Stdin, deps.Stdout, mode, cfg, deps.Renderer)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				fmt.Fprintln(deps.Stdout)
-				return
+				return nil
 			}
-			exitWithError(ui, fmt.Sprintf("cannot read prompt: %v", err), 1)
+			return fmt.Errorf("cannot read prompt: %w", err)
 		}
 
 		trimmed := strings.TrimSpace(input)
@@ -618,7 +622,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			case interactiveCommandExit:
 				fmt.Fprintln(deps.Stdout)
 				printInfoTo(deps.Stdout, ui, "Session closed.")
-				return
+				return nil
 			case interactiveCommandClear:
 				clearScreenTo(deps.Stdout)
 				continue

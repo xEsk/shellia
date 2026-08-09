@@ -154,12 +154,6 @@ func uiEnabled(cfg config) bool {
 	return (info.Mode() & os.ModeCharDevice) != 0
 }
 
-// exitWithError prints an error and terminates the process with the given code.
-func exitWithError(ui bool, message string, code int) {
-	printErrorTo(os.Stderr, ui, message)
-	os.Exit(code)
-}
-
 // printErrorTo renders a process-level error on the provided stream.
 func printErrorTo(target io.Writer, ui bool, message string) {
 	renderPanel(target, ui, "error", colorRed, []string{

@@ -48,11 +48,6 @@ func PrintErrorTo(target io.Writer, ui bool, message string) {
 	printErrorTo(target, ui, message)
 }
 
-// ExitWithError prints a process-level error and exits.
-func ExitWithError(ui bool, message string, code int) {
-	exitWithError(ui, message, code)
-}
-
 // RenderPanel draws a light visual block to better distinguish the Shellia UI.
 func RenderPanel(target io.Writer, ui bool, title string, color string, lines []string) {
 	renderPanel(target, ui, title, color, lines)

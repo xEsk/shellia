@@ -1,7 +1,9 @@
 package app
 
 import (
+	"bufio"
 	"context"
+	"io"
 	"net/http"
 	"os"
 
@@ -18,28 +20,30 @@ type manualCommandRunner func(context.Context, runtimeDeps, bool, config, *conte
 
 // runtimeDeps groups process dependencies used by the core session loops.
 type runtimeDeps struct {
-	Stdin                *os.File
-	Stdout               *os.File
-	Stderr               *os.File
-	HTTPClient           *http.Client
-	ExecuteCommands      commandRunner
-	ExecuteManualCommand manualCommandRunner
-	StdoutIsTerminal     func(*os.File) bool
-	Trace                *traceLogger
-	Renderer             *uipkg.Renderer
-	Turn                 *uipkg.Turn
+	Stdin                 *os.File
+	Stdout                *os.File
+	Stderr                *os.File
+	HTTPClient            *http.Client
+	ExecuteCommands       commandRunner
+	ExecuteManualCommand  manualCommandRunner
+	ReadInteractivePrompt func(bool, *bufio.Reader, *os.File, io.Writer, interactiveMode, config, *uipkg.Renderer) (string, error)
+	StdoutIsTerminal      func(*os.File) bool
+	Trace                 *traceLogger
+	Renderer              *uipkg.Renderer
+	Turn                  *uipkg.Turn
 }
 
 // defaultRuntimeDeps returns the production dependencies for Shellia.
 func defaultRuntimeDeps() runtimeDeps {
 	return runtimeDeps{
-		Stdin:                os.Stdin,
-		Stdout:               os.Stdout,
-		Stderr:               os.Stderr,
-		HTTPClient:           &http.Client{},
-		ExecuteCommands:      executeCommands,
-		ExecuteManualCommand: executeManualCommand,
-		StdoutIsTerminal:     stdoutIsTerminal,
+		Stdin:                 os.Stdin,
+		Stdout:                os.Stdout,
+		Stderr:                os.Stderr,
+		HTTPClient:            &http.Client{},
+		ExecuteCommands:       executeCommands,
+		ExecuteManualCommand:  executeManualCommand,
+		ReadInteractivePrompt: uipkg.ReadInteractivePromptWithRenderer,
+		StdoutIsTerminal:      stdoutIsTerminal,
 	}
 }
 
@@ -63,6 +67,9 @@ func (deps runtimeDeps) withDefaults() runtimeDeps {
 	}
 	if deps.ExecuteManualCommand == nil {
 		deps.ExecuteManualCommand = defaults.ExecuteManualCommand
+	}
+	if deps.ReadInteractivePrompt == nil {
+		deps.ReadInteractivePrompt = defaults.ReadInteractivePrompt
 	}
 	if deps.StdoutIsTerminal == nil {
 		deps.StdoutIsTerminal = defaults.StdoutIsTerminal

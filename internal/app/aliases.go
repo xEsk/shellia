@@ -141,7 +141,6 @@ var (
 
 	uiEnabled                       = uipkg.Enabled
 	printErrorTo                    = uipkg.PrintErrorTo
-	exitWithError                   = uipkg.ExitWithError
 	renderPanel                     = uipkg.RenderPanel
 	printSessionBannerTo            = uipkg.PrintSessionBannerTo
 	readInteractivePrompt           = uipkg.ReadInteractivePromptWithRenderer
