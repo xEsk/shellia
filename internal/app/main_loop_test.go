@@ -1325,6 +1325,41 @@ func TestRunTurnExecutesSafePlanAndCompletes(t *testing.T) {
 	}
 }
 
+// TestRunTurnProjectsWorkflowStateIntoPlanningRequests checks each planning
+// round receives the remaining budget and evidence admitted by prior execution.
+func TestRunTurnProjectsWorkflowStateIntoPlanningRequests(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect.","commands":[{"command":"pwd","purpose":"Inspect directory","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspection complete.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	cfg.PlanningMaxRounds = 3
+	ctxInfo := loopTestContext(t)
+
+	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ executorpkg.Options, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
+			return commandBatchResult{Executions: []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 0}}}, nil
+		}
+		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "inspect")); err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	bodies := fake.requestBodies()
+	if len(bodies) != 2 {
+		t.Fatalf("request bodies = %d, want initial and evidence rounds", len(bodies))
+	}
+	if !strings.Contains(bodies[0], "Planning rounds remaining: 3") {
+		t.Fatalf("initial planning request missing remaining budget: %q", bodies[0])
+	}
+	for _, snippet := range []string{"Planning rounds remaining: 2", "Recent workflow attempts:", "attempt 1 (round 0): outcome=success", "Observed outputs from the current task:", "evidence_revision: 1"} {
+		if !strings.Contains(bodies[1], snippet) {
+			t.Fatalf("follow-up planning request missing %q: %q", snippet, bodies[1])
+		}
+	}
+}
+
 // TestRunTurnPropagatesParentCancellationDuringSummary checks Ctrl+C is not
 // converted into a successful fallback response after commands have run.
 func TestRunTurnPropagatesParentCancellationDuringSummary(t *testing.T) {
@@ -2458,6 +2493,9 @@ func TestRunTurnCanContinueAfterPlanningRoundLimit(t *testing.T) {
 	}
 	if fake.requestCount() != 3 {
 		t.Fatalf("LLM requests = %d, want 3", fake.requestCount())
+	}
+	if body := fake.requestBodies()[2]; !strings.Contains(body, "Planning rounds remaining: 2") {
+		t.Fatalf("post-extension request missing renewed planning budget: %q", body)
 	}
 	if !strings.Contains(output, "planning reached the current follow-up round limit (2)") {
 		t.Fatalf("output missing planning limit warning: %q", output)

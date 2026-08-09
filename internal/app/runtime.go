@@ -82,20 +82,20 @@ func stdoutIsTerminal(file *os.File) bool {
 	return file != nil && term.IsTerminal(int(file.Fd()))
 }
 
-func executorDeps(deps runtimeDeps) executorpkg.RuntimeDeps {
+func executorDeps(deps runtimeDeps, ui bool) executorpkg.RuntimeDeps {
 	return executorpkg.RuntimeDeps{
-		Stdin:  deps.Stdin,
-		Stdout: deps.Stdout,
-		Stderr: deps.Stderr,
-		Trace:  deps.Trace,
-		Turn:   deps.Turn,
+		Stdin:     deps.Stdin,
+		Stdout:    deps.Stdout,
+		Stderr:    deps.Stderr,
+		Trace:     deps.Trace,
+		Presenter: newExecutorPresenter(deps, ui),
 	}
 }
 
 func executeCommands(ctx context.Context, deps runtimeDeps, ui bool, options executorpkg.Options, ctxInfo *contextInfo, plans []commandPlan, priorExecutions []commandExecution) (commandBatchResult, error) {
-	return executorpkg.ExecuteCommands(ctx, executorDeps(deps), ui, options, ctxInfo, plans, priorExecutions)
+	return executorpkg.ExecuteCommands(ctx, executorDeps(deps, ui), ui, options, ctxInfo, plans, priorExecutions)
 }
 
 func executeManualCommand(ctx context.Context, deps runtimeDeps, ui bool, options executorpkg.Options, ctxInfo *contextInfo, command string, renderMode manualRenderMode) (commandExecution, error) {
-	return executorpkg.ExecuteManualCommand(ctx, executorDeps(deps), ui, options, ctxInfo, command, renderMode)
+	return executorpkg.ExecuteManualCommand(ctx, executorDeps(deps, ui), ui, options, ctxInfo, command, renderMode)
 }

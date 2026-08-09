@@ -9,16 +9,15 @@ import (
 	"github.com/xEsk/shellia/internal/core"
 
 	tracepkg "github.com/xEsk/shellia/internal/trace"
-	uipkg "github.com/xEsk/shellia/internal/ui"
 )
 
 // RuntimeDeps groups process dependencies needed by the executor.
 type RuntimeDeps struct {
-	Stdin  *os.File
-	Stdout *os.File
-	Stderr *os.File
-	Trace  *tracepkg.Logger
-	Turn   *uipkg.Turn
+	Stdin     *os.File
+	Stdout    *os.File
+	Stderr    *os.File
+	Trace     *tracepkg.Logger
+	Presenter Presenter
 }
 
 func (deps RuntimeDeps) withDefaults() RuntimeDeps {

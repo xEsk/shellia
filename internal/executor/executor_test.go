@@ -29,7 +29,7 @@ func TestPrefixedWriterStreamsLinesAndFlushesPartial(t *testing.T) {
 	cfg.VisualStyle = configpkg.VisualStyleCards
 	turn := uipkg.NewRenderer(&output, uipkg.Presentation{Style: cfg.VisualStyle}).BeginShelliaTurn(executorViewOptions(cfg), loopTestContext(t))
 	defer turn.Close()
-	box := turn.BeginStep(1, 1, commandPlan{Command: "printf stream", Purpose: "stream output"})
+	box := &executorTestStepPresenter{box: turn.BeginStep(1, 1, commandPlan{Command: "printf stream", Purpose: "stream output"})}
 	writer := &prefixedWriter{box: box}
 
 	if _, err := writer.Write([]byte("one\ntwo")); err != nil {
@@ -54,7 +54,7 @@ func TestPrefixedWriterStreamsLinesAndFlushesPartial(t *testing.T) {
 // TestPrefixedWriterDefersPartialOutputState checks a partial write is not
 // classified as visible output until it is flushed to the step surface.
 func TestPrefixedWriterDefersPartialOutputState(t *testing.T) {
-	box := uipkg.NewStepBox(io.Discard, false, "step 1/1")
+	box := &executorTestStepPresenter{box: uipkg.NewStepBox(io.Discard, false, "step 1/1")}
 	writer := &prefixedWriter{box: box}
 
 	if _, err := writer.Write([]byte("partial")); err != nil {
@@ -75,7 +75,7 @@ func TestPrefixedWriterDefersPartialOutputState(t *testing.T) {
 // boundaries do not corrupt UTF-8 and stdout/stderr can share one step.
 func TestPrefixedWriterPreservesSplitUTF8AndIndependentStreams(t *testing.T) {
 	var output bytes.Buffer
-	box := uipkg.NewStepBox(&output, false, "step 1/1")
+	box := &executorTestStepPresenter{box: uipkg.NewStepBox(&output, false, "step 1/1")}
 	stdout := &prefixedWriter{box: box}
 	stderr := &prefixedWriter{box: box}
 	payload := []byte("cafè ☕\n")
@@ -108,7 +108,7 @@ func TestPrefixedWriterPreservesSplitUTF8AndIndependentStreams(t *testing.T) {
 // invisible even after complete and partial writes are flushed.
 func TestPrefixedWriterHiddenModeEmitsNothing(t *testing.T) {
 	var output bytes.Buffer
-	box := uipkg.NewStepBox(&output, false, "step 1/1")
+	box := &executorTestStepPresenter{box: uipkg.NewStepBox(&output, false, "step 1/1")}
 	baseline := output.String()
 	writer := &prefixedWriter{box: box, hidden: true}
 
@@ -169,10 +169,10 @@ func TestExecuteCommandsUsesActiveTurn(t *testing.T) {
 	}
 
 	_, err = executeCommands(t.Context(), RuntimeDeps{
-		Stdin:  stdin,
-		Stdout: stdout,
-		Stderr: stdout,
-		Turn:   turn,
+		Stdin:     stdin,
+		Stdout:    stdout,
+		Stderr:    stdout,
+		Presenter: newExecutorTestPresenter(stdout, stdout, false, turn),
 	}, false, executorOptions(cfg), &ctxInfo, []commandPlan{plan}, nil)
 	if err != nil {
 		t.Fatalf("executeCommands() error = %v", err)
@@ -212,10 +212,10 @@ func TestExecuteManualCommandUsesActiveTurn(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 	turn := uipkg.NewRenderer(stdout, uipkg.Presentation{Style: cfg.VisualStyle}).BeginShelliaTurn(executorViewOptions(cfg), ctxInfo)
 	_, err = executeManualCommand(t.Context(), RuntimeDeps{
-		Stdin:  stdin,
-		Stdout: stdout,
-		Stderr: stdout,
-		Turn:   turn,
+		Stdin:     stdin,
+		Stdout:    stdout,
+		Stderr:    stdout,
+		Presenter: newExecutorTestPresenter(stdout, stdout, false, turn),
 	}, false, executorOptions(cfg), &ctxInfo, "printf manual", manualRenderInline)
 	if err != nil {
 		t.Fatalf("executeManualCommand() error = %v", err)
@@ -278,16 +278,16 @@ func TestExecuteInteractiveCommandSuspendsCardsAroundRawPTY(t *testing.T) {
 			cfg.VisualStyle = configpkg.VisualStyleCards
 			ctxInfo := loopTestContext(t)
 			turn := uipkg.NewRenderer(stdout, uipkg.Presentation{Style: cfg.VisualStyle}).BeginShelliaTurn(executorViewOptions(cfg), ctxInfo)
-			box := turn.BeginStep(1, 1, commandPlan{Command: tt.command, Purpose: "raw PTY handoff", Interactive: true})
+			box := &executorTestStepPresenter{box: turn.BeginStep(1, 1, commandPlan{Command: tt.command, Purpose: "raw PTY handoff", Interactive: true})}
 			ctx, cancel := tt.context()
 			defer cancel()
 
 			result, runErr := executeOneCommand(ctx, commandRunRequest{
 				Deps: RuntimeDeps{
-					Stdin:  stdin,
-					Stdout: stdout,
-					Stderr: stdout,
-					Turn:   turn,
+					Stdin:     stdin,
+					Stdout:    stdout,
+					Stderr:    stdout,
+					Presenter: newExecutorTestPresenter(stdout, stdout, false, turn),
 				},
 				Options:     executorOptions(cfg),
 				ContextInfo: ctxInfo,

@@ -819,6 +819,59 @@ func TestRunTurnTraceCapturesWorkflowLifecycle(t *testing.T) {
 	}
 }
 
+// TestRunTurnTracePreservesLifecycleOrder checks causal execution evidence is
+// recorded before its revision and terminal decision closes the turn last.
+func TestRunTurnTracePreservesLifecycleOrder(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect.","commands":[{"command":"pwd","purpose":"Inspect directory","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspection complete.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	ctxInfo := loopTestContext(t)
+	logger := openLoopTrace(t)
+
+	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.Trace = logger
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ executorpkg.Options, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
+			return commandBatchResult{Executions: []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 0}}}, nil
+		}
+		if _, err := runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "inspect")); err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	events := closeLoopTraceAndRead(t, logger)
+	names := make([]string, 0, len(events))
+	for _, event := range events {
+		if name, ok := event["event"].(string); ok {
+			names = append(names, name)
+		}
+	}
+	want := strings.Join([]string{
+		"turn_start",
+		"llm_prompt",
+		"evidence_projection",
+		"llm_response",
+		"planner_result",
+		"objective_contract",
+		"workflow_attempt",
+		"evidence_revision",
+		"shellia_decision",
+		"llm_prompt",
+		"evidence_projection",
+		"llm_response",
+		"planner_result",
+		"objective_contract",
+		"completion_validation",
+		"shellia_decision",
+		"turn_end",
+	}, ",")
+	if got := strings.Join(names, ","); got != want {
+		t.Fatalf("trace event order = %q, want %q", got, want)
+	}
+}
+
 // TestMissingInputFollowUpCarriesBlockerUntilCompletion checks session projection preserves causal context across turns.
 func TestMissingInputFollowUpCarriesBlockerUntilCompletion(t *testing.T) {
 	fake := newLoopLLMClient(t,

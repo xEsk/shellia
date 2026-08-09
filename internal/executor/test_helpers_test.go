@@ -1,8 +1,10 @@
 package executor
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -59,6 +61,125 @@ func executorViewOptions(cfg configpkg.Config) uipkg.ViewOptions {
 	return uipkg.ViewOptions{
 		ShowCommandPopup: cfg.ShowCommandPopup,
 		VisualStyle:      cfg.VisualStyle,
+	}
+}
+
+type executorTestPresenter struct {
+	stdout io.Writer
+	stderr io.Writer
+	ui     bool
+	turn   *uipkg.Turn
+}
+
+func newExecutorTestPresenter(stdout io.Writer, stderr io.Writer, ui bool, turn *uipkg.Turn) *executorTestPresenter {
+	return &executorTestPresenter{stdout: stdout, stderr: stderr, ui: ui, turn: turn}
+}
+
+func (presenter *executorTestPresenter) BeginTurn(ctxInfo core.ContextInfo) TurnPresenter {
+	if presenter.turn != nil {
+		return &executorTestTurnPresenter{turn: presenter.turn}
+	}
+	renderer := uipkg.NewRenderer(presenter.stdout, uipkg.Presentation{Style: configpkg.VisualStylePlain, ANSI: presenter.ui})
+	presenter.turn = renderer.BeginShelliaTurn(uipkg.ViewOptions{VisualStyle: configpkg.VisualStylePlain}, ctxInfo)
+	return &executorTestTurnPresenter{turn: presenter.turn, owned: true}
+}
+
+func (presenter *executorTestPresenter) ActiveTurn() TurnPresenter {
+	if presenter.turn == nil {
+		return nil
+	}
+	return &executorTestTurnPresenter{turn: presenter.turn}
+}
+
+func (presenter *executorTestPresenter) BeginManualStep(command string) StepPresenter {
+	if presenter.turn != nil {
+		return &executorTestStepPresenter{box: presenter.turn.BeginStep(1, 1, commandPlan{Command: command, Purpose: "Manual shell command"})}
+	}
+	box := uipkg.NewStepBox(presenter.stdout, presenter.ui, "shell")
+	box.Spacer()
+	box.Command(command)
+	return &executorTestStepPresenter{box: box}
+}
+
+func (*executorTestPresenter) Confirm(box StepPresenter, reader *bufio.Reader, stdin *os.File, prompt string, command string, defaultChoice configpkg.ConfirmationDefault) (ConfirmationDecision, string, error) {
+	step, ok := box.(*executorTestStepPresenter)
+	if !ok {
+		return ConfirmationDecisionCancel, "", fmt.Errorf("unsupported executor test step presenter %T", box)
+	}
+	decision, edited, err := uipkg.PromptConfirmation(step.box, reader, stdin, prompt, command, defaultChoice)
+	return executorTestConfirmationDecision(decision), edited, err
+}
+
+func (presenter *executorTestPresenter) InteractiveCommandStart() {
+	uipkg.PrintInteractiveCommandStartTo(presenter.stdout, presenter.ui)
+}
+
+func (presenter *executorTestPresenter) Warning(message string) {
+	uipkg.PrintWarningTo(presenter.stderr, presenter.ui, message)
+}
+
+func (presenter *executorTestPresenter) StyleStart(tone Tone) string {
+	return uipkg.StyleStart(presenter.ui, executorTestToneColor(tone))
+}
+
+func (presenter *executorTestPresenter) StyleEnd() string {
+	return uipkg.StyleEnd(presenter.ui)
+}
+
+type executorTestTurnPresenter struct {
+	turn  *uipkg.Turn
+	owned bool
+}
+
+func (presenter *executorTestTurnPresenter) BeginStep(index int, total int, plan core.CommandPlan) StepPresenter {
+	return &executorTestStepPresenter{box: presenter.turn.BeginStep(index, total, plan)}
+}
+
+func (presenter *executorTestTurnPresenter) Suspend() { presenter.turn.Suspend() }
+func (presenter *executorTestTurnPresenter) Resume()  { presenter.turn.Resume() }
+func (presenter *executorTestTurnPresenter) Close() {
+	if presenter.owned {
+		presenter.turn.Close()
+	}
+}
+
+type executorTestStepPresenter struct {
+	box *uipkg.StepBox
+}
+
+func (presenter *executorTestStepPresenter) Close() { presenter.box.Close() }
+func (presenter *executorTestStepPresenter) Text(text string, tone Tone) {
+	presenter.box.Text(text, executorTestToneColor(tone))
+}
+
+func (presenter *executorTestStepPresenter) Section(text string, tone Tone) {
+	presenter.box.Section(text, executorTestToneColor(tone))
+}
+func (presenter *executorTestStepPresenter) OutputLabel()           { presenter.box.OutputLabel() }
+func (presenter *executorTestStepPresenter) OutputLine(text string) { presenter.box.OutputLine(text) }
+func (presenter *executorTestStepPresenter) IsClosed() bool         { return presenter.box.IsClosed() }
+
+func executorTestToneColor(tone Tone) string {
+	switch tone {
+	case ToneSuccess:
+		return uipkg.ColorGreen
+	case ToneWarning:
+		return uipkg.ColorYellow
+	default:
+		return uipkg.ColorDim
+	}
+}
+
+func executorTestConfirmationDecision(decision uipkg.ConfirmDecision) ConfirmationDecision {
+	switch decision {
+	case uipkg.ConfirmDecisionRun:
+		return ConfirmationDecisionRun
+	case uipkg.ConfirmDecisionEdit:
+		return ConfirmationDecisionEdit
+	case uipkg.ConfirmDecisionInteractive:
+		return ConfirmationDecisionInteractive
+	default:
+		return ConfirmationDecisionCancel
 	}
 }
 
@@ -128,7 +249,12 @@ func captureMainLoopIO(t *testing.T, input string, fn func(RuntimeDeps)) string 
 
 	os.Stdout = stdoutWrite
 	os.Stderr = stdoutWrite
-	fn(RuntimeDeps{Stdin: stdinRead, Stdout: stdoutWrite, Stderr: stdoutWrite})
+	fn(RuntimeDeps{
+		Stdin:     stdinRead,
+		Stdout:    stdoutWrite,
+		Stderr:    stdoutWrite,
+		Presenter: newExecutorTestPresenter(stdoutWrite, stdoutWrite, false, nil),
+	})
 	stdoutWrite.Close()
 
 	output, err := io.ReadAll(stdoutRead)
