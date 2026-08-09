@@ -22,6 +22,11 @@ type commandSafety struct {
 	RequiresConfirmation bool
 }
 
+type shellSyntax struct {
+	roots       []string
+	hasOperator bool
+}
+
 type safetyRule func(command string, tokens []string) (commandSafety, bool)
 
 var safetyRules = []safetyRule{
@@ -51,74 +56,184 @@ func classifyCommand(command string) commandSafety {
 	return riskySafety()
 }
 
-// commandRoots returns executable-looking command roots outside quoted text.
-func commandRoots(command string) []string {
-	roots := make([]string, 0, 2)
-	var word strings.Builder
-	inSingle := false
-	inDouble := false
-	expectRoot := true
+// scanShellSyntax finds shell operators and executable roots with shared quote and escape handling.
+func scanShellSyntax(command string) shellSyntax {
+	result := shellSyntax{roots: make([]string, 0, 2)}
 	runes := []rune(command)
 
-	flushWord := func() {
-		if word.Len() == 0 {
-			return
-		}
-		if expectRoot {
-			roots = append(roots, word.String())
-			expectRoot = false
-		}
-		word.Reset()
-	}
+	var scanExecutable func(start int, terminator rune, escapedBacktick bool) int
+	scanExecutable = func(start int, terminator rune, escapedBacktick bool) int {
+		word := make([]rune, 0, 16)
+		quote := rune(0)
+		captureQuotedWord := false
+		expectRoot := true
+		parenthesisDepth := 0
 
-	for index := 0; index < len(runes); index++ {
-		ch := runes[index]
-
-		if inSingle {
-			if ch == '\'' {
-				inSingle = false
+		flushWord := func() {
+			if len(word) == 0 {
+				return
 			}
-			continue
+			if expectRoot {
+				if isShellAssignmentPrefix(word) {
+					word = word[:0]
+					return
+				}
+				result.roots = append(result.roots, string(word))
+				expectRoot = false
+			}
+			word = word[:0]
 		}
 
-		if inDouble {
-			if ch == '\\' {
-				index++
+		for index := start; index < len(runes); index++ {
+			ch := runes[index]
+
+			if quote == '\'' {
+				if ch == '\'' {
+					quote = 0
+					captureQuotedWord = false
+				} else if captureQuotedWord {
+					word = append(word, ch)
+				}
 				continue
 			}
-			if ch == '"' {
-				inDouble = false
+
+			if quote == '"' {
+				switch ch {
+				case '\\':
+					if index+1 < len(runes) {
+						index++
+						if captureQuotedWord {
+							word = append(word, runes[index])
+						}
+					}
+				case '"':
+					quote = 0
+					captureQuotedWord = false
+				case '`':
+					result.hasOperator = true
+					index = scanExecutable(index+1, '`', false)
+				case '$':
+					if index+1 < len(runes) && runes[index+1] == '(' {
+						result.hasOperator = true
+						index = scanExecutable(index+2, ')', false)
+					} else if captureQuotedWord {
+						word = append(word, ch)
+					}
+				default:
+					if captureQuotedWord {
+						word = append(word, ch)
+					}
+				}
+				continue
 			}
-			continue
+
+			if escapedBacktick && ch == '\\' && index+1 < len(runes) && runes[index+1] == '`' {
+				flushWord()
+				return index + 1
+			}
+			if ch == terminator && terminator == '`' {
+				flushWord()
+				return index
+			}
+			if ch == ')' && terminator == ')' {
+				if parenthesisDepth == 0 {
+					flushWord()
+					return index
+				}
+				parenthesisDepth--
+				result.hasOperator = true
+				flushWord()
+				expectRoot = true
+				continue
+			}
+
+			switch ch {
+			case '\'':
+				quote = '\''
+				captureQuotedWord = terminator != 0 && expectRoot
+				if !captureQuotedWord {
+					flushWord()
+				}
+			case '"':
+				quote = '"'
+				captureQuotedWord = terminator != 0 && expectRoot
+				if !captureQuotedWord {
+					flushWord()
+				}
+			case '\\':
+				if terminator == '`' && index+1 < len(runes) && runes[index+1] == '`' {
+					result.hasOperator = true
+					flushWord()
+					index = scanExecutable(index+2, '`', true)
+					continue
+				}
+				if index+1 < len(runes) {
+					index++
+					word = append(word, runes[index])
+				}
+			case '$':
+				if index+1 < len(runes) && runes[index+1] == '(' {
+					result.hasOperator = true
+					flushWord()
+					index = scanExecutable(index+2, ')', false)
+					continue
+				}
+				word = append(word, ch)
+			case '`':
+				result.hasOperator = true
+				flushWord()
+				index = scanExecutable(index+1, '`', false)
+			case ';', '\n', '\r', '|', '&':
+				result.hasOperator = true
+				flushWord()
+				expectRoot = true
+				if index+1 < len(runes) && runes[index+1] == ch {
+					index++
+				}
+			case '(', ')':
+				result.hasOperator = true
+				flushWord()
+				expectRoot = true
+				if ch == '(' && terminator == ')' {
+					parenthesisDepth++
+				}
+			case '>', '<':
+				result.hasOperator = true
+			case ' ', '\t':
+				flushWord()
+			default:
+				word = append(word, ch)
+			}
 		}
 
-		switch ch {
-		case '\'':
-			inSingle = true
-			flushWord()
-		case '"':
-			inDouble = true
-			flushWord()
-		case '\\':
-			if index+1 < len(runes) {
-				index++
-				word.WriteRune(runes[index])
-			}
-		case ' ', '\t':
-			flushWord()
-		case ';', '\n', '\r', '|', '&', '(', ')':
-			flushWord()
-			expectRoot = true
-			if index+1 < len(runes) && runes[index+1] == ch {
-				index++
-			}
-		default:
-			word.WriteRune(ch)
+		flushWord()
+		return len(runes)
+	}
+
+	scanExecutable(0, 0, false)
+	return result
+}
+
+// isShellAssignmentPrefix reports whether a word can precede an executable command root.
+func isShellAssignmentPrefix(word []rune) bool {
+	for index, ch := range word {
+		if ch == '=' {
+			return index > 0
+		}
+
+		isLetter := ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z'
+		isDigit := ch >= '0' && ch <= '9'
+		if ch != '_' && !isLetter && (index == 0 || !isDigit) {
+			return false
 		}
 	}
-	flushWord()
 
-	return roots
+	return false
+}
+
+// commandRoots returns executable-looking command roots, including roots inside substitutions.
+func commandRoots(command string) []string {
+	return scanShellSyntax(command).roots
 }
 
 // hasDangerousCommandRoot reports whether any command root is always high risk.
@@ -146,65 +261,10 @@ func dangerousSafety() commandSafety {
 	return commandSafety{Classification: classificationDangerous, Risk: riskHigh, RequiresConfirmation: true}
 }
 
-// hasShellOperators detects shell operators and command separators outside of quoted strings.
+// hasShellOperators detects shell operators, separators, and executable substitutions.
 // Prevents false positives like: echo "a > b" or grep 'a|b'.
 func hasShellOperators(command string) bool {
-	inSingle := false
-	inDouble := false
-	runes := []rune(command)
-	n := len(runes)
-
-	for i := 0; i < n; i++ {
-		ch := runes[i]
-
-		if inSingle {
-			// Inside single quotes there are no escapes; only ' closes.
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		}
-
-		if inDouble {
-			// Inside double quotes, \ escapes the next character.
-			if ch == '\\' {
-				i++
-				continue
-			}
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		}
-
-		// Outside quotes.
-		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '\\':
-			i++ // skip escaped character
-		case ';', '`', '\n', '\r':
-			return true
-		case '|':
-			return true // both | and ||
-		case '&':
-			return true // background jobs and &&
-		case '>':
-			return true // both > and >>
-		case '<':
-			return true // both < and <<
-		case '(', ')':
-			return true // shell grouping/subshell syntax
-		case '$':
-			if i+1 < n && runes[i+1] == '(' {
-				return true
-			}
-		}
-	}
-
-	return false
+	return scanShellSyntax(command).hasOperator
 }
 
 // higherRisk returns the higher of two risk level values.

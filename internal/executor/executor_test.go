@@ -773,6 +773,43 @@ func TestExecuteCommandsSkipsDuplicateSuccessfulCommandInBatch(t *testing.T) {
 	}
 }
 
+// TestExecuteCommandsDoesNotAutoRunCommandSubstitutionWithYesSafe checks local
+// auto-safe execution cannot bypass confirmation for executable substitutions.
+func TestExecuteCommandsDoesNotAutoRunCommandSubstitutionWithYesSafe(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.YesSafe = true
+	cfg.ShowSystemOutput = false
+	cfg.ShowCommandPopup = false
+	ctxInfo := loopTestContext(t)
+	marker := filepath.Join(ctxInfo.CWD, "command-substitution-ran")
+	command := fmt.Sprintf(`echo "$(touch %s)"`, marker)
+	localSafety := classifyCommand(command)
+	plans := []commandPlan{{
+		Command:              command,
+		Purpose:              "Print safe-looking output",
+		Risk:                 higherRisk("safe", localSafety.Risk),
+		RequiresConfirmation: localSafety.RequiresConfirmation,
+		Classification:       localSafety.Classification,
+		LocalSafe:            localSafety.Classification == classificationSafe && !localSafety.RequiresConfirmation,
+	}}
+
+	var batch commandBatchResult
+	var runErr error
+	captureMainLoopIO(t, "n\n", nil, func(deps RuntimeDeps) {
+		batch, runErr = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, nil)
+	})
+
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("command substitution ran despite rejected confirmation: marker error = %v, want os.ErrNotExist", err)
+	}
+	if !errors.Is(runErr, errAborted) {
+		t.Fatalf("executeCommands() error = %v, want confirmation abort", runErr)
+	}
+	if len(batch.Executions) != 0 {
+		t.Fatalf("batch.Executions = %#v, want no execution", batch.Executions)
+	}
+}
+
 // TestExecuteCommandsConfirmsTypedRiskyRepeat checks repeat admission never bypasses normal confirmation.
 func TestExecuteCommandsConfirmsTypedRiskyRepeat(t *testing.T) {
 	cfg := defaultConfig()

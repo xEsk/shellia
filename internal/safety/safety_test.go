@@ -2,6 +2,155 @@ package safety
 
 import "testing"
 
+// TestClassifyCommandRejectsExecutableSubstitutions catches safe-root bypasses through command substitution syntax.
+func TestClassifyCommandRejectsExecutableSubstitutions(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		want    commandSafety
+	}{
+		{
+			name:    "dollar substitution outside quotes",
+			command: `echo $(whoami)`,
+			want:    commandSafety{Classification: classificationRisky, Risk: riskMedium, RequiresConfirmation: true},
+		},
+		{
+			name:    "backtick substitution outside quotes",
+			command: "echo `whoami`",
+			want:    commandSafety{Classification: classificationRisky, Risk: riskMedium, RequiresConfirmation: true},
+		},
+		{
+			name:    "dollar substitution inside double quotes",
+			command: `echo "$(whoami)"`,
+			want:    commandSafety{Classification: classificationRisky, Risk: riskMedium, RequiresConfirmation: true},
+		},
+		{
+			name:    "backtick substitution inside double quotes",
+			command: "echo \"`whoami`\"",
+			want:    commandSafety{Classification: classificationRisky, Risk: riskMedium, RequiresConfirmation: true},
+		},
+		{
+			name:    "dangerous dollar substitution",
+			command: `echo "$(rm -rf /)"`,
+			want:    commandSafety{Classification: classificationDangerous, Risk: riskHigh, RequiresConfirmation: true},
+		},
+		{
+			name:    "dangerous backtick substitution",
+			command: "echo \"`rm -rf /`\"",
+			want:    commandSafety{Classification: classificationDangerous, Risk: riskHigh, RequiresConfirmation: true},
+		},
+		{
+			name:    "nested dollar substitutions",
+			command: `echo "$(printf '%s' "$(whoami)")"`,
+			want:    commandSafety{Classification: classificationRisky, Risk: riskMedium, RequiresConfirmation: true},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyCommand(tt.command); got != tt.want {
+				t.Fatalf("classifyCommand(%q) = %#v, want %#v", tt.command, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestClassifyCommandFindsObscuredSubstitutionRoots catches dangerous roots hidden by shell word syntax.
+func TestClassifyCommandFindsObscuredSubstitutionRoots(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		want    commandSafety
+	}{
+		{
+			name:    "fully quoted dollar substitution root",
+			command: `echo "$("rm" -rf /)"`,
+			want:    commandSafety{Classification: classificationDangerous, Risk: riskHigh, RequiresConfirmation: true},
+		},
+		{
+			name:    "partially quoted dollar substitution root",
+			command: `echo "$(r"m" -rf /)"`,
+			want:    commandSafety{Classification: classificationDangerous, Risk: riskHigh, RequiresConfirmation: true},
+		},
+		{
+			name:    "fully quoted backtick substitution root",
+			command: "echo \x60\"rm\" -rf /\x60",
+			want:    commandSafety{Classification: classificationDangerous, Risk: riskHigh, RequiresConfirmation: true},
+		},
+		{
+			name:    "partially quoted backtick substitution root",
+			command: "echo \x60r\"m\" -rf /\x60",
+			want:    commandSafety{Classification: classificationDangerous, Risk: riskHigh, RequiresConfirmation: true},
+		},
+		{
+			name:    "dangerous escaped nested backticks",
+			command: "echo \x60echo \\\x60rm -rf /\\\x60\x60",
+			want:    commandSafety{Classification: classificationDangerous, Risk: riskHigh, RequiresConfirmation: true},
+		},
+		{
+			name:    "assignment before dangerous root",
+			command: `echo "$(VAR=value rm -rf /)"`,
+			want:    commandSafety{Classification: classificationDangerous, Risk: riskHigh, RequiresConfirmation: true},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyCommand(tt.command); got != tt.want {
+				t.Fatalf("classifyCommand(%q) = %#v, want %#v", tt.command, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestClassifyCommandPreservesLiteralSubstitutionText catches over-classification of non-executable markers.
+func TestClassifyCommandPreservesLiteralSubstitutionText(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		want    commandSafety
+	}{
+		{
+			name:    "escaped dollar substitution marker",
+			command: `echo "\$(whoami)"`,
+			want:    commandSafety{Classification: classificationSafe, Risk: riskSafe, RequiresConfirmation: false},
+		},
+		{
+			name:    "escaped backtick substitution markers",
+			command: "echo \"\\`whoami\\`\"",
+			want:    commandSafety{Classification: classificationSafe, Risk: riskSafe, RequiresConfirmation: false},
+		},
+		{
+			name:    "single quoted dollar substitution",
+			command: `echo '$(whoami)'`,
+			want:    commandSafety{Classification: classificationSafe, Risk: riskSafe, RequiresConfirmation: false},
+		},
+		{
+			name:    "single quoted backtick substitution",
+			command: "echo '`whoami`'",
+			want:    commandSafety{Classification: classificationSafe, Risk: riskSafe, RequiresConfirmation: false},
+		},
+		{
+			name:    "double quoted redirect text",
+			command: `echo "a > b"`,
+			want:    commandSafety{Classification: classificationSafe, Risk: riskSafe, RequiresConfirmation: false},
+		},
+		{
+			name:    "existing read only command",
+			command: `ls -la`,
+			want:    commandSafety{Classification: classificationSafe, Risk: riskSafe, RequiresConfirmation: false},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyCommand(tt.command); got != tt.want {
+				t.Fatalf("classifyCommand(%q) = %#v, want %#v", tt.command, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestClassifyCommandRequiresConfirmationForCompoundSafeRoots checks safe roots cannot hide extra commands.
 func TestClassifyCommandRequiresConfirmationForCompoundSafeRoots(t *testing.T) {
 	cases := []struct {
