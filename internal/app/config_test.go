@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	configpkg "shellia/internal/config"
+	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 // TestDefaultConfigShowsSystemOutput checks the visible-output default stays unchanged.

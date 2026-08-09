@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	configpkg "shellia/internal/config"
+	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 // TestCommandMenuLinesPlain renders slash-command suggestions without ANSI.

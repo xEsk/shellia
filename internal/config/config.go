@@ -6,10 +6,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"shellia/internal/core"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/xEsk/shellia/internal/core"
 
 	"github.com/BurntSushi/toml"
 )

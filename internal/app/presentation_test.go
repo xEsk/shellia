@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	configpkg "shellia/internal/config"
+	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 func TestEffectivePresentation(t *testing.T) {

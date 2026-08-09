@@ -1,4 +1,4 @@
-module shellia
+module github.com/xEsk/shellia
 
 go 1.26
 

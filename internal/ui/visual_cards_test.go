@@ -3,13 +3,14 @@ package ui
 import (
 	"bytes"
 	"io"
-	"shellia/internal/core"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/xEsk/shellia/internal/core"
+
 	"github.com/creack/pty"
-	configpkg "shellia/internal/config"
+	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 func TestCardsRendererStreamsBeforeCloseAndClosesOnce(t *testing.T) {

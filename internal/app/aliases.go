@@ -1,14 +1,14 @@
 package app
 
 import (
-	configpkg "shellia/internal/config"
-	"shellia/internal/core"
-	executorpkg "shellia/internal/executor"
-	interactivepkg "shellia/internal/interactive"
-	llmpkg "shellia/internal/llm"
-	sessionpkg "shellia/internal/session"
-	tracepkg "shellia/internal/trace"
-	uipkg "shellia/internal/ui"
+	configpkg "github.com/xEsk/shellia/internal/config"
+	"github.com/xEsk/shellia/internal/core"
+	executorpkg "github.com/xEsk/shellia/internal/executor"
+	interactivepkg "github.com/xEsk/shellia/internal/interactive"
+	llmpkg "github.com/xEsk/shellia/internal/llm"
+	sessionpkg "github.com/xEsk/shellia/internal/session"
+	tracepkg "github.com/xEsk/shellia/internal/trace"
+	uipkg "github.com/xEsk/shellia/internal/ui"
 )
 
 type (

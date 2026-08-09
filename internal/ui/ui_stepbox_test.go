@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	configpkg "shellia/internal/config"
+	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 // nonTerminalStdin returns a temporary file usable as non-TTY stdin in prompt tests.

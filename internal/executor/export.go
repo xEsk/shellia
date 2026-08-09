@@ -4,10 +4,11 @@ import (
 	"context"
 	"net/http"
 	"os"
-	"shellia/internal/core"
 
-	tracepkg "shellia/internal/trace"
-	uipkg "shellia/internal/ui"
+	"github.com/xEsk/shellia/internal/core"
+
+	tracepkg "github.com/xEsk/shellia/internal/trace"
+	uipkg "github.com/xEsk/shellia/internal/ui"
 )
 
 // RuntimeDeps groups process dependencies needed by the executor.

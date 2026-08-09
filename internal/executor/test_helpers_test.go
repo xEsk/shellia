@@ -6,14 +6,15 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"shellia/internal/core"
 	"strings"
 	"testing"
 
-	configpkg "shellia/internal/config"
+	"github.com/xEsk/shellia/internal/core"
 
-	safetypkg "shellia/internal/safety"
-	tracepkg "shellia/internal/trace"
+	configpkg "github.com/xEsk/shellia/internal/config"
+
+	safetypkg "github.com/xEsk/shellia/internal/safety"
+	tracepkg "github.com/xEsk/shellia/internal/trace"
 )
 
 const (

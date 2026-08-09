@@ -3,7 +3,8 @@ package llm
 import (
 	"context"
 	"net/http"
-	"shellia/internal/core"
+
+	"github.com/xEsk/shellia/internal/core"
 )
 
 // BuildPrompts builds the system and user prompts for one planning request.

@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"os"
 
+	executorpkg "github.com/xEsk/shellia/internal/executor"
+	uipkg "github.com/xEsk/shellia/internal/ui"
 	"golang.org/x/term"
-	executorpkg "shellia/internal/executor"
-	uipkg "shellia/internal/ui"
 )
 
 // commandRunner executes a model-generated command plan.

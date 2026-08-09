@@ -1,8 +1,8 @@
 package session
 
 import (
-	configpkg "shellia/internal/config"
-	"shellia/internal/core"
+	configpkg "github.com/xEsk/shellia/internal/config"
+	"github.com/xEsk/shellia/internal/core"
 )
 
 type (

@@ -1,11 +1,11 @@
 package ui
 
 import (
-	configpkg "shellia/internal/config"
-	"shellia/internal/core"
-	interactivepkg "shellia/internal/interactive"
-	llmpkg "shellia/internal/llm"
-	safetypkg "shellia/internal/safety"
+	configpkg "github.com/xEsk/shellia/internal/config"
+	"github.com/xEsk/shellia/internal/core"
+	interactivepkg "github.com/xEsk/shellia/internal/interactive"
+	llmpkg "github.com/xEsk/shellia/internal/llm"
+	safetypkg "github.com/xEsk/shellia/internal/safety"
 )
 
 type (

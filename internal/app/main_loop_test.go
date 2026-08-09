@@ -14,17 +14,18 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"shellia/internal/core"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
 
-	"github.com/creack/pty"
-	configpkg "shellia/internal/config"
+	"github.com/xEsk/shellia/internal/core"
 
-	uipkg "shellia/internal/ui"
+	"github.com/creack/pty"
+	configpkg "github.com/xEsk/shellia/internal/config"
+
+	uipkg "github.com/xEsk/shellia/internal/ui"
 )
 
 type loopLLMResponse struct {

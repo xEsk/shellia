@@ -2,9 +2,10 @@ package ui
 
 import (
 	"io"
-	"shellia/internal/core"
 
-	configpkg "shellia/internal/config"
+	"github.com/xEsk/shellia/internal/core"
+
+	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 // Presentation describes the effective visual style and ANSI capability.

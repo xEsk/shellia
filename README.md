@@ -115,6 +115,12 @@ tar -xzf shellia_v0.1.0_darwin_arm64.tar.gz
 mv shellia /usr/local/bin/
 ```
 
+### Install with Go
+
+```bash
+go install github.com/xEsk/shellia/cmd/shellia@latest
+```
+
 ### Build from source
 
 ```bash

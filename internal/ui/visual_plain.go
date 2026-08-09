@@ -3,10 +3,11 @@ package ui
 import (
 	"fmt"
 	"io"
-	"shellia/internal/core"
 	"strings"
 
-	configpkg "shellia/internal/config"
+	"github.com/xEsk/shellia/internal/core"
+
+	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 type plainRenderer struct {

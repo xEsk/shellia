@@ -3,7 +3,7 @@ package ui
 import (
 	"strings"
 
-	configpkg "shellia/internal/config"
+	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 const (

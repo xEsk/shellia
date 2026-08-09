@@ -4,7 +4,7 @@ import (
 	"os"
 	"strings"
 
-	configpkg "shellia/internal/config"
+	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 // effectivePresentationState holds the terminal structure and ANSI capability for one Shellia run.

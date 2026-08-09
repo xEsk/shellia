@@ -1,11 +1,11 @@
 package executor
 
 import (
-	configpkg "shellia/internal/config"
-	"shellia/internal/core"
-	safetypkg "shellia/internal/safety"
-	tracepkg "shellia/internal/trace"
-	uipkg "shellia/internal/ui"
+	configpkg "github.com/xEsk/shellia/internal/config"
+	"github.com/xEsk/shellia/internal/core"
+	safetypkg "github.com/xEsk/shellia/internal/safety"
+	tracepkg "github.com/xEsk/shellia/internal/trace"
+	uipkg "github.com/xEsk/shellia/internal/ui"
 )
 
 type (

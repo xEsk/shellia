@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"shellia/internal/core"
 	"strings"
+
+	"github.com/xEsk/shellia/internal/core"
 
 	"golang.org/x/term"
 
-	configpkg "shellia/internal/config"
+	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 const (

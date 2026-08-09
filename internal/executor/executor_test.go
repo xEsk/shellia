@@ -14,8 +14,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	configpkg "shellia/internal/config"
-	uipkg "shellia/internal/ui"
+	configpkg "github.com/xEsk/shellia/internal/config"
+	uipkg "github.com/xEsk/shellia/internal/ui"
 )
 
 // TestPrefixedWriterStreamsLinesAndFlushesPartial checks complete lines are

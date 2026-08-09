@@ -5,15 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"shellia/internal/core"
 	"strings"
 	"syscall"
 	"testing"
 
+	"github.com/xEsk/shellia/internal/core"
+
 	"github.com/creack/pty"
 	"golang.org/x/term"
 
-	configpkg "shellia/internal/config"
+	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 func TestGuideRendererNestsTechnicalActivity(t *testing.T) {

@@ -2,7 +2,8 @@ package config
 
 import (
 	"io"
-	"shellia/internal/core"
+
+	"github.com/xEsk/shellia/internal/core"
 )
 
 // DefaultConfig returns the built-in baseline values for Shellia.

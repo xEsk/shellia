@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"os"
-	"shellia/internal/app"
+
+	"github.com/xEsk/shellia/internal/app"
 )
 
 // version is set at build time via -ldflags "-X main.version=vX.Y.Z".

@@ -1,10 +1,10 @@
 package llm
 
 import (
-	configpkg "shellia/internal/config"
-	"shellia/internal/core"
-	safetypkg "shellia/internal/safety"
-	sessionpkg "shellia/internal/session"
+	configpkg "github.com/xEsk/shellia/internal/config"
+	"github.com/xEsk/shellia/internal/core"
+	safetypkg "github.com/xEsk/shellia/internal/safety"
+	sessionpkg "github.com/xEsk/shellia/internal/session"
 )
 
 type (
