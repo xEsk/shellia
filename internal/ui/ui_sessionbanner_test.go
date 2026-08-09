@@ -4,8 +4,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 // TestSessionBannerLinesPlain checks the no-colour startup banner fallback.
@@ -16,7 +14,7 @@ func TestSessionBannerLinesPlain(t *testing.T) {
 		version = previousVersion
 	})
 
-	cfg := configpkg.DefaultConfig()
+	cfg := testConfig()
 	cfg.Model = "test-model"
 
 	got := sessionBannerLines(false, cfg, 80)
@@ -39,7 +37,7 @@ func TestSessionBannerLinesANSI(t *testing.T) {
 		version = previousVersion
 	})
 
-	cfg := configpkg.DefaultConfig()
+	cfg := testConfig()
 	cfg.Model = "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit"
 
 	got := sessionBannerLines(true, cfg, 80)

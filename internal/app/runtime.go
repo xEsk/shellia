@@ -13,10 +13,10 @@ import (
 )
 
 // commandRunner executes a model-generated command plan.
-type commandRunner func(context.Context, runtimeDeps, bool, config, *contextInfo, []commandPlan, []commandExecution) (commandBatchResult, error)
+type commandRunner func(context.Context, runtimeDeps, bool, executorpkg.Options, *contextInfo, []commandPlan, []commandExecution) (commandBatchResult, error)
 
 // manualCommandRunner executes a user-entered shell command.
-type manualCommandRunner func(context.Context, runtimeDeps, bool, config, *contextInfo, string, manualRenderMode) (commandExecution, error)
+type manualCommandRunner func(context.Context, runtimeDeps, bool, executorpkg.Options, *contextInfo, string, manualRenderMode) (commandExecution, error)
 
 // runtimeDeps groups process dependencies used by the core session loops.
 type runtimeDeps struct {
@@ -26,7 +26,7 @@ type runtimeDeps struct {
 	HTTPClient            *http.Client
 	ExecuteCommands       commandRunner
 	ExecuteManualCommand  manualCommandRunner
-	ReadInteractivePrompt func(bool, *bufio.Reader, *os.File, io.Writer, interactiveMode, config, *uipkg.Renderer) (string, error)
+	ReadInteractivePrompt func(bool, *bufio.Reader, *os.File, io.Writer, interactiveMode, uipkg.ViewOptions, *uipkg.Renderer) (string, error)
 	StdoutIsTerminal      func(*os.File) bool
 	Trace                 *traceLogger
 	Renderer              *uipkg.Renderer
@@ -84,19 +84,18 @@ func stdoutIsTerminal(file *os.File) bool {
 
 func executorDeps(deps runtimeDeps) executorpkg.RuntimeDeps {
 	return executorpkg.RuntimeDeps{
-		Stdin:      deps.Stdin,
-		Stdout:     deps.Stdout,
-		Stderr:     deps.Stderr,
-		HTTPClient: deps.HTTPClient,
-		Trace:      deps.Trace,
-		Turn:       deps.Turn,
+		Stdin:  deps.Stdin,
+		Stdout: deps.Stdout,
+		Stderr: deps.Stderr,
+		Trace:  deps.Trace,
+		Turn:   deps.Turn,
 	}
 }
 
-func executeCommands(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan, priorExecutions []commandExecution) (commandBatchResult, error) {
-	return executorpkg.ExecuteCommands(ctx, executorDeps(deps), ui, cfg, ctxInfo, plans, priorExecutions)
+func executeCommands(ctx context.Context, deps runtimeDeps, ui bool, options executorpkg.Options, ctxInfo *contextInfo, plans []commandPlan, priorExecutions []commandExecution) (commandBatchResult, error) {
+	return executorpkg.ExecuteCommands(ctx, executorDeps(deps), ui, options, ctxInfo, plans, priorExecutions)
 }
 
-func executeManualCommand(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo, command string, renderMode manualRenderMode) (commandExecution, error) {
-	return executorpkg.ExecuteManualCommand(ctx, executorDeps(deps), ui, cfg, ctxInfo, command, renderMode)
+func executeManualCommand(ctx context.Context, deps runtimeDeps, ui bool, options executorpkg.Options, ctxInfo *contextInfo, command string, renderMode manualRenderMode) (commandExecution, error) {
+	return executorpkg.ExecuteManualCommand(ctx, executorDeps(deps), ui, options, ctxInfo, command, renderMode)
 }

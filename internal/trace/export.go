@@ -17,8 +17,8 @@ func SetVersion(value string) {
 }
 
 // OpenSession creates the JSONL trace file when tracing is enabled.
-func OpenSession(cfg config, ctxInfo contextInfo) (*Logger, error) {
-	return openSessionTrace(cfg, ctxInfo)
+func OpenSession(options Options, ctxInfo contextInfo) (*Logger, error) {
+	return openSessionTrace(options, ctxInfo)
 }
 
 // WithTurnID returns a context annotated with the trace turn id.
@@ -32,8 +32,8 @@ func TurnID(ctx context.Context) string {
 }
 
 // SessionStartData builds the trace payload for session start.
-func SessionStartData(cfg config, ctxInfo contextInfo) map[string]any {
-	return traceSessionStartData(cfg, ctxInfo)
+func SessionStartData(options Options, ctxInfo contextInfo) map[string]any {
+	return traceSessionStartData(options, ctxInfo)
 }
 
 // StreamData builds the trace payload for one captured stream.

@@ -9,7 +9,7 @@ import (
 
 // TestCommandMenuLinesPlain renders slash-command suggestions without ANSI.
 func TestCommandMenuLinesPlain(t *testing.T) {
-	got := commandMenuLines(false, "/sh", configpkg.DefaultConfig())
+	got := commandMenuLines(false, "/sh", testConfig())
 	if len(got) != 3 {
 		t.Fatalf("commandMenuLines() returned %d lines, want %d", len(got), 3)
 	}
@@ -23,7 +23,7 @@ func TestCommandMenuLinesPlain(t *testing.T) {
 
 // TestCommandMenuLinesShowsRetry checks the explicit retry command is suggested.
 func TestCommandMenuLinesShowsRetry(t *testing.T) {
-	got := commandMenuLines(false, "/re", configpkg.DefaultConfig())
+	got := commandMenuLines(false, "/re", testConfig())
 	if len(got) != 3 {
 		t.Fatalf("commandMenuLines(/re) returned %d lines, want 3", len(got))
 	}
@@ -34,7 +34,7 @@ func TestCommandMenuLinesShowsRetry(t *testing.T) {
 
 // TestCommandMenuLinesShowsNew checks the fresh-session command is suggested.
 func TestCommandMenuLinesShowsNew(t *testing.T) {
-	got := commandMenuLines(false, "/ne", configpkg.DefaultConfig())
+	got := commandMenuLines(false, "/ne", testConfig())
 	if len(got) != 3 {
 		t.Fatalf("commandMenuLines(/ne) returned %d lines, want 3", len(got))
 	}
@@ -45,7 +45,7 @@ func TestCommandMenuLinesShowsNew(t *testing.T) {
 
 // TestCommandMenuLinesKeepBoxWidth checks every rendered row has the same width.
 func TestCommandMenuLinesKeepBoxWidth(t *testing.T) {
-	got := commandMenuLines(false, "/", configpkg.DefaultConfig())
+	got := commandMenuLines(false, "/", testConfig())
 	if len(got) == 0 {
 		t.Fatalf("commandMenuLines() returned no lines")
 	}
@@ -60,9 +60,9 @@ func TestCommandMenuLinesKeepBoxWidth(t *testing.T) {
 
 // TestCommandMenuLinesShowsModelProfiles renders /model as a profile submenu.
 func TestCommandMenuLinesShowsModelProfiles(t *testing.T) {
-	cfg := configpkg.DefaultConfig()
+	cfg := testConfig()
 	cfg.ModelName = "mlx"
-	cfg.Models = []modelConfig{
+	cfg.Models = []ModelOption{
 		{Name: "openai", Model: "gpt-5.4-mini"},
 		{Name: "mlx", Model: "mlx-community/qwen"},
 	}
@@ -78,8 +78,8 @@ func TestCommandMenuLinesShowsModelProfiles(t *testing.T) {
 
 // TestCompleteInteractiveCommandCompletesModelProfile checks Tab completion for /model.
 func TestCompleteInteractiveCommandCompletesModelProfile(t *testing.T) {
-	cfg := configpkg.DefaultConfig()
-	cfg.Models = []modelConfig{
+	cfg := testConfig()
+	cfg.Models = []ModelOption{
 		{Name: "openai"},
 		{Name: "mlx"},
 	}
@@ -92,7 +92,7 @@ func TestCompleteInteractiveCommandCompletesModelProfile(t *testing.T) {
 
 // TestCommandMenuLinesShowsVisualThemes renders all four themes and marks the active one.
 func TestCommandMenuLinesShowsVisualThemes(t *testing.T) {
-	cfg := configpkg.DefaultConfig()
+	cfg := testConfig()
 	cfg.VisualStyle = configpkg.VisualStyleBands
 	got := commandMenuLines(false, "/theme ", cfg)
 	if len(got) != 6 {
@@ -108,7 +108,7 @@ func TestCommandMenuLinesShowsVisualThemes(t *testing.T) {
 
 // TestCompleteInteractiveCommandCompletesVisualTheme checks Tab completion for /theme.
 func TestCompleteInteractiveCommandCompletesVisualTheme(t *testing.T) {
-	got, ok := completeInteractiveCommand("/theme ca", configpkg.DefaultConfig())
+	got, ok := completeInteractiveCommand("/theme ca", testConfig())
 	if !ok || got != "/theme cards" {
 		t.Fatalf("completeInteractiveCommand(/theme ca) = %q, %t; want /theme cards, true", got, ok)
 	}

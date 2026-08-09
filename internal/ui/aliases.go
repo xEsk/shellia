@@ -7,8 +7,6 @@ import (
 )
 
 type (
-	config              = configpkg.Config
-	modelConfig         = configpkg.ModelConfig
 	confirmationDefault = configpkg.ConfirmationDefault
 	contextInfo         = core.ContextInfo
 	interactiveMode     = core.InteractiveMode

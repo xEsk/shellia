@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -15,6 +14,7 @@ import (
 
 	safetypkg "github.com/xEsk/shellia/internal/safety"
 	tracepkg "github.com/xEsk/shellia/internal/trace"
+	uipkg "github.com/xEsk/shellia/internal/ui"
 )
 
 const (
@@ -41,12 +41,34 @@ func loopTestContext(t *testing.T) contextInfo {
 	}
 }
 
+// executorOptions retains only the configuration consumed by command execution.
+func executorOptions(cfg configpkg.Config) Options {
+	return Options{
+		CommandTimeout:      cfg.CommandTimeout,
+		YesSafe:             cfg.YesSafe,
+		ContinueOnError:     cfg.ContinueOnError,
+		ConfirmationDefault: cfg.ConfirmationDefault,
+		CaptureStdoutBytes:  cfg.CaptureStdoutBytes,
+		CaptureStderrBytes:  cfg.CaptureStderrBytes,
+		ShowSystemOutput:    cfg.ShowSystemOutput,
+	}
+}
+
+// executorViewOptions retains the presentation settings used by executor tests.
+func executorViewOptions(cfg configpkg.Config) uipkg.ViewOptions {
+	return uipkg.ViewOptions{
+		ShowCommandPopup: cfg.ShowCommandPopup,
+		VisualStyle:      cfg.VisualStyle,
+	}
+}
+
 func openLoopTrace(t *testing.T) *tracepkg.Logger {
 	t.Helper()
-	cfg := configpkg.DefaultConfig()
-	cfg.TraceEnabled = true
-	cfg.TraceDir = t.TempDir()
-	logger, err := tracepkg.OpenSession(cfg, loopTestContext(t))
+	options := tracepkg.Options{
+		TraceEnabled: true,
+		TraceDir:     t.TempDir(),
+	}
+	logger, err := tracepkg.OpenSession(options, loopTestContext(t))
 	if err != nil {
 		t.Fatalf("OpenSession() error = %v", err)
 	}
@@ -78,7 +100,7 @@ func closeLoopTraceAndRead(t *testing.T, logger *tracepkg.Logger) []map[string]a
 	return events
 }
 
-func captureMainLoopIO(t *testing.T, input string, _ *http.Client, fn func(RuntimeDeps)) string {
+func captureMainLoopIO(t *testing.T, input string, fn func(RuntimeDeps)) string {
 	t.Helper()
 
 	oldStdout := os.Stdout
@@ -106,7 +128,7 @@ func captureMainLoopIO(t *testing.T, input string, _ *http.Client, fn func(Runti
 
 	os.Stdout = stdoutWrite
 	os.Stderr = stdoutWrite
-	fn(RuntimeDeps{Stdin: stdinRead, Stdout: stdoutWrite, Stderr: stdoutWrite, HTTPClient: http.DefaultClient})
+	fn(RuntimeDeps{Stdin: stdinRead, Stdout: stdoutWrite, Stderr: stdoutWrite})
 	stdoutWrite.Close()
 
 	output, err := io.ReadAll(stdoutRead)

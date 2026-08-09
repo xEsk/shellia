@@ -3,11 +3,158 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	configpkg "github.com/xEsk/shellia/internal/config"
+	"github.com/xEsk/shellia/internal/core"
+	executorpkg "github.com/xEsk/shellia/internal/executor"
+	llmpkg "github.com/xEsk/shellia/internal/llm"
+	sessionpkg "github.com/xEsk/shellia/internal/session"
+	tracepkg "github.com/xEsk/shellia/internal/trace"
+	uipkg "github.com/xEsk/shellia/internal/ui"
 )
+
+// TestConsumerOptionsMapOwnedConfigFields checks each app boundary receives
+// exactly the values it owns from the full application configuration.
+func TestConsumerOptionsMapOwnedConfigFields(t *testing.T) {
+	cfg := config{
+		BaseURL:                   "https://llm.example/v1",
+		APIKey:                    "top-secret",
+		Model:                     "provider-model",
+		ModelName:                 "primary",
+		Models:                    []modelConfig{{Name: "primary", Model: "provider-model", APIKey: "model-secret", APIKeyEnv: "MODEL_SECRET", BaseURL: "https://model.example/v1"}},
+		SupportsResponseFormat:    true,
+		CommandTimeout:            17 * time.Second,
+		RequestTimeout:            23 * time.Second,
+		YesSafe:                   true,
+		ContinueOnError:           true,
+		ConfirmationDefault:       configpkg.ConfirmationDefaultEdit,
+		AskConfirmPlan:            true,
+		PlanningMaxRounds:         9,
+		CaptureStdoutBytes:        111,
+		CaptureStderrBytes:        222,
+		ObservationOutputChars:    333,
+		MemoryObservationChars:    444,
+		MaxObservationEntries:     5,
+		TruncationStrategy:        core.TruncationEnd,
+		ShowSystemOutput:          true,
+		NoColor:                   true,
+		Verbose:                   true,
+		ShowCommandPopup:          true,
+		VisualStyle:               configpkg.VisualStyleCards,
+		IncludeUser:               true,
+		IncludeOS:                 true,
+		IncludeShell:              true,
+		IncludeCWD:                true,
+		IncludeSessionMemory:      true,
+		IncludeRecentObservations: true,
+		TraceEnabled:              true,
+		TraceDir:                  "/tmp/shellia-traces",
+		Interactive:               true,
+		PlanOnly:                  true,
+	}
+
+	if got, want := executorContextOptions(cfg), (executorpkg.ContextOptions{IncludeUser: true}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("executorContextOptions() = %#v, want %#v", got, want)
+	}
+	if got, want := executorOptions(cfg), (executorpkg.Options{
+		CommandTimeout:      17 * time.Second,
+		YesSafe:             true,
+		ContinueOnError:     true,
+		ConfirmationDefault: configpkg.ConfirmationDefaultEdit,
+		CaptureStdoutBytes:  111,
+		CaptureStderrBytes:  222,
+		ShowSystemOutput:    true,
+	}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("executorOptions() = %#v, want %#v", got, want)
+	}
+	if got, want := viewOptions(cfg), (uipkg.ViewOptions{
+		ModelName:        "primary",
+		Model:            "provider-model",
+		Models:           []uipkg.ModelOption{{Name: "primary", Model: "provider-model"}},
+		Verbose:          true,
+		AskConfirmPlan:   true,
+		NoColor:          true,
+		ShowCommandPopup: true,
+		IncludeCWD:       true,
+		IncludeUser:      true,
+		IncludeOS:        true,
+		IncludeShell:     true,
+		VisualStyle:      configpkg.VisualStyleCards,
+		PlanOnly:         true,
+	}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("viewOptions() = %#v, want %#v", got, want)
+	}
+	if got, want := llmClientOptions(cfg), (llmpkg.ClientOptions{
+		BaseURL:                "https://llm.example/v1",
+		APIKey:                 "top-secret",
+		Model:                  "provider-model",
+		RequestTimeout:         23 * time.Second,
+		SupportsResponseFormat: true,
+	}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("llmClientOptions() = %#v, want %#v", got, want)
+	}
+	if got, want := llmPromptOptions(cfg), (llmpkg.PromptOptions{
+		PlanOnly:                  true,
+		IncludeCWD:                true,
+		IncludeOS:                 true,
+		IncludeShell:              true,
+		IncludeUser:               true,
+		IncludeSessionMemory:      true,
+		IncludeRecentObservations: true,
+		MaxObservationEntries:     5,
+		ObservationOutputChars:    333,
+		TruncationStrategy:        core.TruncationEnd,
+	}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("llmPromptOptions() = %#v, want %#v", got, want)
+	}
+	if got, want := sessionMemoryOptions(cfg), (sessionpkg.MemoryOptions{
+		MaxObservationEntries:  5,
+		MemoryObservationChars: 444,
+		TruncationStrategy:     core.TruncationEnd,
+	}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("sessionMemoryOptions() = %#v, want %#v", got, want)
+	}
+	if got, want := traceOptions(cfg), (tracepkg.Options{
+		TraceEnabled:              true,
+		TraceDir:                  "/tmp/shellia-traces",
+		ModelName:                 "primary",
+		Model:                     "provider-model",
+		BaseURL:                   "https://llm.example/v1",
+		Interactive:               true,
+		PlanOnly:                  true,
+		YesSafe:                   true,
+		AskConfirmPlan:            true,
+		PlanningMaxRounds:         9,
+		IncludeSessionMemory:      true,
+		IncludeRecentObservations: true,
+		CaptureStdoutBytes:        111,
+		CaptureStderrBytes:        222,
+	}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("traceOptions() = %#v, want %#v", got, want)
+	}
+}
+
+// TestPresentationAndExecutionOptionsExcludeProviderSecrets checks provider
+// credentials cannot cross into UI or executor option types.
+func TestPresentationAndExecutionOptionsExcludeProviderSecrets(t *testing.T) {
+	for _, value := range []any{
+		uipkg.ViewOptions{},
+		uipkg.ModelOption{},
+		executorpkg.ContextOptions{},
+		executorpkg.Options{},
+	} {
+		typeOf := reflect.TypeOf(value)
+		for _, field := range []string{"APIKey", "APIKeyEnv", "BaseURL"} {
+			if _, ok := typeOf.FieldByName(field); ok {
+				t.Fatalf("%s unexpectedly exposes %s", typeOf, field)
+			}
+		}
+	}
+}
 
 // TestDefaultConfigShowsSystemOutput checks the visible-output default stays unchanged.
 func TestDefaultConfigShowsSystemOutput(t *testing.T) {

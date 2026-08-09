@@ -5,9 +5,34 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 var version = "dev"
+
+// ModelOption describes one selectable public model profile.
+type ModelOption struct {
+	Name  string
+	Model string
+}
+
+// ViewOptions contains the configuration UI needs to render Shellia.
+type ViewOptions struct {
+	ModelName        string
+	Model            string
+	Models           []ModelOption
+	Verbose          bool
+	AskConfirmPlan   bool
+	NoColor          bool
+	ShowCommandPopup bool
+	IncludeCWD       bool
+	IncludeUser      bool
+	IncludeOS        bool
+	IncludeShell     bool
+	VisualStyle      configpkg.VisualStyle
+	PlanOnly         bool
+}
 
 const (
 	ColorDim    = colorDim
@@ -39,8 +64,8 @@ const (
 )
 
 // Enabled reports whether styled terminal UI should be enabled.
-func Enabled(cfg config) bool {
-	return uiEnabled(cfg)
+func Enabled(options ViewOptions) bool {
+	return uiEnabled(options)
 }
 
 // PrintErrorTo renders a process-level error on the provided stream.
@@ -54,18 +79,18 @@ func RenderPanel(target io.Writer, ui bool, title string, color string, lines []
 }
 
 // PrintSessionBannerTo shows the polished startup banner on the provided target.
-func PrintSessionBannerTo(target io.Writer, ui bool, cfg config) {
-	printSessionBannerTo(target, ui, cfg)
+func PrintSessionBannerTo(target io.Writer, ui bool, options ViewOptions) {
+	printSessionBannerTo(target, ui, options)
 }
 
 // ReadInteractivePrompt reads one prompt from the interactive editor.
-func ReadInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout io.Writer, mode interactiveMode, cfg config) (string, error) {
-	return readInteractivePrompt(ui, reader, stdin, stdout, mode, cfg)
+func ReadInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout io.Writer, mode interactiveMode, options ViewOptions) (string, error) {
+	return readInteractivePrompt(ui, reader, stdin, stdout, mode, options)
 }
 
 // ReadInteractivePromptWithRenderer reads a prompt and routes its submitted form through renderer.
-func ReadInteractivePromptWithRenderer(ui bool, reader *bufio.Reader, stdin *os.File, stdout io.Writer, mode interactiveMode, cfg config, renderer *Renderer) (string, error) {
-	return readInteractivePromptWithRenderer(ui, reader, stdin, stdout, mode, cfg, renderer)
+func ReadInteractivePromptWithRenderer(ui bool, reader *bufio.Reader, stdin *os.File, stdout io.Writer, mode interactiveMode, options ViewOptions, renderer *Renderer) (string, error) {
+	return readInteractivePromptWithRenderer(ui, reader, stdin, stdout, mode, options, renderer)
 }
 
 // PrintWarningTo shows a non-fatal warning on the provided target.
@@ -84,8 +109,8 @@ func PrintInfoTo(target io.Writer, ui bool, message string) {
 }
 
 // PrintContextTo shows the detected context on the provided target.
-func PrintContextTo(target io.Writer, ui bool, cfg config, ctxInfo contextInfo) {
-	printContextTo(target, ui, cfg, ctxInfo)
+func PrintContextTo(target io.Writer, ui bool, options ViewOptions, ctxInfo contextInfo) {
+	printContextTo(target, ui, options, ctxInfo)
 }
 
 // PrintModeStatusTo shows an interactive mode state change on the provided target.
@@ -94,8 +119,8 @@ func PrintModeStatusTo(target io.Writer, ui bool, message string) {
 }
 
 // PrintModelSwitchTo shows the active model profile after a /model change.
-func PrintModelSwitchTo(target io.Writer, ui bool, cfg config) {
-	printModelSwitchTo(target, ui, cfg)
+func PrintModelSwitchTo(target io.Writer, ui bool, options ViewOptions) {
+	printModelSwitchTo(target, ui, options)
 }
 
 // PrintNewSessionSeparatorTo marks a fresh context boundary without clearing the terminal.
@@ -109,8 +134,8 @@ func ClearScreenTo(target io.Writer) {
 }
 
 // PrintHeaderTo shows a compact header with the global session state on the provided target.
-func PrintHeaderTo(target io.Writer, ui bool, cfg config, ctxInfo contextInfo) {
-	printHeaderTo(target, ui, cfg, ctxInfo)
+func PrintHeaderTo(target io.Writer, ui bool, options ViewOptions, ctxInfo contextInfo) {
+	printHeaderTo(target, ui, options, ctxInfo)
 }
 
 // PrintFinalResultTo shows the final useful answer on the provided target.
@@ -119,8 +144,8 @@ func PrintFinalResultTo(target io.Writer, ui bool, message string) {
 }
 
 // PrintPlanTo presents the summary and commands proposed by the model on the provided target.
-func PrintPlanTo(target io.Writer, ui bool, cfg config, summary string, plans []commandPlan, discovery bool) {
-	printPlanTo(target, ui, cfg, summary, plans, discovery)
+func PrintPlanTo(target io.Writer, ui bool, options ViewOptions, summary string, plans []commandPlan, discovery bool) {
+	printPlanTo(target, ui, options, summary, plans, discovery)
 }
 
 // PromptPlanExecution asks whether the plan should be executed.
@@ -159,8 +184,8 @@ func (indicator *thinkingIndicator) Stop() {
 }
 
 // PrintCommandExecutionTo presents the active command inside a step box.
-func PrintCommandExecutionTo(target io.Writer, ui bool, cfg config, index int, total int, plan commandPlan) *StepBox {
-	return printCommandExecutionTo(target, ui, cfg, index, total, plan)
+func PrintCommandExecutionTo(target io.Writer, ui bool, options ViewOptions, index int, total int, plan commandPlan) *StepBox {
+	return printCommandExecutionTo(target, ui, options, index, total, plan)
 }
 
 // PrintInteractiveCommandStartTo shows the handoff message before an interactive command starts.

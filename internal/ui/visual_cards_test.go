@@ -17,7 +17,7 @@ func TestCardsRendererStreamsBeforeCloseAndClosesOnce(t *testing.T) {
 	var out bytes.Buffer
 	r := &Renderer{impl: newCardsRenderer(&out, false)}
 	turn := r.BeginShelliaTurn(testConfig(), core.ContextInfo{CWD: "/tmp"})
-	step := turn.BeginStep(testConfig(), 1, 1, testPlan())
+	step := turn.BeginStep(1, 1, testPlan())
 	step.OutputLabel()
 	step.OutputLine("first")
 	if !strings.Contains(out.String(), "first") {
@@ -45,7 +45,7 @@ func TestCardsRendererStreamsBeforeCloseAndClosesOnce(t *testing.T) {
 func TestCardsRendererShowsFlushedPartialOutput(t *testing.T) {
 	var out bytes.Buffer
 	turn := (&Renderer{impl: newCardsRenderer(&out, false)}).BeginShelliaTurn(testConfig(), core.ContextInfo{})
-	step := turn.BeginStep(testConfig(), 1, 1, testPlan())
+	step := turn.BeginStep(1, 1, testPlan())
 	writer := &prefixedWriter{box: step}
 	if _, err := writer.Write([]byte("partial")); err != nil {
 		t.Fatalf("Write() error = %v", err)
@@ -156,7 +156,7 @@ func TestCardsReusesOneSpacerBetweenHeaderThinkingAndPlan(t *testing.T) {
 	turn := NewRenderer(&output, Presentation{Style: configpkg.VisualStyleCards}).
 		BeginShelliaTurn(testConfig(), core.ContextInfo{CWD: "/tmp"})
 	turn.ThinkingPrefix()
-	turn.Plan(testConfig(), "Comprovar l'espai disponible.", nil, false)
+	turn.Plan("Comprovar l'espai disponible.", nil, false)
 
 	plain := strings.ReplaceAll(stripANSISequences(output.String()), "\r", "")
 	between := textBetween(t, plain, "/tmp", "│   plan")
@@ -169,7 +169,7 @@ func TestCardsThinkingAfterExecutionHasOneSpacerRow(t *testing.T) {
 	var output bytes.Buffer
 	turn := NewRenderer(&output, Presentation{Style: configpkg.VisualStyleCards}).
 		BeginShelliaTurn(testConfig(), core.ContextInfo{CWD: "/tmp"})
-	step := turn.BeginStep(testConfig(), 1, 1, testPlan())
+	step := turn.BeginStep(1, 1, testPlan())
 	step.OutputLine("done")
 	step.Close()
 	output.Reset()
@@ -266,7 +266,7 @@ func TestCardsRendererWrapsStreamedOutputWithinTerminalWidth(t *testing.T) {
 		t.Run(map[bool]string{false: "no ANSI", true: "ANSI"}[ansi], func(t *testing.T) {
 			output := renderCardsAtTerminalWidth(t, terminalWidth, ansi, func(renderer *Renderer) {
 				turn := renderer.BeginShelliaTurn(testConfig(), core.ContextInfo{})
-				step := turn.BeginStep(testConfig(), 1, 1, testPlan())
+				step := turn.BeginStep(1, 1, testPlan())
 				step.OutputLabel()
 				step.OutputLine(payload)
 				step.Close()
@@ -330,7 +330,7 @@ func TestCardsRendererClosesFinalOnlyAndEarlyTurns(t *testing.T) {
 func TestCardsRendererSuspendResumeCreatesClosedContinuation(t *testing.T) {
 	var out bytes.Buffer
 	turn := (&Renderer{impl: newCardsRenderer(&out, false)}).BeginShelliaTurn(testConfig(), core.ContextInfo{})
-	step := turn.BeginStep(testConfig(), 1, 1, testPlan())
+	step := turn.BeginStep(1, 1, testPlan())
 	step.OutputLine("before handoff")
 	turn.Suspend()
 	if strings.Count(out.String(), "\n╰") != 1 || strings.Count(out.String(), "│   └") != 1 {
@@ -376,8 +376,8 @@ func renderCardsConversationFixture(t *testing.T, ansi bool, user string) string
 	renderer := NewRenderer(&output, Presentation{Style: configpkg.VisualStyleCards, ANSI: ansi, User: user})
 	renderer.UserTurn(core.InteractiveModeAI, "quant d'espai queda al disc?")
 	turn := renderer.BeginShelliaTurn(testConfig(), core.ContextInfo{CWD: "/Users/Xesc/Documents/Scripts"})
-	turn.Plan(testConfig(), "Cal consultar l'espai disponible.", []core.CommandPlan{testPlan()}, false)
-	step := turn.BeginStep(testConfig(), 1, 1, testPlan())
+	turn.Plan("Cal consultar l'espai disponible.", []core.CommandPlan{testPlan()}, false)
+	step := turn.BeginStep(1, 1, testPlan())
 	step.OutputLabel()
 	step.OutputLine("419Gi available")
 	step.Close()

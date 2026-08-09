@@ -18,8 +18,8 @@ type commandMenuItem struct {
 }
 
 // commandMenuLines renders the slash-command suggestions shown below the prompt.
-func commandMenuLines(ui bool, input string, cfg config) []string {
-	suggestions := commandMenuSuggestions(input, cfg)
+func commandMenuLines(ui bool, input string, options ViewOptions) []string {
+	suggestions := commandMenuSuggestions(input, options)
 	if len(suggestions) == 0 {
 		return nil
 	}
@@ -60,12 +60,12 @@ func commandMenuLines(ui bool, input string, cfg config) []string {
 }
 
 // commandMenuSuggestions returns top-level slash commands or selector entries.
-func commandMenuSuggestions(input string, cfg config) []commandMenuItem {
+func commandMenuSuggestions(input string, options ViewOptions) []commandMenuItem {
 	if prefix, ok := themeMenuPrefix(input); ok {
-		return themeMenuSuggestions(prefix, cfg)
+		return themeMenuSuggestions(prefix, options)
 	}
 	if prefix, ok := modelMenuPrefix(input); ok {
-		return modelMenuSuggestions(prefix, cfg)
+		return modelMenuSuggestions(prefix, options)
 	}
 
 	matches := interactivepkg.MatchingSlashCommands(input)
@@ -104,7 +104,7 @@ func themeMenuPrefix(input string) (string, bool) {
 }
 
 // themeMenuSuggestions renders selectable visual styles for the /theme submenu.
-func themeMenuSuggestions(prefix string, cfg config) []commandMenuItem {
+func themeMenuSuggestions(prefix string, options ViewOptions) []commandMenuItem {
 	descriptions := map[configpkg.VisualStyle]string{
 		configpkg.VisualStylePlain: "classic Shellia output",
 		configpkg.VisualStyleGuide: "guided rail layout",
@@ -119,7 +119,7 @@ func themeMenuSuggestions(prefix string, cfg config) []commandMenuItem {
 		if prefix != "" && !strings.HasPrefix(name, prefix) {
 			continue
 		}
-		if visualStyle == cfg.VisualStyle {
+		if visualStyle == options.VisualStyle {
 			name = "* " + name
 		}
 		suggestions = append(suggestions, commandMenuItem{
@@ -155,8 +155,8 @@ func modelMenuPrefix(input string) (string, bool) {
 }
 
 // modelMenuSuggestions renders configured model profiles for the /model submenu.
-func modelMenuSuggestions(prefix string, cfg config) []commandMenuItem {
-	if len(cfg.Models) == 0 {
+func modelMenuSuggestions(prefix string, options ViewOptions) []commandMenuItem {
+	if len(options.Models) == 0 {
 		return []commandMenuItem{{
 			Input:       "no models",
 			Description: "configure [[models]] in config.toml",
@@ -164,13 +164,13 @@ func modelMenuSuggestions(prefix string, cfg config) []commandMenuItem {
 	}
 
 	prefix = strings.ToLower(strings.TrimSpace(prefix))
-	suggestions := make([]commandMenuItem, 0, len(cfg.Models))
-	for _, model := range cfg.Models {
+	suggestions := make([]commandMenuItem, 0, len(options.Models))
+	for _, model := range options.Models {
 		if prefix != "" && !strings.HasPrefix(strings.ToLower(model.Name), prefix) {
 			continue
 		}
 		name := model.Name
-		if model.Name == cfg.ModelName {
+		if model.Name == options.ModelName {
 			name = "* " + name
 		}
 		suggestions = append(suggestions, commandMenuItem{
@@ -191,7 +191,7 @@ func commandMenuBorderLine(ui bool, left string, right string, width int) string
 }
 
 // completeInteractiveCommand returns the first matching slash command or selector entry.
-func completeInteractiveCommand(input string, cfg config) (string, bool) {
+func completeInteractiveCommand(input string, options ViewOptions) (string, bool) {
 	if prefix, ok := themeMenuPrefix(input); ok {
 		prefix = strings.ToLower(strings.TrimSpace(prefix))
 		for _, visualStyle := range configpkg.VisualStyles() {
@@ -204,7 +204,7 @@ func completeInteractiveCommand(input string, cfg config) (string, bool) {
 	}
 	if prefix, ok := modelMenuPrefix(input); ok {
 		prefix = strings.ToLower(strings.TrimSpace(prefix))
-		for _, model := range cfg.Models {
+		for _, model := range options.Models {
 			if prefix == "" || strings.HasPrefix(strings.ToLower(model.Name), prefix) {
 				return "/model " + model.Name, true
 			}

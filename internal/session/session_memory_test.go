@@ -307,7 +307,7 @@ func TestUpdateSessionStateStoresStructuredProposal(t *testing.T) {
 	updateSessionState(state, "pots mirar el disc?", turnResult{
 		Outcome:  turnOutcomeCompleted,
 		Proposal: pendingProposal{Objective: "consulta l'espai disponible al disc", Summary: "Consultar disc"},
-	}, config{})
+	}, MemoryOptions{})
 
 	if state.PendingProposal.Objective != "consulta l'espai disponible al disc" {
 		t.Fatalf("PendingProposal = %#v, want structured offer", state.PendingProposal)
@@ -316,7 +316,7 @@ func TestUpdateSessionStateStoresStructuredProposal(t *testing.T) {
 
 func TestUpdateSessionStateReplacesPendingProposalOnNewCompletedInstruction(t *testing.T) {
 	state := &sessionState{PendingProposal: pendingProposal{Objective: "consulta el disc", Summary: "Consultar disc"}}
-	updateSessionState(state, "explica'm què és un inode", turnResult{Outcome: turnOutcomeCompleted}, config{})
+	updateSessionState(state, "explica'm què és un inode", turnResult{Outcome: turnOutcomeCompleted}, MemoryOptions{})
 
 	if state.PendingProposal != (pendingProposal{}) {
 		t.Fatalf("PendingProposal = %#v, want cleared by new completed instruction", state.PendingProposal)
@@ -328,7 +328,7 @@ func TestUpdateSessionStateRejectsProposalFromNonCompletedOutcome(t *testing.T) 
 	updateSessionState(state, "invalid capability turn", turnResult{
 		Outcome:  turnOutcomeStructuralError,
 		Proposal: pendingProposal{Objective: "hidden objective", Summary: "Hidden offer"},
-	}, config{})
+	}, MemoryOptions{})
 
 	if state.PendingProposal != (pendingProposal{}) {
 		t.Fatalf("PendingProposal = %#v, want no offer from non-completed outcome", state.PendingProposal)
@@ -345,7 +345,7 @@ func TestManualExecutionInvalidatesRetryObservationBinding(t *testing.T) {
 		Command: "pwd",
 		Purpose: "Inspect directory",
 		Stdout:  capturedStream{Text: "/tmp"},
-	}, config{MemoryObservationChars: 200, MaxObservationEntries: 4})
+	}, MemoryOptions{MemoryObservationChars: 200, MaxObservationEntries: 4})
 
 	if state.LastObservationObjective != "" {
 		t.Fatalf("LastObservationObjective = %q, want manual evidence detached from retry objective", state.LastObservationObjective)
@@ -361,7 +361,7 @@ func TestOutputlessExecutionInvalidatesRetryObservationBinding(t *testing.T) {
 	updateSessionState(state, "mutate state", turnResult{
 		Outcome:    turnOutcomeBlocked,
 		Executions: []commandExecution{{Command: "touch marker", Purpose: "Mutate state", ExitCode: 0}},
-	}, config{MemoryObservationChars: 200, MaxObservationEntries: 4})
+	}, MemoryOptions{MemoryObservationChars: 200, MaxObservationEntries: 4})
 
 	if state.LastObservationObjective != "" {
 		t.Fatalf("LastObservationObjective = %q, want outputless execution to invalidate old evidence", state.LastObservationObjective)
@@ -370,12 +370,12 @@ func TestOutputlessExecutionInvalidatesRetryObservationBinding(t *testing.T) {
 
 func TestUpdateSessionState(t *testing.T) {
 	t.Run("nil state is a no-op", func(t *testing.T) {
-		updateSessionState(nil, "anything", turnResult{}, config{})
+		updateSessionState(nil, "anything", turnResult{}, MemoryOptions{})
 	})
 
 	t.Run("sets pending intent", func(t *testing.T) {
 		state := &sessionState{}
-		updateSessionState(state, "deploy to prod", turnResult{Outcome: turnOutcomeBlocked, BlockerKind: "missing_input", BlockerReason: "Need target"}, config{})
+		updateSessionState(state, "deploy to prod", turnResult{Outcome: turnOutcomeBlocked, BlockerKind: "missing_input", BlockerReason: "Need target"}, MemoryOptions{})
 		if state.PendingIntent != "deploy to prod" {
 			t.Errorf("got %q", state.PendingIntent)
 		}
@@ -383,7 +383,7 @@ func TestUpdateSessionState(t *testing.T) {
 
 	t.Run("stores referenced file from instruction", func(t *testing.T) {
 		state := &sessionState{}
-		updateSessionState(state, "edit src/main.go now", turnResult{}, config{})
+		updateSessionState(state, "edit src/main.go now", turnResult{}, MemoryOptions{})
 		if state.LastReferencedFile == "" {
 			t.Error("expected LastReferencedFile to be set")
 		}
@@ -397,7 +397,7 @@ func TestUpdateSessionStateCarriesMissingInputUntilCompletion(t *testing.T) {
 		Outcome:       turnOutcomeBlocked,
 		BlockerKind:   "missing_input",
 		BlockerReason: "Specify the service name.",
-	}, config{})
+	}, MemoryOptions{})
 
 	if state.PendingIntent != "restart it" || state.LastBlockerKind != "missing_input" || state.LastBlockerReason != "Specify the service name." {
 		t.Fatalf("blocked state = %#v", state)
@@ -406,12 +406,12 @@ func TestUpdateSessionStateCarriesMissingInputUntilCompletion(t *testing.T) {
 		t.Fatalf("blocked state lost prior evidence = %#v", state.LastObservations)
 	}
 
-	updateSessionState(state, "restart nginx", turnResult{Outcome: turnOutcomeTimeout}, config{})
+	updateSessionState(state, "restart nginx", turnResult{Outcome: turnOutcomeTimeout}, MemoryOptions{})
 	if state.LastBlockerKind != "missing_input" || state.LastBlockerReason != "Specify the service name." {
 		t.Fatalf("non-complete follow-up lost blocker = %#v", state)
 	}
 
-	updateSessionState(state, "restart nginx", turnResult{Outcome: turnOutcomeCompleted, Result: "nginx restarted"}, config{})
+	updateSessionState(state, "restart nginx", turnResult{Outcome: turnOutcomeCompleted, Result: "nginx restarted"}, MemoryOptions{})
 	if state.PendingIntent != "" || state.LastBlockerKind != "" || state.LastBlockerReason != "" {
 		t.Fatalf("completed state retained blocker = %#v", state)
 	}
@@ -420,7 +420,7 @@ func TestUpdateSessionStateCarriesMissingInputUntilCompletion(t *testing.T) {
 // TestUpdateSessionStateKeepsNonSuccessfulOutcomePending checks deterministic stops are not projected as success.
 func TestUpdateSessionStateKeepsNonSuccessfulOutcomePending(t *testing.T) {
 	state := &sessionState{}
-	updateSessionState(state, "restart nginx", turnResult{Outcome: turnOutcomeTimeout}, config{})
+	updateSessionState(state, "restart nginx", turnResult{Outcome: turnOutcomeTimeout}, MemoryOptions{})
 	if state.PendingIntent != "restart nginx" {
 		t.Fatalf("PendingIntent = %q, want unfinished timeout instruction", state.PendingIntent)
 	}

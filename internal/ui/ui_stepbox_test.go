@@ -54,7 +54,7 @@ func TestStepBoxCloseAvoidsDoubleSpacing(t *testing.T) {
 func TestStepBoxLifecycleRowsStayInsideCardsAndCloseOnce(t *testing.T) {
 	var output bytes.Buffer
 	turn := newTestTurn(&output, configpkg.VisualStyleCards, false)
-	box := turn.BeginStep(testConfig(), 1, 1, testPlan())
+	box := turn.BeginStep(1, 1, testPlan())
 	for _, status := range []string{"confirmation", "skipped", "completed", "timed out"} {
 		box.Section(status, colorDim)
 	}

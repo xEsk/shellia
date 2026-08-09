@@ -21,6 +21,29 @@ const (
 	historyEntryPreviewChars  = 240
 )
 
+// ClientOptions contains the LLM transport and provider capability settings.
+type ClientOptions struct {
+	BaseURL                string
+	APIKey                 string
+	Model                  string
+	RequestTimeout         time.Duration
+	SupportsResponseFormat bool
+}
+
+// PromptOptions contains the configuration that controls prompt content.
+type PromptOptions struct {
+	PlanOnly                  bool
+	IncludeCWD                bool
+	IncludeOS                 bool
+	IncludeShell              bool
+	IncludeUser               bool
+	IncludeSessionMemory      bool
+	IncludeRecentObservations bool
+	MaxObservationEntries     int
+	ObservationOutputChars    int
+	TruncationStrategy        truncationStrategy
+}
+
 type chatCompletionRequest struct {
 	Model          string          `json:"model"`
 	Temperature    float64         `json:"temperature"`
@@ -47,7 +70,7 @@ type chatCompletionEnvelope struct {
 
 // PromptRequest groups the context needed to build one planning prompt.
 type PromptRequest struct {
-	Config                    config
+	Config                    PromptOptions
 	ContextInfo               contextInfo
 	Instruction               string
 	ResolvedInstruction       string
@@ -136,7 +159,7 @@ func isRetryable(statusCode int) bool {
 
 // doLLMRequest is the single non-streaming HTTP entry point for all model calls.
 // It retries up to maxRetries times on transient errors (429, 5xx) with exponential backoff.
-func doLLMRequest(ctx context.Context, client *http.Client, cfg config, req chatCompletionRequest) (string, error) {
+func doLLMRequest(ctx context.Context, client *http.Client, options ClientOptions, req chatCompletionRequest) (string, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return "", fmt.Errorf("cannot encode llm request: %w", err)
@@ -145,7 +168,7 @@ func doLLMRequest(ctx context.Context, client *http.Client, cfg config, req chat
 		client = http.DefaultClient
 	}
 
-	url := strings.TrimRight(cfg.BaseURL, "/") + "/chat/completions"
+	url := strings.TrimRight(options.BaseURL, "/") + "/chat/completions"
 
 	var (
 		responseBody []byte
@@ -167,7 +190,7 @@ func doLLMRequest(ctx context.Context, client *http.Client, cfg config, req chat
 		if err != nil {
 			return "", fmt.Errorf("cannot create llm request: %w", err)
 		}
-		applyLLMRequestHeaders(httpReq, cfg)
+		applyLLMRequestHeaders(httpReq, options)
 
 		resp, err := client.Do(httpReq)
 		if err != nil {
@@ -211,9 +234,9 @@ func doLLMRequest(ctx context.Context, client *http.Client, cfg config, req chat
 }
 
 // applyLLMRequestHeaders attaches the shared headers for OpenAI-compatible requests.
-func applyLLMRequestHeaders(req *http.Request, cfg config) {
-	if strings.TrimSpace(cfg.APIKey) != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+func applyLLMRequestHeaders(req *http.Request, options ClientOptions) {
+	if strings.TrimSpace(options.APIKey) != "" {
+		req.Header.Set("Authorization", "Bearer "+options.APIKey)
 	}
 	req.Header.Set("Content-Type", "application/json")
 }
@@ -254,14 +277,14 @@ func buildLLMPrompts(request PromptRequest) (string, string) {
 }
 
 // callPlanningPrompt sends a planning prompt pair to the model and returns the raw JSON response.
-func callPlanningPrompt(ctx context.Context, client *http.Client, cfg config, systemPrompt string, userPrompt string) (string, error) {
-	requestCtx, cancel := context.WithTimeout(ctx, cfg.RequestTimeout)
+func callPlanningPrompt(ctx context.Context, client *http.Client, options ClientOptions, systemPrompt string, userPrompt string) (string, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, options.RequestTimeout)
 	defer cancel()
 
-	return doLLMRequest(requestCtx, client, cfg, chatCompletionRequest{
-		Model:          cfg.Model,
+	return doLLMRequest(requestCtx, client, options, chatCompletionRequest{
+		Model:          options.Model,
 		Temperature:    0,
-		ResponseFormat: planningResponseFormat(cfg),
+		ResponseFormat: planningResponseFormat(options),
 		Messages: []chatMessage{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},
@@ -270,8 +293,8 @@ func callPlanningPrompt(ctx context.Context, client *http.Client, cfg config, sy
 }
 
 // planningResponseFormat keeps strict JSON mode where providers advertise it.
-func planningResponseFormat(cfg config) *responseFormat {
-	if !cfg.SupportsResponseFormat {
+func planningResponseFormat(options ClientOptions) *responseFormat {
+	if !options.SupportsResponseFormat {
 		return nil
 	}
 	return &responseFormat{Type: "json_object"}
@@ -798,19 +821,19 @@ func selectObservationIndices(observations []commandExecution, latestStart int, 
 	return indices, len(observations) - len(indices)
 }
 
-// buildPromptContextBlock renders the local context fields enabled in config.
-func buildPromptContextBlock(cfg config, ctxInfo contextInfo) string {
+// buildPromptContextBlock renders the local context fields enabled in prompt options.
+func buildPromptContextBlock(options PromptOptions, ctxInfo contextInfo) string {
 	lines := make([]string, 0, 4)
-	if cfg.IncludeCWD {
+	if options.IncludeCWD {
 		lines = append(lines, "- cwd: "+ctxInfo.CWD)
 	}
-	if cfg.IncludeUser {
+	if options.IncludeUser {
 		lines = append(lines, "- user: "+ctxInfo.User)
 	}
-	if cfg.IncludeOS {
+	if options.IncludeOS {
 		lines = append(lines, "- os: "+ctxInfo.OS)
 	}
-	if cfg.IncludeShell {
+	if options.IncludeShell {
 		lines = append(lines, "- shell: "+ctxInfo.Shell)
 	}
 	if len(lines) == 0 {

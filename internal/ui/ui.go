@@ -136,8 +136,8 @@ func (writer *directShellWriter) Flush() error {
 }
 
 // uiEnabled reports whether enriched output can use ANSI colours.
-func uiEnabled(cfg config) bool {
-	if cfg.NoColor {
+func uiEnabled(options ViewOptions) bool {
+	if options.NoColor {
 		return false
 	}
 
@@ -162,23 +162,23 @@ func printErrorTo(target io.Writer, ui bool, message string) {
 }
 
 // printContext shows the detected context when debug mode is enabled.
-func printContext(ui bool, cfg config, ctxInfo contextInfo) {
-	printContextTo(os.Stdout, ui, cfg, ctxInfo)
+func printContext(ui bool, options ViewOptions, ctxInfo contextInfo) {
+	printContextTo(os.Stdout, ui, options, ctxInfo)
 }
 
 // printContextTo shows the detected context on the provided target.
-func printContextTo(target io.Writer, ui bool, cfg config, ctxInfo contextInfo) {
+func printContextTo(target io.Writer, ui bool, options ViewOptions, ctxInfo contextInfo) {
 	lines := make([]string, 0, 4)
-	if cfg.IncludeCWD {
+	if options.IncludeCWD {
 		lines = append(lines, metaLine(ui, "cwd", ctxInfo.CWD))
 	}
-	if cfg.IncludeUser {
+	if options.IncludeUser {
 		lines = append(lines, metaLine(ui, "user", ctxInfo.User))
 	}
-	if cfg.IncludeOS {
+	if options.IncludeOS {
 		lines = append(lines, metaLine(ui, "os", ctxInfo.OS))
 	}
-	if cfg.IncludeShell {
+	if options.IncludeShell {
 		lines = append(lines, metaLine(ui, "shell", ctxInfo.Shell))
 	}
 	if len(lines) == 0 {
@@ -188,12 +188,12 @@ func printContextTo(target io.Writer, ui bool, cfg config, ctxInfo contextInfo) 
 }
 
 // printPlan presents the summary and the commands proposed by the model.
-func printPlan(ui bool, cfg config, summary string, plans []commandPlan, discovery bool) {
-	printPlanTo(os.Stdout, ui, cfg, summary, plans, discovery)
+func printPlan(ui bool, options ViewOptions, summary string, plans []commandPlan, discovery bool) {
+	printPlanTo(os.Stdout, ui, options, summary, plans, discovery)
 }
 
 // printPlanTo presents the summary and the commands proposed by the model on the provided target.
-func printPlanTo(target io.Writer, ui bool, cfg config, summary string, plans []commandPlan, discovery bool) {
+func printPlanTo(target io.Writer, ui bool, options ViewOptions, summary string, plans []commandPlan, discovery bool) {
 	title := "plan"
 	titleColor := colorMagenta
 	if discovery {
@@ -202,16 +202,16 @@ func printPlanTo(target io.Writer, ui bool, cfg config, summary string, plans []
 	}
 	renderPanel(target, ui, title, titleColor, []string{style(ui, colorWhite+colorBold, summary)})
 
-	if len(plans) == 0 || (!cfg.Verbose && !cfg.PlanOnly && !cfg.AskConfirmPlan) {
+	if len(plans) == 0 || (!options.Verbose && !options.PlanOnly && !options.AskConfirmPlan) {
 		return
 	}
 
-	lines := planStepLines(target, ui, cfg, plans)
+	lines := planStepLines(target, ui, options, plans)
 	renderPanel(target, ui, "steps", colorDim, trimTrailingBlankLines(lines))
 }
 
 // planStepLines renders planned steps with compact command boxes in plan-only mode.
-func planStepLines(target io.Writer, ui bool, cfg config, plans []commandPlan) []string {
+func planStepLines(target io.Writer, ui bool, options ViewOptions, plans []commandPlan) []string {
 	lines := make([]string, 0, len(plans)*4)
 	commandWidth := boxWidthFor(target) - visibleWidth("  ")
 	if commandWidth < boxMinWidth {
@@ -221,7 +221,7 @@ func planStepLines(target io.Writer, ui bool, cfg config, plans []commandPlan) [
 	for index, plan := range plans {
 		lines = append(lines, fmt.Sprintf("%s %s", stepBadge(ui, index+1), plan.Purpose))
 		lines = append(lines, renderCommandBox(ui, plan.Command, commandWidth)...)
-		if cfg.Verbose {
+		if options.Verbose {
 			lines = append(lines,
 				fmt.Sprintf("%s %s", metaLabel(ui, "risk"), riskBadge(ui, plan.Risk)),
 				fmt.Sprintf("%s %s", metaLabel(ui, "safety"), classificationBadge(ui, plan.Classification)),
@@ -367,15 +367,15 @@ func logPlanningLimitChoice(box *stepBox, limit int, run bool) {
 }
 
 // printHeader shows a compact header with the global session state.
-func printHeader(ui bool, cfg config, ctxInfo contextInfo) {
-	printHeaderTo(os.Stdout, ui, cfg, ctxInfo)
+func printHeader(ui bool, options ViewOptions, ctxInfo contextInfo) {
+	printHeaderTo(os.Stdout, ui, options, ctxInfo)
 }
 
 // printHeaderTo shows a compact header with the global session state on the provided target.
-func printHeaderTo(target io.Writer, ui bool, cfg config, ctxInfo contextInfo) {
+func printHeaderTo(target io.Writer, ui bool, options ViewOptions, ctxInfo contextInfo) {
 	fmt.Fprintln(target)
 	fmt.Fprintln(target, shelliaBrand(ui, false)+style(ui, colorDim, " · ")+shelliaVersionBadge(ui))
-	if headerContext := plainHeaderContextValue(cfg, ctxInfo); headerContext != "" {
+	if headerContext := plainHeaderContextValue(options, ctxInfo); headerContext != "" {
 		fmt.Fprintln(target, style(ui, colorDim, headerContext))
 	}
 }
@@ -403,12 +403,12 @@ func printRawPromptsTo(target io.Writer, ui bool, title string, systemPrompt str
 }
 
 // printCommandExecution presents the active command inside a step box before running it.
-func printCommandExecution(ui bool, cfg config, index int, total int, plan commandPlan) *stepBox {
-	return printCommandExecutionTo(os.Stdout, ui, cfg, index, total, plan)
+func printCommandExecution(ui bool, options ViewOptions, index int, total int, plan commandPlan) *stepBox {
+	return printCommandExecutionTo(os.Stdout, ui, options, index, total, plan)
 }
 
 // printCommandExecutionTo presents the active command inside a step box on the provided target.
-func printCommandExecutionTo(target io.Writer, ui bool, cfg config, index int, total int, plan commandPlan) *stepBox {
+func printCommandExecutionTo(target io.Writer, ui bool, options ViewOptions, index int, total int, plan commandPlan) *stepBox {
 	box := newStepBox(target, ui, fmt.Sprintf("step %d/%d", index, total))
 	box.Spacer()
 	box.Command(plan.Command)
@@ -417,7 +417,7 @@ func printCommandExecutionTo(target io.Writer, ui bool, cfg config, index int, t
 	if plan.Interactive {
 		box.KeyValue("interactive", fallbackValue(plan.InteractiveReason, "yes"), colorYellow, colorWhite)
 	}
-	if cfg.Verbose {
+	if options.Verbose {
 		box.KeyValue("risk", plainRiskLabel(plan.Risk), colorYellow, colorWhite)
 	}
 	return box
@@ -478,12 +478,12 @@ func centeredSeparatorText(label string, width int) string {
 }
 
 // printModelSwitchTo shows the active model profile after a /model change.
-func printModelSwitchTo(target io.Writer, ui bool, cfg config) {
+func printModelSwitchTo(target io.Writer, ui bool, options ViewOptions) {
 	detail := ""
-	if strings.TrimSpace(cfg.Model) != "" {
-		detail = style(ui, colorDim, " · "+cfg.Model)
+	if strings.TrimSpace(options.Model) != "" {
+		detail = style(ui, colorDim, " · "+options.Model)
 	}
-	fmt.Fprintf(target, "\n%s %s%s\n", shelliaBrand(ui, false), style(ui, colorWhite+colorBold, "Model switched to "+cfg.ModelName+"."), detail)
+	fmt.Fprintf(target, "\n%s %s%s\n", shelliaBrand(ui, false), style(ui, colorWhite+colorBold, "Model switched to "+options.ModelName+"."), detail)
 }
 
 // printWarning shows a non-fatal warning.
@@ -583,12 +583,12 @@ const (
 )
 
 // readInteractivePrompt shows a clear prompt and returns the entered text.
-func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout io.Writer, mode interactiveMode, cfg config) (string, error) {
-	return readInteractivePromptWithRenderer(ui, reader, stdin, stdout, mode, cfg, nil)
+func readInteractivePrompt(ui bool, reader *bufio.Reader, stdin *os.File, stdout io.Writer, mode interactiveMode, options ViewOptions) (string, error) {
+	return readInteractivePromptWithRenderer(ui, reader, stdin, stdout, mode, options, nil)
 }
 
 // readInteractivePromptWithRenderer renders submitted prompts through the selected presentation.
-func readInteractivePromptWithRenderer(ui bool, reader *bufio.Reader, stdin *os.File, stdout io.Writer, mode interactiveMode, cfg config, renderer *Renderer) (string, error) {
+func readInteractivePromptWithRenderer(ui bool, reader *bufio.Reader, stdin *os.File, stdout io.Writer, mode interactiveMode, options ViewOptions, renderer *Renderer) (string, error) {
 	if stdin == nil {
 		stdin = os.Stdin
 	}
@@ -628,7 +628,7 @@ func readInteractivePromptWithRenderer(ui bool, reader *bufio.Reader, stdin *os.
 		contentWidth = 1
 	}
 
-	renderEditablePromptTo(stdout, ui, prompt, buffer, cursor, affinity, renderState, cfg)
+	renderEditablePromptTo(stdout, ui, prompt, buffer, cursor, affinity, renderState, options)
 
 	for {
 		_, err := stdin.Read(single)
@@ -643,7 +643,7 @@ func readInteractivePromptWithRenderer(ui bool, reader *bufio.Reader, stdin *os.
 					buffer = buffer[:0]
 					cursor = 0
 					affinity = cursorAffinityForward
-					renderEditablePromptTo(stdout, ui, prompt, buffer, cursor, affinity, renderState, cfg)
+					renderEditablePromptTo(stdout, ui, prompt, buffer, cursor, affinity, renderState, options)
 				}
 				continue
 			}
@@ -673,7 +673,7 @@ func readInteractivePromptWithRenderer(ui bool, reader *bufio.Reader, stdin *os.
 			cursor--
 			affinity = cursorAffinityForward
 		case '\t':
-			if completed, ok := completeInteractiveCommand(string(buffer), cfg); ok {
+			if completed, ok := completeInteractiveCommand(string(buffer), options); ok {
 				buffer = []rune(completed + " ")
 				cursor = len(buffer)
 				affinity = cursorAffinityForward
@@ -690,7 +690,7 @@ func readInteractivePromptWithRenderer(ui bool, reader *bufio.Reader, stdin *os.
 			affinity = cursorAffinityForward
 		}
 
-		renderEditablePromptTo(stdout, ui, prompt, buffer, cursor, affinity, renderState, cfg)
+		renderEditablePromptTo(stdout, ui, prompt, buffer, cursor, affinity, renderState, options)
 	}
 }
 
@@ -1472,16 +1472,16 @@ func applyEscapeSequenceOrExit(reader io.Reader, fd int, buffer *[]rune, cursor 
 }
 
 // renderEditablePrompt repaints the full editable prompt block while handling wrapping correctly.
-func renderEditablePrompt(ui bool, prompt string, buffer []rune, cursor int, affinity cursorAffinity, state *editableRenderState, cfg config) {
-	renderEditablePromptTo(os.Stdout, ui, prompt, buffer, cursor, affinity, state, cfg)
+func renderEditablePrompt(ui bool, prompt string, buffer []rune, cursor int, affinity cursorAffinity, state *editableRenderState, options ViewOptions) {
+	renderEditablePromptTo(os.Stdout, ui, prompt, buffer, cursor, affinity, state, options)
 }
 
 // renderEditablePromptTo repaints the full editable prompt block on the provided target.
-func renderEditablePromptTo(target io.Writer, ui bool, prompt string, buffer []rune, cursor int, affinity cursorAffinity, state *editableRenderState, cfg config) {
+func renderEditablePromptTo(target io.Writer, ui bool, prompt string, buffer []rune, cursor int, affinity cursorAffinity, state *editableRenderState, options ViewOptions) {
 	lines, cursorRow, cursorCol := editablePromptLayout(prompt, buffer, cursor, affinity, promptRenderWidthFor(target))
 	var menuLines []string
-	if cfg.ShowCommandPopup {
-		menuLines = commandMenuLines(ui, string(buffer), cfg)
+	if options.ShowCommandPopup {
+		menuLines = commandMenuLines(ui, string(buffer), options)
 	}
 	promptWidth := visibleWidth(prompt)
 
@@ -1626,16 +1626,16 @@ func renderPanel(target io.Writer, ui bool, title string, color string, lines []
 }
 
 // plainHeaderContextValue generates the short local context line for turn headers.
-func plainHeaderContextValue(cfg config, ctxInfo contextInfo) string {
-	if !cfg.IncludeCWD {
+func plainHeaderContextValue(options ViewOptions, ctxInfo contextInfo) string {
+	if !options.IncludeCWD {
 		return ""
 	}
 	return ctxInfo.CWD
 }
 
 // plainHeaderModelValue generates a short model summary for the startup header.
-func plainHeaderModelValue(cfg config) string {
-	return fallbackValue(cfg.Model, "-")
+func plainHeaderModelValue(options ViewOptions) string {
+	return fallbackValue(options.Model, "-")
 }
 
 // shellStreamPrefix returns the prefix used for each line of real shell output.

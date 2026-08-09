@@ -6,8 +6,6 @@ import (
 	"strings"
 
 	"github.com/xEsk/shellia/internal/core"
-
-	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 type plainRenderer struct {
@@ -44,23 +42,23 @@ func (renderer *plainRenderer) userTurn(mode core.InteractiveMode, text string) 
 	fmt.Fprint(renderer.target, "\r\n")
 }
 
-func (renderer *plainRenderer) beginShelliaTurn(cfg configpkg.Config, ctxInfo core.ContextInfo) turnImpl {
-	printHeaderTo(renderer.target, renderer.ansi, cfg, ctxInfo)
+func (renderer *plainRenderer) beginShelliaTurn(options ViewOptions, ctxInfo core.ContextInfo) turnImpl {
+	printHeaderTo(renderer.target, renderer.ansi, options, ctxInfo)
 	return &plainTurn{target: renderer.target, ansi: renderer.ansi}
 }
 
-func (turn *plainTurn) plan(cfg configpkg.Config, summary string, plans []core.CommandPlan, discovery bool) {
+func (turn *plainTurn) plan(options ViewOptions, summary string, plans []core.CommandPlan, discovery bool) {
 	if turn == nil || turn.closed {
 		return
 	}
-	printPlanTo(turn.target, turn.ansi, cfg, summary, plans, discovery)
+	printPlanTo(turn.target, turn.ansi, options, summary, plans, discovery)
 }
 
-func (turn *plainTurn) beginStep(cfg configpkg.Config, index int, total int, plan core.CommandPlan) *stepBox {
+func (turn *plainTurn) beginStep(options ViewOptions, index int, total int, plan core.CommandPlan) *stepBox {
 	if turn == nil || turn.closed {
 		return nil
 	}
-	return printCommandExecutionTo(turn.target, turn.ansi, cfg, index, total, plan)
+	return printCommandExecutionTo(turn.target, turn.ansi, options, index, total, plan)
 }
 
 func (turn *plainTurn) final(message string) {

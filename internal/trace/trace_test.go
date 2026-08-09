@@ -15,7 +15,7 @@ func TestOpenSessionTraceDisabledCreatesNoFile(t *testing.T) {
 	cfg := configpkg.DefaultConfig()
 	cfg.TraceDir = dir
 
-	logger, err := openSessionTrace(cfg, contextInfo{})
+	logger, err := openSessionTrace(traceOptionsForTest(cfg), contextInfo{})
 	if err != nil {
 		t.Fatalf("openSessionTrace() error = %v", err)
 	}
@@ -38,7 +38,7 @@ func TestOpenSessionTraceCreatesJSONLEvents(t *testing.T) {
 	cfg.TraceEnabled = true
 	cfg.TraceDir = dir
 
-	logger, err := openSessionTrace(cfg, contextInfo{})
+	logger, err := openSessionTrace(traceOptionsForTest(cfg), contextInfo{})
 	if err != nil {
 		t.Fatalf("openSessionTrace() error = %v", err)
 	}

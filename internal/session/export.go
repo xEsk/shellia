@@ -1,13 +1,13 @@
 package session
 
 // UpdateState stores durable session memory after a successful turn.
-func UpdateState(state *sessionState, instruction string, turn turnResult, cfg config) {
-	updateSessionState(state, instruction, turn, cfg)
+func UpdateState(state *sessionState, instruction string, turn turnResult, options MemoryOptions) {
+	updateSessionState(state, instruction, turn, options)
 }
 
 // UpdateStateFromExecution updates reusable session memory after a manual shell command.
-func UpdateStateFromExecution(state *sessionState, command string, execution commandExecution, cfg config) {
-	updateSessionStateFromExecution(state, command, execution, cfg)
+func UpdateStateFromExecution(state *sessionState, command string, execution commandExecution, options MemoryOptions) {
+	updateSessionStateFromExecution(state, command, execution, options)
 }
 
 // RememberUnfinishedInstruction keeps enough memory when a turn fails or is cancelled.

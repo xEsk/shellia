@@ -223,7 +223,7 @@ func TestBuildUserPromptDeclaresImmutableExecutionAuthority(t *testing.T) {
 			cfg := configpkg.DefaultConfig()
 			cfg.PlanOnly = tt.planOnly
 			prompt := buildUserPrompt(PromptRequest{
-				Config:                  cfg,
+				Config:                  promptOptionsForTest(cfg),
 				Instruction:             "inspect disk",
 				ContextInfo:             contextInfo{CWD: "/tmp"},
 				PlanningRoundsRemaining: 2,
@@ -241,7 +241,7 @@ func TestBuildUserPromptDeclaresImmutableExecutionAuthority(t *testing.T) {
 func TestBuildUserPromptIncludesPendingStructuredProposal(t *testing.T) {
 	cfg := configpkg.DefaultConfig()
 	prompt := buildUserPrompt(PromptRequest{
-		Config:      cfg,
+		Config:      promptOptionsForTest(cfg),
 		Instruction: "potser",
 		ContextInfo: contextInfo{CWD: "/tmp"},
 		State: sessionState{PendingProposal: pendingProposal{
@@ -263,7 +263,7 @@ func TestBuildUserPromptOmitsDisabledSessionMemory(t *testing.T) {
 	cfg := configpkg.DefaultConfig()
 	cfg.IncludeSessionMemory = false
 	prompt := buildUserPrompt(PromptRequest{
-		Config:      cfg,
+		Config:      promptOptionsForTest(cfg),
 		Instruction: "new task",
 		ContextInfo: contextInfo{CWD: "/tmp"},
 		History:     []historyEntry{{Instruction: "old task", Result: "old result"}},
@@ -288,7 +288,7 @@ func TestBuildUserPromptOmitsDisabledObservations(t *testing.T) {
 	cfg := configpkg.DefaultConfig()
 	cfg.IncludeRecentObservations = false
 	prompt := buildUserPrompt(PromptRequest{
-		Config:           cfg,
+		Config:           promptOptionsForTest(cfg),
 		Instruction:      "inspect",
 		ContextInfo:      contextInfo{CWD: "/tmp"},
 		EvidenceRevision: 3,
@@ -316,7 +316,7 @@ func TestBuildUserPromptBoundsEvidenceButKeepsLatestAndRecentFailure(t *testing.
 	cfg.MaxObservationEntries = 2
 	cfg.ObservationOutputChars = 40
 	prompt := buildUserPrompt(PromptRequest{
-		Config:                    cfg,
+		Config:                    promptOptionsForTest(cfg),
 		Instruction:               "finish inspection",
 		ContextInfo:               contextInfo{CWD: "/tmp"},
 		LatestBatchExecutionStart: 4,
@@ -344,7 +344,7 @@ func TestBuildUserPromptBoundsEvidenceButKeepsLatestAndRecentFailure(t *testing.
 
 func TestBuildUserPromptMapsValidCompletionReferencesDuringRepair(t *testing.T) {
 	prompt := buildUserPrompt(PromptRequest{
-		Config:        configpkg.DefaultConfig(),
+		Config:        promptOptionsForTest(configpkg.DefaultConfig()),
 		Instruction:   "actualitza codex",
 		ContextInfo:   contextInfo{CWD: "/tmp"},
 		DecisionError: "attempt 1 does not belong to evidence revision 2",
@@ -376,7 +376,7 @@ func TestBuildUserPromptKeepsEntireLatestSkippedBatch(t *testing.T) {
 	cfg := configpkg.DefaultConfig()
 	cfg.MaxObservationEntries = 1
 	prompt := buildUserPrompt(PromptRequest{
-		Config:                  cfg,
+		Config:                  promptOptionsForTest(cfg),
 		Instruction:             "finish inspection",
 		ContextInfo:             contextInfo{CWD: "/tmp"},
 		LatestBatchSkippedStart: 2,
@@ -405,7 +405,7 @@ func TestBuildUserPromptAppliesOneOutputBudget(t *testing.T) {
 	cfg := configpkg.DefaultConfig()
 	cfg.ObservationOutputChars = 12
 	prompt := buildUserPrompt(PromptRequest{
-		Config:                    cfg,
+		Config:                    promptOptionsForTest(cfg),
 		Instruction:               "inspect",
 		ContextInfo:               contextInfo{CWD: "/tmp"},
 		LatestBatchExecutionStart: 0,
@@ -431,7 +431,7 @@ func TestBuildUserPromptProjectsDecisionAndBoundedAttempts(t *testing.T) {
 	cfg.MaxObservationEntries = 2
 	previous := Response{Action: "execute", Summary: "Inspect and verify."}
 	prompt := buildUserPrompt(PromptRequest{
-		Config:           cfg,
+		Config:           promptOptionsForTest(cfg),
 		Instruction:      "finish inspection",
 		ContextInfo:      contextInfo{CWD: "/tmp"},
 		PreviousDecision: &previous,
@@ -472,7 +472,7 @@ func TestCallPlanningPromptAppliesRequestTimeout(t *testing.T) {
 		return nil, request.Context().Err()
 	})}
 
-	_, err := callPlanningPrompt(context.Background(), client, cfg, "system", "user")
+	_, err := callPlanningPrompt(context.Background(), client, clientOptionsForTest(cfg), "system", "user")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("callPlanningPrompt() error = %v, want request deadline", err)
 	}

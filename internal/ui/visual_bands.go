@@ -9,8 +9,6 @@ import (
 	"github.com/xEsk/shellia/internal/core"
 
 	"golang.org/x/term"
-
-	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 const (
@@ -92,7 +90,7 @@ func (renderer *bandsRenderer) userTurn(mode core.InteractiveMode, text string) 
 	bandsWriteRow(renderer.target, bandsTurnRow(renderer.ansi, bandsUserBackground, colorCyan, "", width))
 }
 
-func (renderer *bandsRenderer) beginShelliaTurn(cfg configpkg.Config, ctxInfo core.ContextInfo) turnImpl {
+func (renderer *bandsRenderer) beginShelliaTurn(options ViewOptions, ctxInfo core.ContextInfo) turnImpl {
 	if renderer == nil {
 		return &bandsTurn{target: io.Discard}
 	}
@@ -101,14 +99,14 @@ func (renderer *bandsRenderer) beginShelliaTurn(cfg configpkg.Config, ctxInfo co
 	bandsWriteBlank(turn.target)
 	turn.ensurePaddingRow()
 	turn.row(shelliaBrand(turn.ansi, false) + style(turn.ansi, colorDim, " · "+fallbackValue(strings.TrimSpace(version), "dev")))
-	if context := plainHeaderContextValue(cfg, ctxInfo); context != "" {
+	if context := plainHeaderContextValue(options, ctxInfo); context != "" {
 		turn.row(style(turn.ansi, colorDim, context))
 	}
 	turn.row("")
 	return turn
 }
 
-func (turn *bandsTurn) plan(cfg configpkg.Config, summary string, plans []core.CommandPlan, discovery bool) {
+func (turn *bandsTurn) plan(options ViewOptions, summary string, plans []core.CommandPlan, discovery bool) {
 	if turn == nil || turn.closed {
 		return
 	}
@@ -125,20 +123,20 @@ func (turn *bandsTurn) plan(cfg configpkg.Config, summary string, plans []core.C
 		turn.row("  " + style(turn.ansi, colorWhite, line))
 	}
 
-	if len(plans) == 0 || (!cfg.Verbose && !cfg.PlanOnly && !cfg.AskConfirmPlan) {
+	if len(plans) == 0 || (!options.Verbose && !options.PlanOnly && !options.AskConfirmPlan) {
 		turn.row("")
 		return
 	}
 
 	turn.row("")
 	turn.row(style(turn.ansi, colorDim+colorBold, "steps"))
-	for _, line := range bandsPlanStepLines(turn.ansi, cfg, plans, turn.contentWidth("  ")) {
+	for _, line := range bandsPlanStepLines(turn.ansi, options, plans, turn.contentWidth("  ")) {
 		turn.row("  " + line)
 	}
 	turn.row("")
 }
 
-func (turn *bandsTurn) beginStep(cfg configpkg.Config, index int, total int, plan core.CommandPlan) *stepBox {
+func (turn *bandsTurn) beginStep(options ViewOptions, index int, total int, plan core.CommandPlan) *stepBox {
 	if turn == nil || turn.closed {
 		return nil
 	}
@@ -154,7 +152,7 @@ func (turn *bandsTurn) beginStep(cfg configpkg.Config, index int, total int, pla
 	if plan.Interactive {
 		box.KeyValue("interactive", fallbackValue(plan.InteractiveReason, "yes"), colorYellow, colorWhite)
 	}
-	if cfg.Verbose {
+	if options.Verbose {
 		box.KeyValue("risk", plainRiskLabel(plan.Risk), colorYellow, colorWhite)
 	}
 	return box
@@ -215,7 +213,7 @@ func (turn *bandsTurn) contentWidth(indent string) int {
 	return width
 }
 
-func bandsPlanStepLines(ansi bool, cfg configpkg.Config, plans []core.CommandPlan, width int) []string {
+func bandsPlanStepLines(ansi bool, options ViewOptions, plans []core.CommandPlan, width int) []string {
 	lines := make([]string, 0, len(plans)*4)
 	for index, plan := range plans {
 		prefixPlain := fmt.Sprintf("%d. ", index+1)
@@ -232,7 +230,7 @@ func bandsPlanStepLines(ansi bool, cfg configpkg.Config, plans []core.CommandPla
 			lines = append(lines, strings.Repeat(" ", visibleWidth(prefixPlain))+line)
 		}
 		lines = append(lines, renderCommandBox(ansi, plan.Command, width)...)
-		if cfg.Verbose {
+		if options.Verbose {
 			lines = append(lines,
 				fmt.Sprintf("%s %s", metaLabel(ansi, "risk"), riskBadge(ansi, plan.Risk)),
 				fmt.Sprintf("%s %s", metaLabel(ansi, "safety"), classificationBadge(ansi, plan.Classification)),

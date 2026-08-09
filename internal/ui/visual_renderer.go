@@ -23,12 +23,13 @@ type Renderer struct {
 
 // Turn presents the semantic parts of one Shellia response.
 type Turn struct {
-	impl turnImpl
+	impl    turnImpl
+	options ViewOptions
 }
 
 type rendererImpl interface {
 	userTurn(core.InteractiveMode, string)
-	beginShelliaTurn(configpkg.Config, core.ContextInfo) turnImpl
+	beginShelliaTurn(ViewOptions, core.ContextInfo) turnImpl
 }
 
 type userTurnQuestionOwner interface {
@@ -44,8 +45,8 @@ type thinkingPrefixProvider interface {
 }
 
 type turnImpl interface {
-	plan(configpkg.Config, string, []core.CommandPlan, bool)
-	beginStep(configpkg.Config, int, int, core.CommandPlan) *stepBox
+	plan(ViewOptions, string, []core.CommandPlan, bool)
+	beginStep(ViewOptions, int, int, core.CommandPlan) *stepBox
 	final(string)
 	suspend()
 	resume()
@@ -101,27 +102,27 @@ func (renderer *Renderer) interactivePromptPrefix(ui bool, mode core.Interactive
 }
 
 // BeginShelliaTurn opens one Shellia response turn.
-func (renderer *Renderer) BeginShelliaTurn(cfg configpkg.Config, ctxInfo core.ContextInfo) *Turn {
+func (renderer *Renderer) BeginShelliaTurn(options ViewOptions, ctxInfo core.ContextInfo) *Turn {
 	if renderer == nil || renderer.impl == nil {
-		return &Turn{}
+		return &Turn{options: options}
 	}
-	return &Turn{impl: renderer.impl.beginShelliaTurn(cfg, ctxInfo)}
+	return &Turn{impl: renderer.impl.beginShelliaTurn(options, ctxInfo), options: options}
 }
 
 // Plan presents one planning decision.
-func (turn *Turn) Plan(cfg configpkg.Config, summary string, plans []core.CommandPlan, discovery bool) {
+func (turn *Turn) Plan(summary string, plans []core.CommandPlan, discovery bool) {
 	if turn == nil || turn.impl == nil {
 		return
 	}
-	turn.impl.plan(cfg, summary, plans, discovery)
+	turn.impl.plan(turn.options, summary, plans, discovery)
 }
 
 // BeginStep opens one command execution surface.
-func (turn *Turn) BeginStep(cfg configpkg.Config, index int, total int, plan core.CommandPlan) *StepBox {
+func (turn *Turn) BeginStep(index int, total int, plan core.CommandPlan) *StepBox {
 	if turn == nil || turn.impl == nil {
 		return nil
 	}
-	return turn.impl.beginStep(cfg, index, total, plan)
+	return turn.impl.beginStep(turn.options, index, total, plan)
 }
 
 // Final presents the terminal answer for this turn.

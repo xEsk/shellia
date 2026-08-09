@@ -27,9 +27,9 @@ func TestPrefixedWriterStreamsLinesAndFlushesPartial(t *testing.T) {
 	var output bytes.Buffer
 	cfg := configpkg.DefaultConfig()
 	cfg.VisualStyle = configpkg.VisualStyleCards
-	turn := uipkg.NewRenderer(&output, uipkg.Presentation{Style: cfg.VisualStyle}).BeginShelliaTurn(cfg, loopTestContext(t))
+	turn := uipkg.NewRenderer(&output, uipkg.Presentation{Style: cfg.VisualStyle}).BeginShelliaTurn(executorViewOptions(cfg), loopTestContext(t))
 	defer turn.Close()
-	box := turn.BeginStep(cfg, 1, 1, commandPlan{Command: "printf stream", Purpose: "stream output"})
+	box := turn.BeginStep(1, 1, commandPlan{Command: "printf stream", Purpose: "stream output"})
 	writer := &prefixedWriter{box: box}
 
 	if _, err := writer.Write([]byte("one\ntwo")); err != nil {
@@ -158,7 +158,7 @@ func TestExecuteCommandsUsesActiveTurn(t *testing.T) {
 	cfg.ShowCommandPopup = true
 	ctxInfo := loopTestContext(t)
 	renderer := uipkg.NewRenderer(stdout, uipkg.Presentation{Style: cfg.VisualStyle, ANSI: false})
-	turn := renderer.BeginShelliaTurn(cfg, ctxInfo)
+	turn := renderer.BeginShelliaTurn(executorViewOptions(cfg), ctxInfo)
 	defer turn.Close()
 	plan := commandPlan{
 		Command:        "printf '419Gi available\\n'",
@@ -173,7 +173,7 @@ func TestExecuteCommandsUsesActiveTurn(t *testing.T) {
 		Stdout: stdout,
 		Stderr: stdout,
 		Turn:   turn,
-	}, false, cfg, &ctxInfo, []commandPlan{plan}, nil)
+	}, false, executorOptions(cfg), &ctxInfo, []commandPlan{plan}, nil)
 	if err != nil {
 		t.Fatalf("executeCommands() error = %v", err)
 	}
@@ -210,13 +210,13 @@ func TestExecuteManualCommandUsesActiveTurn(t *testing.T) {
 	cfg.VisualStyle = configpkg.VisualStyleCards
 	cfg.ShowSystemOutput = false
 	ctxInfo := loopTestContext(t)
-	turn := uipkg.NewRenderer(stdout, uipkg.Presentation{Style: cfg.VisualStyle}).BeginShelliaTurn(cfg, ctxInfo)
+	turn := uipkg.NewRenderer(stdout, uipkg.Presentation{Style: cfg.VisualStyle}).BeginShelliaTurn(executorViewOptions(cfg), ctxInfo)
 	_, err = executeManualCommand(t.Context(), RuntimeDeps{
 		Stdin:  stdin,
 		Stdout: stdout,
 		Stderr: stdout,
 		Turn:   turn,
-	}, false, cfg, &ctxInfo, "printf manual", manualRenderInline)
+	}, false, executorOptions(cfg), &ctxInfo, "printf manual", manualRenderInline)
 	if err != nil {
 		t.Fatalf("executeManualCommand() error = %v", err)
 	}
@@ -277,8 +277,8 @@ func TestExecuteInteractiveCommandSuspendsCardsAroundRawPTY(t *testing.T) {
 			cfg := configpkg.DefaultConfig()
 			cfg.VisualStyle = configpkg.VisualStyleCards
 			ctxInfo := loopTestContext(t)
-			turn := uipkg.NewRenderer(stdout, uipkg.Presentation{Style: cfg.VisualStyle}).BeginShelliaTurn(cfg, ctxInfo)
-			box := turn.BeginStep(cfg, 1, 1, commandPlan{Command: tt.command, Purpose: "raw PTY handoff", Interactive: true})
+			turn := uipkg.NewRenderer(stdout, uipkg.Presentation{Style: cfg.VisualStyle}).BeginShelliaTurn(executorViewOptions(cfg), ctxInfo)
+			box := turn.BeginStep(1, 1, commandPlan{Command: tt.command, Purpose: "raw PTY handoff", Interactive: true})
 			ctx, cancel := tt.context()
 			defer cancel()
 
@@ -289,7 +289,7 @@ func TestExecuteInteractiveCommandSuspendsCardsAroundRawPTY(t *testing.T) {
 					Stderr: stdout,
 					Turn:   turn,
 				},
-				Config:      cfg,
+				Options:     executorOptions(cfg),
 				ContextInfo: ctxInfo,
 				Box:         box,
 				Command:     tt.command,
@@ -529,7 +529,7 @@ func TestExecuteOneCommandRespectsTimeout(t *testing.T) {
 	cfg.CaptureStderrBytes = 1024
 
 	result, err := executeOneCommand(t.Context(), commandRunRequest{
-		Config: cfg,
+		Options: executorOptions(cfg),
 		ContextInfo: contextInfo{
 			CWD:   t.TempDir(),
 			Shell: "/bin/sh",
@@ -563,7 +563,7 @@ func TestExecuteOneCommandTimeoutStopsDescendants(t *testing.T) {
 	command := fmt.Sprintf("(sleep 0.2; printf survived > %q) & wait", markerPath)
 
 	result, err := executeOneCommand(t.Context(), commandRunRequest{
-		Config: cfg,
+		Options: executorOptions(cfg),
 		ContextInfo: contextInfo{
 			CWD:   tempDir,
 			Shell: "/bin/sh",
@@ -692,10 +692,10 @@ func TestExecuteCommandsContinuesOnlyIndependentStepsAfterFailure(t *testing.T) 
 	turnID := logger.StartTurn(nil)
 
 	var batch core.CommandBatchResult
-	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
+	captureMainLoopIO(t, "", func(deps RuntimeDeps) {
 		deps.Trace = logger
 		var err error
-		batch, err = executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
+		batch, err = executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, executorOptions(cfg), &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -747,10 +747,10 @@ func TestExecuteCommandsSkipsDuplicateSuccessfulCommandInBatch(t *testing.T) {
 	turnID := logger.StartTurn(nil)
 
 	var batch core.CommandBatchResult
-	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
+	captureMainLoopIO(t, "", func(deps RuntimeDeps) {
 		deps.Trace = logger
 		var err error
-		batch, err = executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
+		batch, err = executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, executorOptions(cfg), &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -798,8 +798,8 @@ func TestExecuteCommandsDoesNotAutoRunCommandSubstitutionWithYesSafe(t *testing.
 
 	var batch core.CommandBatchResult
 	var runErr error
-	captureMainLoopIO(t, "n\n", nil, func(deps RuntimeDeps) {
-		batch, runErr = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, nil)
+	captureMainLoopIO(t, "n\n", func(deps RuntimeDeps) {
+		batch, runErr = executeCommands(t.Context(), deps, false, executorOptions(cfg), &ctxInfo, plans, nil)
 	})
 
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
@@ -829,10 +829,10 @@ func TestExecuteCommandsConfirmsTypedRiskyRepeat(t *testing.T) {
 	turnID := logger.StartTurn(nil)
 
 	var batch core.CommandBatchResult
-	captureMainLoopIO(t, "y\ny\n", nil, func(deps RuntimeDeps) {
+	captureMainLoopIO(t, "y\ny\n", func(deps RuntimeDeps) {
 		deps.Trace = logger
 		var err error
-		batch, err = executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
+		batch, err = executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, executorOptions(cfg), &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -862,9 +862,9 @@ func TestExecuteCommandsAllowsEditedDuplicateWithReason(t *testing.T) {
 	prior := []commandExecution{{Command: "printf prior", ExitCode: 0}}
 
 	var batch core.CommandBatchResult
-	captureMainLoopIO(t, "e\nprintf prior\ny\n", nil, func(deps RuntimeDeps) {
+	captureMainLoopIO(t, "e\nprintf prior\ny\n", func(deps RuntimeDeps) {
 		var err error
-		batch, err = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, prior)
+		batch, err = executeCommands(t.Context(), deps, false, executorOptions(cfg), &ctxInfo, plans, prior)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -890,8 +890,8 @@ func TestExecuteCommandsReconfirmsRiskyEditedCommand(t *testing.T) {
 
 	var batch core.CommandBatchResult
 	var runErr error
-	captureMainLoopIO(t, "e\nrm "+marker+"\n", nil, func(deps RuntimeDeps) {
-		batch, runErr = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, nil)
+	captureMainLoopIO(t, "e\nrm "+marker+"\n", func(deps RuntimeDeps) {
+		batch, runErr = executeCommands(t.Context(), deps, false, executorOptions(cfg), &ctxInfo, plans, nil)
 	})
 
 	if !errors.Is(runErr, core.ErrAborted) {
@@ -917,9 +917,9 @@ func TestExecuteCommandsDoesNotSuppressPreviouslyFailedEffectiveCommand(t *testi
 	priorExecutions := []commandExecution{{Command: " false\t", Purpose: "Earlier failure", ExitCode: 1}}
 
 	var batch core.CommandBatchResult
-	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
+	captureMainLoopIO(t, "", func(deps RuntimeDeps) {
 		var err error
-		batch, err = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, priorExecutions)
+		batch, err = executeCommands(t.Context(), deps, false, executorOptions(cfg), &ctxInfo, plans, priorExecutions)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -950,9 +950,9 @@ func TestExecuteCommandsStopsBatchWhenContinueOnErrorIsFalse(t *testing.T) {
 	}
 
 	var batch core.CommandBatchResult
-	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
+	captureMainLoopIO(t, "", func(deps RuntimeDeps) {
 		var err error
-		batch, err = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, nil)
+		batch, err = executeCommands(t.Context(), deps, false, executorOptions(cfg), &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -990,9 +990,9 @@ func TestExecuteCommandsTracksTimeoutWithoutOrdinaryFailure(t *testing.T) {
 	}
 
 	var batch core.CommandBatchResult
-	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
+	captureMainLoopIO(t, "", func(deps RuntimeDeps) {
 		var err error
-		batch, err = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, nil)
+		batch, err = executeCommands(t.Context(), deps, false, executorOptions(cfg), &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -1038,8 +1038,8 @@ func TestExecuteCommandsStopsImmediatelyOnCancellation(t *testing.T) {
 
 	var batch core.CommandBatchResult
 	var runErr error
-	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
-		batch, runErr = executeCommands(ctx, deps, false, cfg, &ctxInfo, plans, nil)
+	captureMainLoopIO(t, "", func(deps RuntimeDeps) {
+		batch, runErr = executeCommands(ctx, deps, false, executorOptions(cfg), &ctxInfo, plans, nil)
 	})
 
 	if !errors.Is(runErr, context.Canceled) {
@@ -1065,7 +1065,7 @@ func TestExecuteCommandsTraceRecordsCapturedOutput(t *testing.T) {
 	logger := openLoopTrace(t)
 	turnID := logger.StartTurn(nil)
 
-	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
+	captureMainLoopIO(t, "", func(deps RuntimeDeps) {
 		deps.Trace = logger
 		plans := []commandPlan{{
 			Command:        "printf abcdef",
@@ -1074,7 +1074,7 @@ func TestExecuteCommandsTraceRecordsCapturedOutput(t *testing.T) {
 			Classification: classificationSafe,
 			LocalSafe:      true,
 		}}
-		batch, err := executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
+		batch, err := executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, executorOptions(cfg), &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -1116,7 +1116,7 @@ func TestExecuteCommandsTraceRecordsCommandErrors(t *testing.T) {
 	logger := openLoopTrace(t)
 	turnID := logger.StartTurn(nil)
 
-	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
+	captureMainLoopIO(t, "", func(deps RuntimeDeps) {
 		deps.Trace = logger
 		plans := []commandPlan{{
 			Command:        "exit 7",
@@ -1125,7 +1125,7 @@ func TestExecuteCommandsTraceRecordsCommandErrors(t *testing.T) {
 			Classification: classificationSafe,
 			LocalSafe:      true,
 		}}
-		batch, err := executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
+		batch, err := executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, executorOptions(cfg), &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -1159,7 +1159,7 @@ func TestExecuteCommandsTraceRecordsEditedCommand(t *testing.T) {
 	logger := openLoopTrace(t)
 	turnID := logger.StartTurn(nil)
 
-	captureMainLoopIO(t, "e\nprintf edited\ny\n", nil, func(deps RuntimeDeps) {
+	captureMainLoopIO(t, "e\nprintf edited\ny\n", func(deps RuntimeDeps) {
 		deps.Trace = logger
 		plans := []commandPlan{{
 			Command:        "printf original",
@@ -1168,7 +1168,7 @@ func TestExecuteCommandsTraceRecordsEditedCommand(t *testing.T) {
 			Classification: classificationSafe,
 			LocalSafe:      true,
 		}}
-		batch, err := executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
+		batch, err := executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, executorOptions(cfg), &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -1216,9 +1216,9 @@ func TestExecuteManualCommandTraceRecordsCommand(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 	logger := openLoopTrace(t)
 
-	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
+	captureMainLoopIO(t, "", func(deps RuntimeDeps) {
 		deps.Trace = logger
-		execution, err := executeManualCommand(t.Context(), deps, false, cfg, &ctxInfo, "printf manual", manualRenderInline)
+		execution, err := executeManualCommand(t.Context(), deps, false, executorOptions(cfg), &ctxInfo, "printf manual", manualRenderInline)
 		if err != nil {
 			t.Fatalf("executeManualCommand() error = %v", err)
 		}

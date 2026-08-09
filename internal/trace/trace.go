@@ -17,6 +17,24 @@ type traceTurnContextKey struct{}
 
 var version = "dev"
 
+// Options contains trace controls and the non-secret session metadata emitted in traces.
+type Options struct {
+	TraceEnabled              bool
+	TraceDir                  string
+	ModelName                 string
+	Model                     string
+	BaseURL                   string
+	Interactive               bool
+	PlanOnly                  bool
+	YesSafe                   bool
+	AskConfirmPlan            bool
+	PlanningMaxRounds         int
+	IncludeSessionMemory      bool
+	IncludeRecentObservations bool
+	CaptureStdoutBytes        int
+	CaptureStderrBytes        int
+}
+
 // traceLogger writes one JSONL diagnostic stream for a Shellia session.
 type traceLogger struct {
 	mu        sync.Mutex
@@ -54,12 +72,12 @@ type traceEvent struct {
 }
 
 // openSessionTrace creates the JSONL trace file when tracing is enabled.
-func openSessionTrace(cfg config, _ contextInfo) (*traceLogger, error) {
-	if !cfg.TraceEnabled {
+func openSessionTrace(options Options, _ contextInfo) (*traceLogger, error) {
+	if !options.TraceEnabled {
 		return nil, nil
 	}
 
-	dir, err := traceDir(cfg)
+	dir, err := traceDir(options)
 	if err != nil {
 		return nil, err
 	}
@@ -161,9 +179,9 @@ func (logger *traceLogger) Path() string {
 	return logger.path
 }
 
-func traceDir(cfg config) (string, error) {
-	if cfg.TraceDir != "" {
-		return cfg.TraceDir, nil
+func traceDir(options Options) (string, error) {
+	if options.TraceDir != "" {
+		return options.TraceDir, nil
 	}
 
 	if stateHome := os.Getenv("XDG_STATE_HOME"); stateHome != "" {
@@ -185,26 +203,26 @@ func newTraceSessionID() string {
 	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), os.Getpid())
 }
 
-func traceSessionStartData(cfg config, ctxInfo contextInfo) map[string]any {
+func traceSessionStartData(options Options, ctxInfo contextInfo) map[string]any {
 	appVersion := strings.TrimSpace(version)
 	if appVersion == "" {
 		appVersion = "dev"
 	}
 	return map[string]any{
 		"version":                     appVersion,
-		"model_name":                  cfg.ModelName,
-		"model":                       cfg.Model,
-		"base_url":                    cfg.BaseURL,
+		"model_name":                  options.ModelName,
+		"model":                       options.Model,
+		"base_url":                    options.BaseURL,
 		"cwd":                         ctxInfo.CWD,
-		"interactive":                 cfg.Interactive,
-		"plan_only":                   cfg.PlanOnly,
-		"yes_safe":                    cfg.YesSafe,
-		"ask_confirm_plan":            cfg.AskConfirmPlan,
-		"planning_max_rounds":         cfg.PlanningMaxRounds,
-		"include_session_memory":      cfg.IncludeSessionMemory,
-		"include_recent_observations": cfg.IncludeRecentObservations,
-		"capture_stdout_bytes":        cfg.CaptureStdoutBytes,
-		"capture_stderr_bytes":        cfg.CaptureStderrBytes,
+		"interactive":                 options.Interactive,
+		"plan_only":                   options.PlanOnly,
+		"yes_safe":                    options.YesSafe,
+		"ask_confirm_plan":            options.AskConfirmPlan,
+		"planning_max_rounds":         options.PlanningMaxRounds,
+		"include_session_memory":      options.IncludeSessionMemory,
+		"include_recent_observations": options.IncludeRecentObservations,
+		"capture_stdout_bytes":        options.CaptureStdoutBytes,
+		"capture_stderr_bytes":        options.CaptureStderrBytes,
 	}
 }
 

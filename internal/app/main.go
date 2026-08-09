@@ -46,7 +46,10 @@ type planningRoundRequest struct {
 	UI                    bool
 	TurnID                string
 	Round                 int
+	Client                llmpkg.ClientOptions
 	Prompt                llmPromptRequest
+	RawPrompt             bool
+	RawResponse           bool
 	AllowStructuralRepair bool
 }
 
@@ -92,7 +95,7 @@ func runApp(parentCtx context.Context, args []string, deps runtimeDeps) int {
 		if errors.Is(err, errHelp) {
 			return 0
 		}
-		uipkg.PrintErrorTo(deps.Stderr, uipkg.Enabled(config{}), err.Error())
+		uipkg.PrintErrorTo(deps.Stderr, uipkg.Enabled(viewOptions(config{})), err.Error())
 		return 2
 	}
 
@@ -124,21 +127,22 @@ func runApp(parentCtx context.Context, args []string, deps runtimeDeps) int {
 	}
 	defer stop()
 
-	ctxInfo, err := executorpkg.GetContext(appCtx, cfg)
+	ctxInfo, err := executorpkg.GetContext(appCtx, executorContextOptions(cfg))
 	if err != nil {
 		uipkg.PrintErrorTo(deps.Stderr, ui, err.Error())
 		return 1
 	}
 	deps.Renderer = uipkg.NewRenderer(deps.Stdout, presentation{Style: effective.Style, ANSI: effective.ANSI, User: promptPresentationUser(cfg, ctxInfo.User)})
 
-	trace, err := tracepkg.OpenSession(cfg, ctxInfo)
+	traceCfg := traceOptions(cfg)
+	trace, err := tracepkg.OpenSession(traceCfg, ctxInfo)
 	if err != nil {
 		uipkg.PrintErrorTo(deps.Stderr, ui, err.Error())
 		return 1
 	}
 	deps.Trace = trace
 	if trace != nil {
-		trace.Record("session_start", "", "", -1, tracepkg.SessionStartData(cfg, ctxInfo))
+		trace.Record("session_start", "", "", -1, tracepkg.SessionStartData(traceCfg, ctxInfo))
 		defer func() {
 			trace.Record("session_end", "", "", -1, nil)
 			_ = trace.Close()
@@ -529,7 +533,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 	state := sessionState{}
 	mode := interactiveModeAI
 
-	uipkg.PrintSessionBannerTo(deps.Stdout, ui, cfg)
+	uipkg.PrintSessionBannerTo(deps.Stdout, ui, viewOptions(cfg))
 
 	if strings.TrimSpace(cfg.Instruction) != "" {
 		turnCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
@@ -542,7 +546,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 		})
 		stop()
 		if err != nil && len(turn.Executions) > 0 {
-			sessionpkg.UpdateState(&state, cfg.Instruction, turn, cfg)
+			sessionpkg.UpdateState(&state, cfg.Instruction, turn, sessionMemoryOptions(cfg))
 		}
 		if errors.Is(err, core.ErrAborted) || errors.Is(err, context.Canceled) {
 			state.LastRetryInstruction = cfg.Instruction
@@ -553,7 +557,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			sessionpkg.RememberUnfinishedInstruction(&state, cfg.Instruction)
 		} else {
 			history = append(history, historyEntry{Instruction: cfg.Instruction, Result: turn.Result})
-			sessionpkg.UpdateState(&state, cfg.Instruction, turn, cfg)
+			sessionpkg.UpdateState(&state, cfg.Instruction, turn, sessionMemoryOptions(cfg))
 			if turn.Outcome == turnOutcomeCompleted {
 				state.LastRetryInstruction = ""
 			}
@@ -567,7 +571,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			return nil
 		}
 
-		input, err := deps.ReadInteractivePrompt(ui, reader, deps.Stdin, deps.Stdout, mode, cfg, deps.Renderer)
+		input, err := deps.ReadInteractivePrompt(ui, reader, deps.Stdin, deps.Stdout, mode, viewOptions(cfg), deps.Renderer)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				fmt.Fprintln(deps.Stdout)
@@ -597,7 +601,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			})
 			stop()
 			if err != nil && len(turn.Executions) > 0 {
-				sessionpkg.UpdateState(&state, plannedInstruction, turn, cfg)
+				sessionpkg.UpdateState(&state, plannedInstruction, turn, sessionMemoryOptions(cfg))
 			}
 
 			if errors.Is(err, core.ErrAborted) || errors.Is(err, context.Canceled) {
@@ -615,7 +619,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 				continue
 			}
 			history = append(history, historyEntry{Instruction: input, Result: turn.Result})
-			sessionpkg.UpdateState(&state, plannedInstruction, turn, cfg)
+			sessionpkg.UpdateState(&state, plannedInstruction, turn, sessionMemoryOptions(cfg))
 			if len(history) > maxHistoryEntries {
 				history = history[len(history)-maxHistoryEntries:]
 			}
@@ -636,7 +640,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 				uipkg.ClearScreenTo(deps.Stdout)
 				continue
 			case interactivepkg.CommandContext:
-				uipkg.PrintContextTo(deps.Stdout, ui, cfg, *ctxInfo)
+				uipkg.PrintContextTo(deps.Stdout, ui, viewOptions(cfg), *ctxInfo)
 				continue
 			case interactivepkg.CommandShell:
 				mode = interactiveModeShell
@@ -659,7 +663,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 					uipkg.PrintWarningTo(deps.Stderr, ui, err.Error())
 					continue
 				}
-				uipkg.PrintModelSwitchTo(deps.Stdout, ui, cfg)
+				uipkg.PrintModelSwitchTo(deps.Stdout, ui, viewOptions(cfg))
 				continue
 			case interactivepkg.CommandTheme:
 				themeName := interactivepkg.ParseThemeCommandName(trimmed)
@@ -722,7 +726,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 
 			turnCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 			state.LastObservationObjective = ""
-			execution, err := deps.ExecuteManualCommand(turnCtx, deps, ui, cfg, ctxInfo, command, renderMode)
+			execution, err := deps.ExecuteManualCommand(turnCtx, deps, ui, executorOptions(cfg), ctxInfo, command, renderMode)
 			stop()
 
 			if errors.Is(err, context.Canceled) {
@@ -734,7 +738,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 				continue
 			}
 
-			sessionpkg.UpdateStateFromExecution(&state, command, execution, cfg)
+			sessionpkg.UpdateStateFromExecution(&state, command, execution, sessionMemoryOptions(cfg))
 			continue
 		}
 
@@ -764,7 +768,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			state.PendingProposal = pendingProposal{}
 		}
 		if err != nil && len(turn.Executions) > 0 {
-			sessionpkg.UpdateState(&state, retryInstruction, turn, cfg)
+			sessionpkg.UpdateState(&state, retryInstruction, turn, sessionMemoryOptions(cfg))
 		}
 
 		if errors.Is(err, core.ErrAborted) || errors.Is(err, context.Canceled) {
@@ -788,7 +792,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			})
 		}
 		history = append(history, historyEntry{Instruction: instruction, Result: turn.Result})
-		sessionpkg.UpdateState(&state, retryInstruction, turn, cfg)
+		sessionpkg.UpdateState(&state, retryInstruction, turn, sessionMemoryOptions(cfg))
 		if acceptedProposal && turn.Outcome != turnOutcomeCompleted && turn.Outcome != turnOutcomeDeclined {
 			state.LastRetryInstruction = retryInstruction
 			sessionpkg.RememberUnfinishedInstruction(&state, retryInstruction)
@@ -967,13 +971,13 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 	}()
 
 	if cfg.Debug || cfg.Verbose {
-		uipkg.PrintContextTo(deps.Stdout, ui, cfg, *ctxInfo)
+		uipkg.PrintContextTo(deps.Stdout, ui, viewOptions(cfg), *ctxInfo)
 	}
 
 	if deps.Renderer == nil {
 		deps.Renderer = uipkg.NewRenderer(deps.Stdout, presentation{Style: configpkg.VisualStylePlain, ANSI: ui, User: promptPresentationUser(cfg, ctxInfo.User)})
 	}
-	turnUI := deps.Renderer.BeginShelliaTurn(cfg, *ctxInfo)
+	turnUI := deps.Renderer.BeginShelliaTurn(viewOptions(cfg), *ctxInfo)
 	defer turnUI.Close()
 	deps.Turn = turnUI
 	partialResult := func() turnResult {
@@ -987,7 +991,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			previousDecision = &workflow.lastDecision
 		}
 		promptRequest := llmPromptRequest{
-			Config:                    cfg,
+			Config:                    llmPromptOptions(cfg),
 			ContextInfo:               *ctxInfo,
 			Instruction:               workflow.objective,
 			History:                   history,
@@ -1010,7 +1014,10 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			UI:                    ui,
 			TurnID:                turnID,
 			Round:                 round,
+			Client:                llmClientOptions(cfg),
 			Prompt:                promptRequest,
+			RawPrompt:             cfg.RawPrompt,
+			RawResponse:           cfg.RawResponse,
 			AllowStructuralRepair: !workflow.structuralRepairUsed,
 		})
 		if err != nil {
@@ -1164,7 +1171,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			return stalled, nil
 		}
 
-		turnUI.Plan(cfg, summary, plans, false)
+		turnUI.Plan(summary, plans, false)
 		if !workflow.canExecute() {
 			deps.Trace.Record("shellia_decision", turnID, "planning", round, map[string]any{
 				"decision": "planned_without_execution",
@@ -1188,7 +1195,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 
 		attemptStart := len(workflow.attempts)
 		evidenceBefore := workflow.evidenceRevision
-		batch, err := deps.ExecuteCommands(ctx, deps, ui, cfg, ctxInfo, plans, workflow.executions)
+		batch, err := deps.ExecuteCommands(ctx, deps, ui, executorOptions(cfg), ctxInfo, plans, workflow.executions)
 		workflow.recordBatch(plans, batch)
 		traceWorkflowAttempts(deps, turnID, round, workflow.attempts[attemptStart:])
 		if workflow.evidenceRevision != evidenceBefore {
@@ -1274,17 +1281,18 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 
 // runPlanningRound asks the model for one workflow decision and repairs one malformed response.
 func runPlanningRound(ctx context.Context, request planningRoundRequest) (planningRoundResult, error) {
-	cfg := request.Prompt.Config
+	promptOptions := request.Prompt.Config
+	clientOptions := request.Client
 	deps := request.Deps
 	ui := request.UI
 
 	systemPrompt, userPrompt := llmpkg.BuildPrompts(request.Prompt)
-	if cfg.RawPrompt {
+	if request.RawPrompt {
 		uipkg.PrintRawPromptsTo(deps.Stdout, ui, "Raw LLM prompt", systemPrompt, userPrompt)
 	}
 
 	deps.Trace.Record("llm_prompt", request.TurnID, "planning", request.Round, map[string]any{
-		"model":         cfg.Model,
+		"model":         clientOptions.Model,
 		"system_prompt": systemPrompt,
 		"user_prompt":   userPrompt,
 	})
@@ -1292,7 +1300,7 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 		"evidence_revision": request.Prompt.EvidenceRevision,
 		"executions_count":  len(request.Prompt.Observations),
 		"skipped_count":     len(request.Prompt.Skipped),
-		"output_budget":     cfg.ObservationOutputChars,
+		"output_budget":     promptOptions.ObservationOutputChars,
 		"omitted": strings.Contains(userPrompt, "[older evidence omitted:") ||
 			strings.Contains(userPrompt, "[older attempts omitted:") ||
 			strings.Contains(userPrompt, "[omitted by configuration]"),
@@ -1303,7 +1311,7 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 		thinkingPrefix = deps.Turn.ThinkingPrefix()
 	}
 	thinking := uipkg.StartThinkingIndicator(ui, deps.Stdout, thinkingPrefix)
-	rawResponse, err := llmpkg.CallPlanningPrompt(ctx, deps.HTTPClient, cfg, systemPrompt, userPrompt)
+	rawResponse, err := llmpkg.CallPlanningPrompt(ctx, deps.HTTPClient, clientOptions, systemPrompt, userPrompt)
 	if thinking != nil {
 		thinking.Stop()
 	}
@@ -1317,7 +1325,7 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 		"raw_response": rawResponse,
 	})
 
-	if cfg.RawResponse {
+	if request.RawResponse {
 		uipkg.PrintSectionTo(deps.Stdout, ui, "Raw LLM response", uipkg.ColorBlue)
 		fmt.Fprintln(deps.Stdout, rawResponse)
 		fmt.Fprintln(deps.Stdout)
@@ -1336,11 +1344,11 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 		structuralRepairUsed = true
 		repairPrompt := userPrompt + "\n\nThe previous response was structurally invalid: " + err.Error() + "\nReturn exactly one valid JSON decision using the required schema."
 		deps.Trace.Record("llm_prompt", request.TurnID, "structural_repair", request.Round, map[string]any{
-			"model":         cfg.Model,
+			"model":         clientOptions.Model,
 			"system_prompt": systemPrompt,
 			"user_prompt":   repairPrompt,
 		})
-		repairedRaw, repairErr := llmpkg.CallPlanningPrompt(ctx, deps.HTTPClient, cfg, systemPrompt, repairPrompt)
+		repairedRaw, repairErr := llmpkg.CallPlanningPrompt(ctx, deps.HTTPClient, clientOptions, systemPrompt, repairPrompt)
 		if repairErr != nil {
 			return planningRoundResult{}, repairErr
 		}

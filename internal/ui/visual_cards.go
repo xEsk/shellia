@@ -8,7 +8,6 @@ import (
 
 	"github.com/xEsk/shellia/internal/core"
 
-	configpkg "github.com/xEsk/shellia/internal/config"
 	"golang.org/x/term"
 )
 
@@ -91,7 +90,7 @@ func (renderer *cardsRenderer) userTurn(mode core.InteractiveMode, text string) 
 	cardsWriteLine(renderer.target, cardsBorderLine(renderer.ansi, colorCyan, cardsUserBackground, true, "", width, false))
 }
 
-func (renderer *cardsRenderer) beginShelliaTurn(cfg configpkg.Config, ctxInfo core.ContextInfo) turnImpl {
+func (renderer *cardsRenderer) beginShelliaTurn(options ViewOptions, ctxInfo core.ContextInfo) turnImpl {
 	if renderer == nil {
 		return &cardsTurn{closed: true}
 	}
@@ -103,13 +102,13 @@ func (renderer *cardsRenderer) beginShelliaTurn(cfg configpkg.Config, ctxInfo co
 	}
 	turn.openCard(shelliaBrand(turn.ansi, false) + style(turn.ansi, colorDim, " · ") + shelliaVersionBadge(turn.ansi))
 	turn.writeRow("")
-	if cfg.IncludeCWD && strings.TrimSpace(ctxInfo.CWD) != "" {
+	if options.IncludeCWD && strings.TrimSpace(ctxInfo.CWD) != "" {
 		turn.writeRow("  " + style(turn.ansi, colorDim, ctxInfo.CWD))
 	}
 	return turn
 }
 
-func (turn *cardsTurn) plan(cfg configpkg.Config, summary string, plans []core.CommandPlan, discovery bool) {
+func (turn *cardsTurn) plan(options ViewOptions, summary string, plans []core.CommandPlan, discovery bool) {
 	if !turn.canWrite() {
 		return
 	}
@@ -124,7 +123,7 @@ func (turn *cardsTurn) plan(cfg configpkg.Config, summary string, plans []core.C
 	turn.writeRow("  " + style(turn.ansi, titleColor+colorBold, title))
 	turn.writeWrapped("    ", style(turn.ansi, colorDim, "    "), summary)
 
-	if len(plans) == 0 || (!cfg.Verbose && !cfg.PlanOnly && !cfg.AskConfirmPlan) {
+	if len(plans) == 0 || (!options.Verbose && !options.PlanOnly && !options.AskConfirmPlan) {
 		return
 	}
 	turn.writeRow("")
@@ -133,13 +132,13 @@ func (turn *cardsTurn) plan(cfg configpkg.Config, summary string, plans []core.C
 		purposePrefix := fmt.Sprintf("    %d. ", index+1)
 		turn.writeWrapped(purposePrefix, style(turn.ansi, colorDim, purposePrefix), plan.Purpose)
 		turn.writeWrapped("    run › ", style(turn.ansi, colorCyan+colorBold, "    run › "), plan.Command)
-		if cfg.Verbose {
+		if options.Verbose {
 			turn.writeWrapped("    ", style(turn.ansi, colorDim, "    "), fmt.Sprintf("risk %s", plainRiskLabel(plan.Risk)))
 		}
 	}
 }
 
-func (turn *cardsTurn) beginStep(cfg configpkg.Config, index int, total int, plan core.CommandPlan) *stepBox {
+func (turn *cardsTurn) beginStep(options ViewOptions, index int, total int, plan core.CommandPlan) *stepBox {
 	if !turn.canWrite() {
 		return nil
 	}
@@ -167,7 +166,7 @@ func (turn *cardsTurn) beginStep(cfg configpkg.Config, index int, total int, pla
 	if plan.Interactive {
 		box.KeyValue("interactive", fallbackValue(plan.InteractiveReason, "yes"), colorYellow, colorWhite)
 	}
-	if cfg.Verbose {
+	if options.Verbose {
 		box.KeyValue("risk", plainRiskLabel(plan.Risk), colorYellow, colorWhite)
 	}
 	return box

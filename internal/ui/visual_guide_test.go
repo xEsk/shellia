@@ -295,7 +295,7 @@ func TestGuideReusesOneSpacerBetweenHeaderThinkingAndPlan(t *testing.T) {
 	turn := NewRenderer(&output, Presentation{Style: configpkg.VisualStyleGuide}).
 		BeginShelliaTurn(testConfig(), core.ContextInfo{CWD: "/tmp"})
 	turn.ThinkingPrefix()
-	turn.Plan(testConfig(), "Comprovar l'espai disponible.", nil, false)
+	turn.Plan("Comprovar l'espai disponible.", nil, false)
 
 	plain := strings.ReplaceAll(stripANSISequences(output.String()), "\r", "")
 	between := textBetween(t, plain, "┃ /tmp\n", "┃ plan")
@@ -308,7 +308,7 @@ func TestGuideThinkingAfterExecutionHasOneSpacerRow(t *testing.T) {
 	var output bytes.Buffer
 	turn := NewRenderer(&output, Presentation{Style: configpkg.VisualStyleGuide}).
 		BeginShelliaTurn(testConfig(), core.ContextInfo{CWD: "/tmp"})
-	step := turn.BeginStep(testConfig(), 1, 1, testPlan())
+	step := turn.BeginStep(1, 1, testPlan())
 	step.OutputLine("done")
 	step.Close()
 	output.Reset()

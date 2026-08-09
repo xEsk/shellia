@@ -6,8 +6,6 @@ import (
 	"strings"
 
 	"github.com/xEsk/shellia/internal/core"
-
-	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 const (
@@ -83,18 +81,18 @@ func (renderer *guideRenderer) userTurn(mode core.InteractiveMode, text string) 
 	guideUserSurfaceWrite(renderer.target, renderer.ansi, prefix, "", surfaceWidth)
 }
 
-func (renderer *guideRenderer) beginShelliaTurn(cfg configpkg.Config, ctxInfo core.ContextInfo) turnImpl {
+func (renderer *guideRenderer) beginShelliaTurn(options ViewOptions, ctxInfo core.ContextInfo) turnImpl {
 	turn := &guideTurn{target: renderer.target, ansi: renderer.ansi}
 	fmt.Fprintln(turn.target)
 	turn.write(shelliaBrand(turn.ansi, false) + style(turn.ansi, colorDim, " · "+fallbackValue(strings.TrimSpace(version), "dev")))
-	if context := plainHeaderContextValue(cfg, ctxInfo); context != "" {
+	if context := plainHeaderContextValue(options, ctxInfo); context != "" {
 		turn.write(style(turn.ansi, colorDim, context))
 	}
 	turn.write("")
 	return turn
 }
 
-func (turn *guideTurn) plan(cfg configpkg.Config, summary string, plans []core.CommandPlan, discovery bool) {
+func (turn *guideTurn) plan(options ViewOptions, summary string, plans []core.CommandPlan, discovery bool) {
 	if turn == nil || turn.closed {
 		return
 	}
@@ -111,18 +109,18 @@ func (turn *guideTurn) plan(cfg configpkg.Config, summary string, plans []core.C
 		turn.write("  " + style(turn.ansi, colorWhite, line))
 	}
 
-	if len(plans) == 0 || (!cfg.Verbose && !cfg.PlanOnly && !cfg.AskConfirmPlan) {
+	if len(plans) == 0 || (!options.Verbose && !options.PlanOnly && !options.AskConfirmPlan) {
 		return
 	}
 
 	turn.write("")
 	turn.write(style(turn.ansi, colorDim+colorBold, "steps"))
-	for _, line := range guidePlanStepLines(turn.ansi, cfg, plans, turn.contentWidth("")) {
+	for _, line := range guidePlanStepLines(turn.ansi, options, plans, turn.contentWidth("")) {
 		turn.write(line)
 	}
 }
 
-func (turn *guideTurn) beginStep(cfg configpkg.Config, index int, total int, plan core.CommandPlan) *stepBox {
+func (turn *guideTurn) beginStep(options ViewOptions, index int, total int, plan core.CommandPlan) *stepBox {
 	if turn == nil || turn.closed {
 		return nil
 	}
@@ -147,7 +145,7 @@ func (turn *guideTurn) beginStep(cfg configpkg.Config, index int, total int, pla
 	if plan.Interactive {
 		box.KeyValue("interactive", fallbackValue(plan.InteractiveReason, "yes"), colorYellow, colorWhite)
 	}
-	if cfg.Verbose {
+	if options.Verbose {
 		box.KeyValue("risk", plainRiskLabel(plan.Risk), colorYellow, colorWhite)
 	}
 	return box
@@ -207,7 +205,7 @@ func (turn *guideTurn) contentWidth(indent string) int {
 	return width
 }
 
-func guidePlanStepLines(ansi bool, cfg configpkg.Config, plans []core.CommandPlan, width int) []string {
+func guidePlanStepLines(ansi bool, options ViewOptions, plans []core.CommandPlan, width int) []string {
 	lines := make([]string, 0, len(plans)*4)
 	for index, plan := range plans {
 		prefixPlain := fmt.Sprintf("%d. ", index+1)
@@ -224,7 +222,7 @@ func guidePlanStepLines(ansi bool, cfg configpkg.Config, plans []core.CommandPla
 			lines = append(lines, strings.Repeat(" ", visibleWidth(prefixPlain))+line)
 		}
 		lines = append(lines, renderCommandBox(ansi, plan.Command, width)...)
-		if cfg.Verbose {
+		if options.Verbose {
 			lines = append(lines,
 				fmt.Sprintf("%s %s", metaLabel(ansi, "risk"), riskBadge(ansi, plan.Risk)),
 				fmt.Sprintf("%s %s", metaLabel(ansi, "safety"), classificationBadge(ansi, plan.Classification)),

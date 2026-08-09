@@ -34,7 +34,7 @@ import (
 type commandRunRequest struct {
 	Deps         RuntimeDeps
 	UI           bool
-	Config       config
+	Options      Options
 	ContextInfo  contextInfo
 	Box          *uipkg.StepBox
 	Command      string
@@ -322,7 +322,7 @@ func (writer *limitedCaptureWriter) Stream() core.CapturedStream {
 }
 
 // getContext collects the local context available to the model and UI.
-func getContext(_ context.Context, cfg config) (contextInfo, error) {
+func getContext(_ context.Context, options ContextOptions) (contextInfo, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		return contextInfo{}, fmt.Errorf("cannot detect current directory: %w", err)
@@ -338,7 +338,7 @@ func getContext(_ context.Context, cfg config) (contextInfo, error) {
 		OS:    fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
 		Shell: shellPath,
 	}
-	if cfg.IncludeUser {
+	if options.IncludeUser {
 		currentUser, err := user.Current()
 		if err != nil {
 			return contextInfo{}, fmt.Errorf("cannot detect current user: %w", err)
@@ -351,11 +351,11 @@ func getContext(_ context.Context, cfg config) (contextInfo, error) {
 const skippedAfterFailureReason = "dependent on an earlier failed command"
 
 // executeCommands runs the sequential plan and returns its structured batch outcome.
-func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config, ctxInfo *contextInfo, plans []commandPlan, priorExecutions []commandExecution) (core.CommandBatchResult, error) {
+func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, options Options, ctxInfo *contextInfo, plans []commandPlan, priorExecutions []commandExecution) (core.CommandBatchResult, error) {
 	deps = deps.withDefaults()
 	if deps.Turn == nil {
 		renderer := uipkg.NewRenderer(deps.Stdout, uipkg.Presentation{Style: configpkg.VisualStylePlain, ANSI: ui})
-		deps.Turn = renderer.BeginShelliaTurn(cfg, *ctxInfo)
+		deps.Turn = renderer.BeginShelliaTurn(uipkg.ViewOptions{VisualStyle: configpkg.VisualStylePlain}, *ctxInfo)
 		defer deps.Turn.Close()
 	}
 	reader := bufio.NewReader(confirmationInput{Reader: deps.Stdin})
@@ -369,21 +369,21 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 
 	for index, plan := range plans {
 		if blocked && !plan.IndependentOnFailure {
-			batch.Skipped = append(batch.Skipped, skipCommand(deps, ui, cfg, nil, turnID, index, len(plans), plan, plan.Command, skippedAfterFailureReason))
+			batch.Skipped = append(batch.Skipped, skipCommand(deps, nil, turnID, index, len(plans), plan, plan.Command, skippedAfterFailureReason))
 			continue
 		}
 		if succeeded[strings.TrimSpace(plan.Command)] && !plan.RepeatReason.AllowsSuccessfulRepeat() {
-			batch.Skipped = append(batch.Skipped, skipCommand(deps, ui, cfg, nil, turnID, index, len(plans), plan, plan.Command, core.RepeatReasonRequired))
+			batch.Skipped = append(batch.Skipped, skipCommand(deps, nil, turnID, index, len(plans), plan, plan.Command, core.RepeatReasonRequired))
 			continue
 		}
 
-		box := deps.Turn.BeginStep(cfg, index+1, len(plans), plan)
+		box := deps.Turn.BeginStep(index+1, len(plans), plan)
 		effectiveCommand := plan.Command
 		interactive := plan.Interactive
 
-		if !cfg.YesSafe || !plan.LocalSafe || plan.Interactive {
+		if !options.YesSafe || !plan.LocalSafe || plan.Interactive {
 			for {
-				decision, editedCommand, err := uipkg.PromptConfirmation(box, reader, deps.Stdin, fmt.Sprintf("Run step %d/%d?", index+1, len(plans)), effectiveCommand, cfg.ConfirmationDefault)
+				decision, editedCommand, err := uipkg.PromptConfirmation(box, reader, deps.Stdin, fmt.Sprintf("Run step %d/%d?", index+1, len(plans)), effectiveCommand, options.ConfirmationDefault)
 				deps.Trace.Record("command_confirmation", turnID, "", -1, map[string]any{
 					"step":           index + 1,
 					"total_steps":    len(plans),
@@ -432,7 +432,7 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 			})
 		}
 		if succeeded[strings.TrimSpace(effectiveCommand)] && !plan.RepeatReason.AllowsSuccessfulRepeat() {
-			batch.Skipped = append(batch.Skipped, skipCommand(deps, ui, cfg, box, turnID, index, len(plans), plan, effectiveCommand, core.RepeatReasonRequired))
+			batch.Skipped = append(batch.Skipped, skipCommand(deps, box, turnID, index, len(plans), plan, effectiveCommand, core.RepeatReasonRequired))
 			continue
 		}
 
@@ -451,11 +451,11 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 		result, err := executeOneCommand(ctx, commandRunRequest{
 			Deps:        deps,
 			UI:          ui,
-			Config:      cfg,
+			Options:     options,
 			ContextInfo: *ctxInfo,
 			Box:         box,
 			Command:     effectiveCommand,
-			Timeout:     cfg.CommandTimeout,
+			Timeout:     options.CommandTimeout,
 			Interactive: interactive,
 		})
 		if errors.Is(ctx.Err(), context.Canceled) {
@@ -529,7 +529,7 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, cfg config,
 			} else {
 				batch.HadOrdinaryFailure = true
 			}
-			if !cfg.ContinueOnError {
+			if !options.ContinueOnError {
 				return batch, nil
 			}
 			uipkg.PrintWarningTo(deps.Stderr, ui, err.Error())
@@ -559,14 +559,14 @@ func successfulCommandIdentities(executions []commandExecution) map[string]bool 
 }
 
 // skipCommand renders and traces one command that was deliberately not executed.
-func skipCommand(deps RuntimeDeps, ui bool, cfg config, box *uipkg.StepBox, turnID string, index int, total int, plan commandPlan, effectiveCommand string, reason string) core.SkippedCommand {
+func skipCommand(deps RuntimeDeps, box *uipkg.StepBox, turnID string, index int, total int, plan commandPlan, effectiveCommand string, reason string) core.SkippedCommand {
 	skipped := core.SkippedCommand{
 		Command: effectiveCommand,
 		Purpose: plan.Purpose,
 		Reason:  reason,
 	}
 	if box == nil {
-		box = deps.Turn.BeginStep(cfg, index+1, total, plan)
+		box = deps.Turn.BeginStep(index+1, total, plan)
 	}
 	box.Section("skipped", uipkg.ColorDim)
 	box.Text(reason, uipkg.ColorDim)
@@ -582,14 +582,14 @@ func skipCommand(deps RuntimeDeps, ui bool, cfg config, box *uipkg.StepBox, turn
 }
 
 // executeManualCommand runs a direct shell command inside the current Shellia session.
-func executeManualCommand(ctx context.Context, deps RuntimeDeps, ui bool, cfg config, ctxInfo *contextInfo, command string, renderMode manualRenderMode) (commandExecution, error) {
+func executeManualCommand(ctx context.Context, deps RuntimeDeps, ui bool, options Options, ctxInfo *contextInfo, command string, renderMode manualRenderMode) (commandExecution, error) {
 	deps = deps.withDefaults()
 	turnID := tracepkg.TurnID(ctx)
 	var box *uipkg.StepBox
 	switch renderMode {
 	case manualRenderInline:
 		if deps.Turn != nil {
-			box = deps.Turn.BeginStep(cfg, 1, 1, commandPlan{
+			box = deps.Turn.BeginStep(1, 1, commandPlan{
 				Command: command,
 				Purpose: "Manual shell command",
 			})
@@ -611,11 +611,11 @@ func executeManualCommand(ctx context.Context, deps RuntimeDeps, ui bool, cfg co
 	result, err := executeOneCommand(ctx, commandRunRequest{
 		Deps:         deps,
 		UI:           ui,
-		Config:       cfg,
+		Options:      options,
 		ContextInfo:  *ctxInfo,
 		Box:          box,
 		Command:      command,
-		Timeout:      cfg.CommandTimeout,
+		Timeout:      options.CommandTimeout,
 		DirectStream: renderMode == manualRenderDirect,
 		Interactive:  renderMode == manualRenderInteractive || renderMode == manualRenderShellInteractive,
 	})
@@ -671,7 +671,7 @@ func showCompletedMarker(box *uipkg.StepBox, hadOutput bool) {
 // executeOneCommand launches a command via the current shell with real-time output streaming.
 func executeOneCommand(ctx context.Context, request commandRunRequest) (commandRunResult, error) {
 	deps := request.Deps.withDefaults()
-	cfg := request.Config
+	options := request.Options
 	ctxInfo := request.ContextInfo
 	box := request.Box
 	command := request.Command
@@ -701,7 +701,7 @@ func executeOneCommand(ctx context.Context, request commandRunRequest) (commandR
 			deps.Turn.Suspend()
 			defer deps.Turn.Resume()
 		}
-		output, exitCode, hadOutput, err := executeInteractiveCommand(cmdCtx, deps, cfg, ctxInfo, shellPath, command)
+		output, exitCode, hadOutput, err := executeInteractiveCommand(cmdCtx, deps, options, ctxInfo, shellPath, command)
 		return commandRunResult{
 			Output:    output,
 			ExitCode:  exitCode,
@@ -723,7 +723,7 @@ func executeNonInteractiveCommand(
 ) (commandRunResult, error) {
 	deps := request.Deps
 	ui := request.UI
-	cfg := request.Config
+	options := request.Options
 	ctxInfo := request.ContextInfo
 	box := request.Box
 	command := request.Command
@@ -733,8 +733,8 @@ func executeNonInteractiveCommand(
 	cmd.Dir = ctxInfo.CWD
 	cmd.Stdin = nil
 
-	stdoutCapture := &limitedCaptureWriter{limit: cfg.CaptureStdoutBytes}
-	stderrCapture := &limitedCaptureWriter{limit: cfg.CaptureStderrBytes}
+	stdoutCapture := &limitedCaptureWriter{limit: options.CaptureStdoutBytes}
+	stderrCapture := &limitedCaptureWriter{limit: options.CaptureStderrBytes}
 	detector := newInteractivePromptDetector(command, cancel)
 
 	var stdoutStream io.Writer
@@ -746,8 +746,8 @@ func executeNonInteractiveCommand(
 		stdoutStream = &directShellWriter{ui: ui, target: deps.Stdout, lineStart: true}
 		stderrStream = &directShellWriter{ui: ui, target: deps.Stderr, lineStart: true}
 	} else {
-		stdoutWriter = &prefixedWriter{box: box, hidden: !cfg.ShowSystemOutput}
-		stderrWriter = &prefixedWriter{box: box, hidden: !cfg.ShowSystemOutput}
+		stdoutWriter = &prefixedWriter{box: box, hidden: !options.ShowSystemOutput}
+		stderrWriter = &prefixedWriter{box: box, hidden: !options.ShowSystemOutput}
 		stdoutStream = stdoutWriter
 		stderrStream = stderrWriter
 	}
@@ -864,7 +864,7 @@ func prefixedWritersHadOutput(writers ...*prefixedWriter) bool {
 
 // executeInteractiveCommand temporarily hands over the terminal to a process that
 // needs a real interactive session and captures part of its output.
-func executeInteractiveCommand(ctx context.Context, deps RuntimeDeps, cfg config, ctxInfo contextInfo, shellPath string, command string) (output commandExecution, exitCode int, hadOutput bool, err error) {
+func executeInteractiveCommand(ctx context.Context, deps RuntimeDeps, options Options, ctxInfo contextInfo, shellPath string, command string) (output commandExecution, exitCode int, hadOutput bool, err error) {
 	deps = deps.withDefaults()
 	cmd := exec.CommandContext(ctx, shellPath, "-c", command)
 	cmd.Dir = ctxInfo.CWD
@@ -877,7 +877,7 @@ func executeInteractiveCommand(ctx context.Context, deps RuntimeDeps, cfg config
 		_ = ptmx.Close()
 	}()
 
-	stdoutCapture := &limitedCaptureWriter{limit: cfg.CaptureStdoutBytes}
+	stdoutCapture := &limitedCaptureWriter{limit: options.CaptureStdoutBytes}
 	stream := io.MultiWriter(deps.Stdout, stdoutCapture)
 
 	fd := int(deps.Stdin.Fd())

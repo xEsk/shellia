@@ -16,8 +16,8 @@ type (
 )
 
 // DoRequest performs one non-streaming LLM request.
-func DoRequest(ctx context.Context, client *http.Client, cfg config, req ChatCompletionRequest) (string, error) {
-	return doLLMRequest(ctx, client, cfg, req)
+func DoRequest(ctx context.Context, client *http.Client, options ClientOptions, req ChatCompletionRequest) (string, error) {
+	return doLLMRequest(ctx, client, options, req)
 }
 
 // BuildPrompts builds the system and user prompts for one planning request.
@@ -26,8 +26,8 @@ func BuildPrompts(request PromptRequest) (string, string) {
 }
 
 // CallPlanningPrompt sends one planning prompt to the configured model.
-func CallPlanningPrompt(ctx context.Context, client *http.Client, cfg config, systemPrompt string, userPrompt string) (string, error) {
-	return callPlanningPrompt(ctx, client, cfg, systemPrompt, userPrompt)
+func CallPlanningPrompt(ctx context.Context, client *http.Client, options ClientOptions, systemPrompt string, userPrompt string) (string, error) {
+	return callPlanningPrompt(ctx, client, options, systemPrompt, userPrompt)
 }
 
 // ParseResponse parses one raw model response.

@@ -11,10 +11,17 @@ import (
 	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
-func testConfig() configpkg.Config {
-	cfg := configpkg.DefaultConfig()
-	cfg.Model = "gpt-5.4-mini"
-	return cfg
+func testConfig() ViewOptions {
+	return ViewOptions{
+		Model:            "gpt-5.4-mini",
+		AskConfirmPlan:   true,
+		ShowCommandPopup: true,
+		VisualStyle:      configpkg.VisualStyleGuide,
+		IncludeCWD:       true,
+		IncludeUser:      true,
+		IncludeOS:        true,
+		IncludeShell:     true,
+	}
 }
 
 func testPlan() core.CommandPlan {
@@ -36,7 +43,7 @@ func (renderer *recordingRenderer) userTurn(core.InteractiveMode, string) {
 	renderer.userTurns++
 }
 
-func (renderer *recordingRenderer) beginShelliaTurn(configpkg.Config, core.ContextInfo) turnImpl {
+func (renderer *recordingRenderer) beginShelliaTurn(ViewOptions, core.ContextInfo) turnImpl {
 	return nil
 }
 
@@ -46,8 +53,8 @@ func renderConversationFixture(t *testing.T, factory testRendererFactory, ansi b
 	r := &Renderer{impl: factory(&out, ansi), ansi: ansi}
 	r.UserTurn(core.InteractiveModeAI, "quant d'espai queda al disc?")
 	turn := r.BeginShelliaTurn(testConfig(), core.ContextInfo{CWD: "/Users/Xesc/Documents/Scripts"})
-	turn.Plan(testConfig(), "Cal consultar l'espai disponible.", []core.CommandPlan{testPlan()}, false)
-	step := turn.BeginStep(testConfig(), 1, 1, testPlan())
+	turn.Plan("Cal consultar l'espai disponible.", []core.CommandPlan{testPlan()}, false)
+	step := turn.BeginStep(1, 1, testPlan())
 	step.OutputLabel()
 	step.OutputLine("419Gi available")
 	step.Close()
@@ -131,14 +138,28 @@ func TestRendererFacadesAreNilSafe(t *testing.T) {
 	var renderer *Renderer
 	renderer.UserTurn(core.InteractiveModeAI, "ignored")
 	turn := renderer.BeginShelliaTurn(testConfig(), core.ContextInfo{})
-	turn.Plan(testConfig(), "ignored", nil, false)
-	if step := turn.BeginStep(testConfig(), 1, 1, testPlan()); step != nil {
+	turn.Plan("ignored", nil, false)
+	if step := turn.BeginStep(1, 1, testPlan()); step != nil {
 		t.Fatalf("nil renderer BeginStep() = %#v, want nil", step)
 	}
 	turn.Final("ignored")
 	turn.Suspend()
 	turn.Resume()
 	turn.Close()
+}
+
+// TestTurnUsesOwnedViewOptions keeps turn rendering independent from a full runtime config.
+func TestTurnUsesOwnedViewOptions(t *testing.T) {
+	var out bytes.Buffer
+	options := ViewOptions{Verbose: true}
+	turn := NewRenderer(&out, Presentation{Style: configpkg.VisualStylePlain}).BeginShelliaTurn(options, core.ContextInfo{})
+	turn.Plan("Inspect disk space.", []core.CommandPlan{testPlan()}, false)
+	step := turn.BeginStep(1, 1, testPlan())
+	step.Close()
+
+	if got := out.String(); !strings.Contains(got, "risk") {
+		t.Fatalf("turn output = %q, want verbose risk details from its owned options", got)
+	}
 }
 
 func TestSubmittedShellPromptBypassesConversationRenderer(t *testing.T) {

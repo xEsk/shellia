@@ -77,7 +77,7 @@ func TestBandsShelliaSurfacesUseSameVerticalPaddingAsUser(t *testing.T) {
 	assertBandsShelliaSegmentHasVerticalPadding(t, output.String(), "Shellia · dev", "/tmp")
 
 	start := output.Len()
-	turn.Plan(testConfig(), "Cal consultar l'espai disponible.", nil, false)
+	turn.Plan("Cal consultar l'espai disponible.", nil, false)
 	assertBandsShelliaContinuationHasBottomPadding(t, output.String()[start:], "plan", "Cal consultar l'espai disponible.")
 
 	start = output.Len()
@@ -276,7 +276,7 @@ func TestBandsThinkingKeepsSinglePaddingRow(t *testing.T) {
 		var output bytes.Buffer
 		turn := NewRenderer(&output, Presentation{Style: configpkg.VisualStyleBands}).
 			BeginShelliaTurn(testConfig(), core.ContextInfo{})
-		step := turn.BeginStep(testConfig(), 1, 1, testPlan())
+		step := turn.BeginStep(1, 1, testPlan())
 		step.OutputLine("last output")
 		step.Close()
 		output.Reset()
@@ -315,7 +315,7 @@ func TestBandsRendererStreamsBeforeCloseAndClosesOnce(t *testing.T) {
 	var out bytes.Buffer
 	r := &Renderer{impl: newBandsRenderer(&out, false)}
 	turn := r.BeginShelliaTurn(testConfig(), core.ContextInfo{CWD: "/tmp"})
-	step := turn.BeginStep(testConfig(), 1, 1, testPlan())
+	step := turn.BeginStep(1, 1, testPlan())
 	step.OutputLabel()
 	step.OutputLine("first")
 	if !strings.Contains(out.String(), "first") {
@@ -340,7 +340,7 @@ func TestBandsRendererWrapsStreamedOutputWithinTerminalWidth(t *testing.T) {
 		t.Run(map[bool]string{false: "no ANSI", true: "ANSI"}[ansi], func(t *testing.T) {
 			output := renderBandsAtTerminalWidth(t, terminalWidth, ansi, func(renderer *Renderer) {
 				turn := renderer.BeginShelliaTurn(testConfig(), core.ContextInfo{})
-				step := turn.BeginStep(testConfig(), 1, 1, testPlan())
+				step := turn.BeginStep(1, 1, testPlan())
 				step.OutputLabel()
 				step.OutputLine(payload)
 				step.Close()
@@ -579,8 +579,8 @@ func renderBandsConversationFixture(t *testing.T, ansi bool, user string) string
 	renderer := NewRenderer(&output, Presentation{Style: configpkg.VisualStyleBands, ANSI: ansi, User: user})
 	renderer.UserTurn(core.InteractiveModeAI, "quant d'espai queda al disc?")
 	turn := renderer.BeginShelliaTurn(testConfig(), core.ContextInfo{CWD: "/Users/Xesc/Documents/Scripts"})
-	turn.Plan(testConfig(), "Cal consultar l'espai disponible.", []core.CommandPlan{testPlan()}, false)
-	step := turn.BeginStep(testConfig(), 1, 1, testPlan())
+	turn.Plan("Cal consultar l'espai disponible.", []core.CommandPlan{testPlan()}, false)
+	step := turn.BeginStep(1, 1, testPlan())
 	step.OutputLabel()
 	step.OutputLine("419Gi available")
 	step.Close()

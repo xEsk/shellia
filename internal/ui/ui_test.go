@@ -10,8 +10,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 // TestRawTurnPromptCtrlCCancels checks raw Ctrl+C is propagated as cancellation
@@ -54,7 +52,7 @@ func TestShelliaVersionBadgeFallsBackToDev(t *testing.T) {
 // TestPrintHeaderOmitsImplicitGitContext checks compact headers never expose
 // ambient repository state.
 func TestPrintHeaderOmitsImplicitGitContext(t *testing.T) {
-	cfg := configpkg.DefaultConfig()
+	cfg := testConfig()
 	ctxInfo := contextInfo{
 		CWD: "/tmp/project",
 	}
@@ -73,7 +71,7 @@ func TestPrintHeaderOmitsImplicitGitContext(t *testing.T) {
 
 // TestPrintContextRespectsContextConfig checks /context only renders enabled fields.
 func TestPrintContextRespectsContextConfig(t *testing.T) {
-	cfg := configpkg.DefaultConfig()
+	cfg := testConfig()
 	cfg.IncludeUser = false
 	cfg.IncludeShell = false
 	ctxInfo := contextInfo{

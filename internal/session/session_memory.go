@@ -2,8 +2,15 @@ package session
 
 import "strings"
 
+// MemoryOptions contains the controls that shape retained observation memory.
+type MemoryOptions struct {
+	MaxObservationEntries  int
+	MemoryObservationChars int
+	TruncationStrategy     truncationStrategy
+}
+
 // updateSessionState stores durable session memory after a successful or actionable partial turn.
-func updateSessionState(state *sessionState, instruction string, turn turnResult, cfg config) {
+func updateSessionState(state *sessionState, instruction string, turn turnResult, options MemoryOptions) {
 	if state == nil {
 		return
 	}
@@ -50,7 +57,7 @@ func updateSessionState(state *sessionState, instruction string, turn turnResult
 	if len(turn.Executions) > 0 {
 		state.LastObservationObjective = ""
 	}
-	if observations := collectObservationMemory(turn.Executions, cfg.MemoryObservationChars, cfg.MaxObservationEntries, cfg.TruncationStrategy); len(observations) > 0 {
+	if observations := collectObservationMemory(turn.Executions, options.MemoryObservationChars, options.MaxObservationEntries, options.TruncationStrategy); len(observations) > 0 {
 		state.LastObservations = observations
 		state.LastObservationObjective = strings.TrimSpace(instruction)
 	} else if turn.Outcome == turnOutcomeCompleted {
@@ -60,7 +67,7 @@ func updateSessionState(state *sessionState, instruction string, turn turnResult
 }
 
 // updateSessionStateFromExecution updates reusable session memory after a manual shell command.
-func updateSessionStateFromExecution(state *sessionState, command string, execution commandExecution, cfg config) {
+func updateSessionStateFromExecution(state *sessionState, command string, execution commandExecution, options MemoryOptions) {
 	if state == nil {
 		return
 	}
@@ -78,7 +85,7 @@ func updateSessionStateFromExecution(state *sessionState, command string, execut
 		state.LastReferencedFile = referenced[len(referenced)-1]
 	}
 
-	if observations := collectObservationMemory([]commandExecution{execution}, cfg.MemoryObservationChars, cfg.MaxObservationEntries, cfg.TruncationStrategy); len(observations) > 0 {
+	if observations := collectObservationMemory([]commandExecution{execution}, options.MemoryObservationChars, options.MaxObservationEntries, options.TruncationStrategy); len(observations) > 0 {
 		state.LastObservations = observations
 		state.LastObservationObjective = ""
 	}
