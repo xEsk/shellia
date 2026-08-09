@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"shellia/internal/core"
 	"strings"
 	"syscall"
 	"testing"
@@ -14,7 +15,6 @@ import (
 	"golang.org/x/term"
 
 	configpkg "shellia/internal/config"
-	"shellia/internal/core"
 )
 
 // TestBandsRendererOwnsWholeTurns catches a Bands renderer that leaves semantic turn content outside its band.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"shellia/internal/core"
 	"strings"
 	"syscall"
 	"testing"
@@ -13,7 +14,6 @@ import (
 	"golang.org/x/term"
 
 	configpkg "shellia/internal/config"
-	"shellia/internal/core"
 )
 
 func TestGuideRendererNestsTechnicalActivity(t *testing.T) {
@@ -127,7 +127,11 @@ func TestGuideSubmittedUserTurnUsesCompactBackground(t *testing.T) {
 
 func TestGuideUserSurfaceKeepsOuterTurnGap(t *testing.T) {
 	var output bytes.Buffer
-	renderer := newGuideRendererWithUser(&output, false, "xesc").(*guideRenderer)
+	rendererValue := newGuideRendererWithUser(&output, false, "xesc")
+	renderer, ok := rendererValue.(*guideRenderer)
+	if !ok {
+		t.Fatalf("newGuideRendererWithUser() type = %T, want *guideRenderer", rendererValue)
+	}
 	renderer.userTurn(core.InteractiveModeAI, "hola")
 	renderer.beginShelliaTurn(testConfig(), core.ContextInfo{CWD: "/tmp"})
 

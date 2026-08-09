@@ -214,7 +214,7 @@ func TestPromptPlanExecutionPreservesLaterPipedAnswers(t *testing.T) {
 	}
 
 	var output strings.Builder
-	for call := 0; call < 2; call++ {
+	for call := range 2 {
 		accepted, err := promptPlanExecution(&output, false, stdin)
 		if err != nil {
 			t.Fatalf("promptPlanExecution() call %d error = %v", call+1, err)

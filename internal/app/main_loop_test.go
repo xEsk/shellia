@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"shellia/internal/core"
 	"strings"
 	"sync"
 	"testing"
@@ -22,7 +23,7 @@ import (
 
 	"github.com/creack/pty"
 	configpkg "shellia/internal/config"
-	"shellia/internal/core"
+
 	uipkg "shellia/internal/ui"
 )
 
@@ -1039,6 +1040,56 @@ func TestDoLLMRequestSendsAuthorizationWhenAPIKeySet(t *testing.T) {
 	}
 }
 
+// TestRunPlanningRoundPreservesStructuralParseCause checks callers can inspect
+// both the structural category and the JSON parsing failure on either error path.
+func TestRunPlanningRoundPreservesStructuralParseCause(t *testing.T) {
+	tests := []struct {
+		name        string
+		allowRepair bool
+		responses   []loopLLMResponse
+	}{
+		{
+			name:        "repair disabled",
+			allowRepair: false,
+			responses:   []loopLLMResponse{{content: `{"action":}`}},
+		},
+		{
+			name:        "repair exhausted",
+			allowRepair: true,
+			responses: []loopLLMResponse{
+				{content: `{"action":}`},
+				{content: `{"action":}`},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newLoopLLMClient(t, tt.responses...)
+			cfg := loopTestConfig(fake.URL())
+
+			captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+				deps.Trace = openLoopTrace(t)
+				_, err := runPlanningRound(t.Context(), planningRoundRequest{
+					Deps: deps,
+					Prompt: llmPromptRequest{
+						Config:      cfg,
+						Instruction: "inspect",
+					},
+					AllowStructuralRepair: tt.allowRepair,
+				})
+				if !errors.Is(err, errStructuralResponse) {
+					t.Fatalf("runPlanningRound() error = %v, want structural response category", err)
+				}
+				var syntaxError *json.SyntaxError
+				if !errors.As(err, &syntaxError) {
+					t.Fatalf("runPlanningRound() error = %v, want JSON syntax cause", err)
+				}
+			})
+		})
+	}
+}
+
 // TestDoLLMRequestPropagatesContextCancellation checks LLM calls preserve cancellation identity.
 func TestDoLLMRequestPropagatesContextCancellation(t *testing.T) {
 	cfg := loopTestConfig("http://shellia.test")
@@ -1268,7 +1319,6 @@ func TestRunTurnExecutesSafePlanAndCompletes(t *testing.T) {
 	if result.Result != "Printed shellia-loop." {
 		t.Fatalf("runTurn() Result = %q, want %q", result.Result, "Printed shellia-loop.")
 	}
-
 }
 
 // TestRunTurnPropagatesParentCancellationDuringSummary checks Ctrl+C is not
@@ -1684,7 +1734,7 @@ func TestRunTurnFiltersSuccessfulCorrectionsButRetriesFailures(t *testing.T) {
 	var executionBatches [][]string
 
 	var result turnResult
-	output := captureMainLoopIO(t, "y\ny\ny\n", fake.HTTPClient(), func(deps runtimeDeps) {
+	output := captureMainLoopIO(t, "y\ny\ny\n", fake.HTTPClient(), func(deps runtimeDeps) { //nolint:dupword // Each response confirms a distinct execution proposal.
 		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ config, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
 			executionBatches = append(executionBatches, commandNames(plans))
 			batch := commandBatchResult{}
@@ -2262,7 +2312,7 @@ func TestRunTurnRecoveryUsesPlanAndCommandConfirmations(t *testing.T) {
 	ctxInfo := loopTestContext(t)
 
 	var result turnResult
-	output := captureMainLoopIO(t, "y\ny\ny\ny\n", fake.HTTPClient(), func(deps runtimeDeps) {
+	output := captureMainLoopIO(t, "y\ny\ny\ny\n", fake.HTTPClient(), func(deps runtimeDeps) { //nolint:dupword // Each response confirms a distinct plan-level or command-level prompt.
 		var err error
 		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "fail then recover"))
 		if err != nil {

@@ -3,15 +3,16 @@ package llm
 import (
 	"context"
 	"net/http"
-
 	"shellia/internal/core"
 )
 
 // BuildPrompts builds the system and user prompts for one planning request.
-type ChatCompletionRequest = chatCompletionRequest
-type ChatMessage = chatMessage
-type ResponseFormat = responseFormat
-type HTTPStatusError = llmHTTPStatusError
+type (
+	ChatCompletionRequest = chatCompletionRequest
+	ChatMessage           = chatMessage
+	ResponseFormat        = responseFormat
+	HTTPStatusError       = llmHTTPStatusError
+)
 
 // DoRequest performs one non-streaming LLM request.
 func DoRequest(ctx context.Context, client *http.Client, cfg config, req ChatCompletionRequest) (string, error) {

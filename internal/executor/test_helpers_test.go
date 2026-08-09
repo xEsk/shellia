@@ -6,11 +6,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"shellia/internal/core"
 	"strings"
 	"testing"
 
 	configpkg "shellia/internal/config"
-	"shellia/internal/core"
+
 	safetypkg "shellia/internal/safety"
 	tracepkg "shellia/internal/trace"
 )

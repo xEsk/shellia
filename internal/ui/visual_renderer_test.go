@@ -3,11 +3,11 @@ package ui
 import (
 	"bytes"
 	"io"
+	"shellia/internal/core"
 	"strings"
 	"testing"
 
 	configpkg "shellia/internal/config"
-	"shellia/internal/core"
 )
 
 func testConfig() configpkg.Config {

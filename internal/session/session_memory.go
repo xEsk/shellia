@@ -82,7 +82,6 @@ func updateSessionStateFromExecution(state *sessionState, command string, execut
 		state.LastObservations = observations
 		state.LastObservationObjective = ""
 	}
-
 }
 
 // rememberUnfinishedInstruction keeps enough memory when a turn fails or is cancelled.

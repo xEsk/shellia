@@ -2,10 +2,10 @@ package ui
 
 import (
 	"bytes"
+	"shellia/internal/core"
 	"testing"
 
 	configpkg "shellia/internal/config"
-	"shellia/internal/core"
 )
 
 func TestPlainRendererPreservesConversationBytes(t *testing.T) {

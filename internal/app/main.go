@@ -1322,7 +1322,7 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 			"raw_response": rawResponse,
 		})
 		if !request.AllowStructuralRepair {
-			return planningRoundResult{}, fmt.Errorf("%w: %v", errStructuralResponse, err)
+			return planningRoundResult{}, fmt.Errorf("%w: %w", errStructuralResponse, err)
 		}
 		structuralRepairUsed = true
 		repairPrompt := userPrompt + "\n\nThe previous response was structurally invalid: " + err.Error() + "\nReturn exactly one valid JSON decision using the required schema."
@@ -1340,7 +1340,7 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 		})
 		parsed, err = parseResponse(repairedRaw)
 		if err != nil {
-			return planningRoundResult{}, fmt.Errorf("%w: %v", errStructuralResponse, err)
+			return planningRoundResult{}, fmt.Errorf("%w: %w", errStructuralResponse, err)
 		}
 	}
 
