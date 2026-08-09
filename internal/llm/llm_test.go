@@ -188,6 +188,22 @@ func TestBuildSystemPromptDefinesWorkflowDecisionContract(t *testing.T) {
 	}
 }
 
+// TestBuildSystemPromptRequiresTargetDisambiguation checks the planner cannot
+// select one plausible target without evidence that distinguishes it.
+func TestBuildSystemPromptRequiresTargetDisambiguation(t *testing.T) {
+	prompt := buildSystemPrompt()
+	for _, required := range []string{
+		"multiple plausible targets",
+		"minimal read-only command",
+		"ordering, version, recency, or preference",
+		"blocker_kind=missing_input",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("buildSystemPrompt() missing target disambiguation rule %q", required)
+		}
+	}
+}
+
 // TestBuildUserPromptDeclaresImmutableExecutionAuthority checks plan-only and
 // normal turns use the same prompt contract with different local authority.
 func TestBuildUserPromptDeclaresImmutableExecutionAuthority(t *testing.T) {

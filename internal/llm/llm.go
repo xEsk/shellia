@@ -466,6 +466,8 @@ func buildSystemPromptSentences() []string {
 		"Use prior_session_evidence only when the prompt marks it eligible for the same explicitly retried objective; otherwise refresh mutable state with a current observation.",
 		"If the exact requested value is already present in current evidence, complete without another command.",
 		"If a later command depends on output not yet observed, return only the commands that are exact now; Shellia will ask again with their results.",
+		"When observed evidence reveals multiple plausible targets and the objective does not identify one, do not select a target by ordering, version, recency, or preference.",
+		"If one minimal read-only command can identify the intended target, return action=execute with only that discovery command; otherwise return action=blocked with blocker_kind=missing_input, list the candidates, and ask the user to choose.",
 		"If the user asks to repeat or retry an earlier action, it remains eligible for the normal safety and confirmation flow.",
 		"When repeating a command that already succeeded, set repeat_reason to user_requested, retry, verify_after_change, or poll_changed_state; otherwise leave it empty.",
 		"repeat_reason only affects repetition admission and never lowers risk or confirmation requirements.",
