@@ -43,8 +43,8 @@ func TestLoadBaseConfigResolvesEveryVisualStyle(t *testing.T) {
 		{name: "guide", uiBlock: "[ui]\nstyle = \"guide\"", want: configpkg.VisualStyleGuide},
 		{name: "bands", uiBlock: "[ui]\nstyle = \"bands\"", want: configpkg.VisualStyleBands},
 		{name: "cards", uiBlock: "[ui]\nstyle = \"cards\"", want: configpkg.VisualStyleCards},
-		{name: "absent defaults to plain", uiBlock: "[ui]\nverbose = true", want: configpkg.VisualStylePlain},
-		{name: "unknown falls back to plain", uiBlock: "[ui]\nstyle = \"unknown\"", want: configpkg.VisualStylePlain},
+		{name: "absent defaults to guide", uiBlock: "[ui]\nverbose = true", want: configpkg.VisualStyleGuide},
+		{name: "unknown falls back to guide", uiBlock: "[ui]\nstyle = \"unknown\"", want: configpkg.VisualStyleGuide},
 	}
 
 	for _, tt := range tests {

@@ -195,7 +195,7 @@ func defaultConfig() Config {
 		// [ui]
 		ShowSystemOutput: true,
 		ShowCommandPopup: true,
-		VisualStyle:      VisualStylePlain,
+		VisualStyle:      VisualStyleGuide,
 		PromptIdentity:   PromptIdentityUser,
 
 		// [context]
@@ -668,7 +668,7 @@ truncation_strategy = "mixed"
 
 [ui]
 # Terminal visual structure: plain, guide, bands or cards.
-style = "plain"
+style = "guide"
 
 # Prompt identity: user shows the active terminal username; you uses a stable generic label.
 prompt_identity = "user"

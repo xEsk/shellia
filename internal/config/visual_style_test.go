@@ -41,8 +41,8 @@ func TestNormalizeVisualStyle(t *testing.T) {
 
 func TestVisualStyleConfigContract(t *testing.T) {
 	cfg := defaultConfig()
-	if cfg.VisualStyle != VisualStylePlain {
-		t.Fatalf("defaultConfig().VisualStyle = %q, want %q", cfg.VisualStyle, VisualStylePlain)
+	if cfg.VisualStyle != VisualStyleGuide {
+		t.Fatalf("defaultConfig().VisualStyle = %q, want %q", cfg.VisualStyle, VisualStyleGuide)
 	}
 
 	fileCfg := FileConfig{}
@@ -52,7 +52,7 @@ func TestVisualStyleConfigContract(t *testing.T) {
 		t.Fatalf("applyFileConfig() VisualStyle = %q, want %q", cfg.VisualStyle, VisualStyleCards)
 	}
 
-	if !strings.Contains(defaultConfigTemplate(), "style = \"plain\"") {
+	if !strings.Contains(defaultConfigTemplate(), "style = \"guide\"") {
 		t.Fatal("defaultConfigTemplate() lacks ui.style default")
 	}
 	for _, style := range []string{"plain", "guide", "bands", "cards"} {

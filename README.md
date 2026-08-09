@@ -323,7 +323,7 @@ capture_stderr_bytes     = 262144
 observation_output_chars = 1200
 
 [ui]
-style              = "plain" # plain | guide | bands | cards
+style              = "guide" # plain | guide | bands | cards
 prompt_identity    = "user"  # user | you
 verbose            = false
 no_color           = false
@@ -377,7 +377,7 @@ Compatibility fallback variables:
 
 - `style`
   - selects the terminal structure: `plain`, `guide`, `bands`, or `cards`
-  - defaults to `plain`, Shellia's compact original structure
+  - defaults to `guide`, Shellia's balanced conversation structure
   - each style uses a fixed built-in colour theme; colours are not configurable
 - `prompt_identity`
   - `user` shows the active terminal username, such as `xesc ›` or `root ›`
