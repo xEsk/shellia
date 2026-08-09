@@ -14,6 +14,15 @@ import (
 	"os/signal"
 	"strings"
 	"time"
+
+	configpkg "github.com/xEsk/shellia/internal/config"
+	"github.com/xEsk/shellia/internal/core"
+	executorpkg "github.com/xEsk/shellia/internal/executor"
+	interactivepkg "github.com/xEsk/shellia/internal/interactive"
+	llmpkg "github.com/xEsk/shellia/internal/llm"
+	sessionpkg "github.com/xEsk/shellia/internal/session"
+	tracepkg "github.com/xEsk/shellia/internal/trace"
+	uipkg "github.com/xEsk/shellia/internal/ui"
 )
 
 const (
@@ -66,8 +75,8 @@ func SetVersion(value string) {
 	if version == "" {
 		version = "dev"
 	}
-	setTraceVersion(version)
-	setUIVersion(version)
+	tracepkg.SetVersion(version)
+	uipkg.SetVersion(version)
 }
 
 // Run executes the Shellia CLI and returns the process exit code.
@@ -83,7 +92,7 @@ func runApp(parentCtx context.Context, args []string, deps runtimeDeps) int {
 		if errors.Is(err, errHelp) {
 			return 0
 		}
-		printErrorTo(deps.Stderr, uiEnabled(config{}), err.Error())
+		uipkg.PrintErrorTo(deps.Stderr, uipkg.Enabled(config{}), err.Error())
 		return 2
 	}
 
@@ -92,18 +101,18 @@ func runApp(parentCtx context.Context, args []string, deps runtimeDeps) int {
 
 	switch cfg.CommandKind {
 	case "config-init":
-		if err := initConfigFileTo(deps.Stdout, ui); err != nil {
-			printErrorTo(deps.Stderr, ui, err.Error())
+		if err := configpkg.InitConfigFileTo(deps.Stdout, ui); err != nil {
+			uipkg.PrintErrorTo(deps.Stderr, ui, err.Error())
 			return 1
 		}
 		return 0
 	case "config-path":
-		path, err := settingsPath()
+		path, err := configpkg.SettingsPath()
 		if err != nil {
-			printErrorTo(deps.Stderr, ui, err.Error())
+			uipkg.PrintErrorTo(deps.Stderr, ui, err.Error())
 			return 1
 		}
-		renderPanel(deps.Stdout, ui, "config", colorCyan, []string{path})
+		uipkg.RenderPanel(deps.Stdout, ui, "config", uipkg.ColorCyan, []string{path})
 		return 0
 	}
 
@@ -115,21 +124,21 @@ func runApp(parentCtx context.Context, args []string, deps runtimeDeps) int {
 	}
 	defer stop()
 
-	ctxInfo, err := getContext(appCtx, cfg)
+	ctxInfo, err := executorpkg.GetContext(appCtx, cfg)
 	if err != nil {
-		printErrorTo(deps.Stderr, ui, err.Error())
+		uipkg.PrintErrorTo(deps.Stderr, ui, err.Error())
 		return 1
 	}
-	deps.Renderer = newRenderer(deps.Stdout, presentation{Style: effective.Style, ANSI: effective.ANSI, User: promptPresentationUser(cfg, ctxInfo.User)})
+	deps.Renderer = uipkg.NewRenderer(deps.Stdout, presentation{Style: effective.Style, ANSI: effective.ANSI, User: promptPresentationUser(cfg, ctxInfo.User)})
 
-	trace, err := openSessionTrace(cfg, ctxInfo)
+	trace, err := tracepkg.OpenSession(cfg, ctxInfo)
 	if err != nil {
-		printErrorTo(deps.Stderr, ui, err.Error())
+		uipkg.PrintErrorTo(deps.Stderr, ui, err.Error())
 		return 1
 	}
 	deps.Trace = trace
 	if trace != nil {
-		trace.Record("session_start", "", "", -1, traceSessionStartData(cfg, ctxInfo))
+		trace.Record("session_start", "", "", -1, tracepkg.SessionStartData(cfg, ctxInfo))
 		defer func() {
 			trace.Record("session_end", "", "", -1, nil)
 			_ = trace.Close()
@@ -138,7 +147,7 @@ func runApp(parentCtx context.Context, args []string, deps runtimeDeps) int {
 
 	if cfg.Interactive {
 		if err := runInteractive(appCtx, deps, ui, cfg, &ctxInfo); err != nil {
-			printErrorTo(deps.Stderr, ui, err.Error())
+			uipkg.PrintErrorTo(deps.Stderr, ui, err.Error())
 			return 1
 		}
 		return 0
@@ -151,8 +160,8 @@ func runApp(parentCtx context.Context, args []string, deps runtimeDeps) int {
 	})
 	if err != nil {
 		switch {
-		case errors.Is(err, errAborted), errors.Is(err, context.Canceled):
-			printErrorTo(deps.Stderr, ui, "execution aborted")
+		case errors.Is(err, core.ErrAborted), errors.Is(err, context.Canceled):
+			uipkg.PrintErrorTo(deps.Stderr, ui, "execution aborted")
 			return 130
 		default:
 			var exitErr *exec.ExitError
@@ -161,10 +170,10 @@ func runApp(parentCtx context.Context, args []string, deps runtimeDeps) int {
 				if code <= 0 {
 					code = 1
 				}
-				printErrorTo(deps.Stderr, ui, err.Error())
+				uipkg.PrintErrorTo(deps.Stderr, ui, err.Error())
 				return code
 			}
-			printErrorTo(deps.Stderr, ui, err.Error())
+			uipkg.PrintErrorTo(deps.Stderr, ui, err.Error())
 			return 1
 		}
 	}
@@ -186,8 +195,8 @@ func parseArgs(args []string) (config, error) {
 		if err != nil {
 			return config{}, err
 		}
-		cfg := defaultConfig()
-		applyEnvConfig(&cfg)
+		cfg := configpkg.DefaultConfig()
+		configpkg.ApplyEnvConfig(&cfg)
 		cfg.CommandKind = kind
 		return cfg, nil
 	}
@@ -217,14 +226,14 @@ func parseArgs(args []string) (config, error) {
 
 // loadBaseConfig applies defaults → file → env in order.
 func loadBaseConfig() (config, error) {
-	cfg := defaultConfig()
-	fileCfg, configPath, err := loadFileConfig()
+	cfg := configpkg.DefaultConfig()
+	fileCfg, configPath, err := configpkg.LoadFileConfig()
 	if err != nil {
 		return config{}, err
 	}
 	cfg.ConfigPath = configPath
-	applyFileConfig(&cfg, fileCfg)
-	applyEnvConfig(&cfg)
+	configpkg.ApplyFileConfig(&cfg, fileCfg)
+	configpkg.ApplyEnvConfig(&cfg)
 	return cfg, nil
 }
 
@@ -330,7 +339,7 @@ func finalizeConfig(fs *flag.FlagSet, cfg config, timeoutSecs, reqTimeoutSecs in
 	if err := applySelectedModel(&cfg); err != nil {
 		return config{}, err
 	}
-	applyModelEnvOverrides(&cfg)
+	configpkg.ApplyModelEnvOverrides(&cfg)
 	if flagBaseURLSet {
 		cfg.BaseURL = strings.TrimSpace(flagBaseURL)
 	}
@@ -480,7 +489,7 @@ func missingAPIKeyError() error {
 // usageFunc builds the Usage closure for the flag set.
 func usageFunc(fs *flag.FlagSet) func() {
 	return func() {
-		configPath, _ := settingsPath()
+		configPath, _ := configpkg.SettingsPath()
 		fmt.Fprintf(os.Stdout, "shellia %s\n\n", version)
 		fmt.Fprintln(os.Stdout, "Usage:")
 		fmt.Fprintln(os.Stdout, "  shellia")
@@ -513,14 +522,14 @@ func usageFunc(fs *flag.FlagSet) func() {
 func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, ctxInfo *contextInfo) error {
 	deps = deps.withDefaults()
 	if deps.Renderer == nil {
-		deps.Renderer = newRenderer(deps.Stdout, presentation{Style: visualStylePlain, ANSI: ui, User: promptPresentationUser(cfg, ctxInfo.User)})
+		deps.Renderer = uipkg.NewRenderer(deps.Stdout, presentation{Style: configpkg.VisualStylePlain, ANSI: ui, User: promptPresentationUser(cfg, ctxInfo.User)})
 	}
 	reader := bufio.NewReader(deps.Stdin)
 	history := make([]historyEntry, 0, maxHistoryEntries)
 	state := sessionState{}
 	mode := interactiveModeAI
 
-	printSessionBannerTo(deps.Stdout, ui, cfg)
+	uipkg.PrintSessionBannerTo(deps.Stdout, ui, cfg)
 
 	if strings.TrimSpace(cfg.Instruction) != "" {
 		turnCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
@@ -533,18 +542,18 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 		})
 		stop()
 		if err != nil && len(turn.Executions) > 0 {
-			updateSessionState(&state, cfg.Instruction, turn, cfg)
+			sessionpkg.UpdateState(&state, cfg.Instruction, turn, cfg)
 		}
-		if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {
+		if errors.Is(err, core.ErrAborted) || errors.Is(err, context.Canceled) {
 			state.LastRetryInstruction = cfg.Instruction
-			rememberUnfinishedInstruction(&state, cfg.Instruction)
+			sessionpkg.RememberUnfinishedInstruction(&state, cfg.Instruction)
 		} else if err != nil {
-			printWarningTo(deps.Stderr, ui, err.Error())
+			uipkg.PrintWarningTo(deps.Stderr, ui, err.Error())
 			state.LastRetryInstruction = cfg.Instruction
-			rememberUnfinishedInstruction(&state, cfg.Instruction)
+			sessionpkg.RememberUnfinishedInstruction(&state, cfg.Instruction)
 		} else {
 			history = append(history, historyEntry{Instruction: cfg.Instruction, Result: turn.Result})
-			updateSessionState(&state, cfg.Instruction, turn, cfg)
+			sessionpkg.UpdateState(&state, cfg.Instruction, turn, cfg)
 			if turn.Outcome == turnOutcomeCompleted {
 				state.LastRetryInstruction = ""
 			}
@@ -569,10 +578,10 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 
 		trimmed := strings.TrimSpace(input)
 		forcePromptMode := false
-		planOnly, plannedInstruction := parsePlanInstruction(input)
+		planOnly, plannedInstruction := interactivepkg.ParsePlanInstruction(input)
 		if planOnly {
 			if strings.TrimSpace(plannedInstruction) == "" {
-				printWarningTo(deps.Stderr, ui, "Missing plan instruction.")
+				uipkg.PrintWarningTo(deps.Stderr, ui, "Missing plan instruction.")
 				continue
 			}
 
@@ -588,99 +597,99 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			})
 			stop()
 			if err != nil && len(turn.Executions) > 0 {
-				updateSessionState(&state, plannedInstruction, turn, cfg)
+				sessionpkg.UpdateState(&state, plannedInstruction, turn, cfg)
 			}
 
-			if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {
+			if errors.Is(err, core.ErrAborted) || errors.Is(err, context.Canceled) {
 				state.LastRetryInstruction = plannedInstruction
-				rememberUnfinishedInstruction(&state, plannedInstruction)
-				printWarningTo(deps.Stderr, ui, "Request cancelled.")
+				sessionpkg.RememberUnfinishedInstruction(&state, plannedInstruction)
+				uipkg.PrintWarningTo(deps.Stderr, ui, "Request cancelled.")
 				fmt.Fprintln(deps.Stdout)
-				printSeparator(deps.Stdout, ui)
+				uipkg.PrintSeparator(deps.Stdout, ui)
 				continue
 			}
 			if err != nil {
-				printWarningTo(deps.Stderr, ui, err.Error())
+				uipkg.PrintWarningTo(deps.Stderr, ui, err.Error())
 				state.LastRetryInstruction = plannedInstruction
-				rememberUnfinishedInstruction(&state, plannedInstruction)
+				sessionpkg.RememberUnfinishedInstruction(&state, plannedInstruction)
 				continue
 			}
 			history = append(history, historyEntry{Instruction: input, Result: turn.Result})
-			updateSessionState(&state, plannedInstruction, turn, cfg)
+			sessionpkg.UpdateState(&state, plannedInstruction, turn, cfg)
 			if len(history) > maxHistoryEntries {
 				history = history[len(history)-maxHistoryEntries:]
 			}
 			continue
 		}
 
-		command := parseInteractiveCommand(trimmed)
-		if command != interactiveCommandNone {
+		command := interactivepkg.ParseCommand(trimmed)
+		if command != interactivepkg.CommandNone {
 			switch command {
-			case interactiveCommandUnknown:
-				printWarningTo(deps.Stderr, ui, "Unknown command: "+trimmed)
+			case interactivepkg.CommandUnknown:
+				uipkg.PrintWarningTo(deps.Stderr, ui, "Unknown command: "+trimmed)
 				continue
-			case interactiveCommandExit:
+			case interactivepkg.CommandExit:
 				fmt.Fprintln(deps.Stdout)
-				printInfoTo(deps.Stdout, ui, "Session closed.")
+				uipkg.PrintInfoTo(deps.Stdout, ui, "Session closed.")
 				return nil
-			case interactiveCommandClear:
-				clearScreenTo(deps.Stdout)
+			case interactivepkg.CommandClear:
+				uipkg.ClearScreenTo(deps.Stdout)
 				continue
-			case interactiveCommandContext:
-				printContextTo(deps.Stdout, ui, cfg, *ctxInfo)
+			case interactivepkg.CommandContext:
+				uipkg.PrintContextTo(deps.Stdout, ui, cfg, *ctxInfo)
 				continue
-			case interactiveCommandShell:
+			case interactivepkg.CommandShell:
 				mode = interactiveModeShell
-				printModeStatusTo(deps.Stdout, ui, fmt.Sprintf("Shell mode enabled (%s).", cfg.ShellMode))
+				uipkg.PrintModeStatusTo(deps.Stdout, ui, fmt.Sprintf("Shell mode enabled (%s).", cfg.ShellMode))
 				continue
-			case interactiveCommandAI:
+			case interactivepkg.CommandAI:
 				mode = interactiveModeAI
-				printModeStatusTo(deps.Stdout, ui, "Prompt mode enabled.")
+				uipkg.PrintModeStatusTo(deps.Stdout, ui, "Prompt mode enabled.")
 				continue
-			case interactiveCommandMode:
-				printModeStatusTo(deps.Stdout, ui, "Current mode: "+string(mode))
+			case interactivepkg.CommandMode:
+				uipkg.PrintModeStatusTo(deps.Stdout, ui, "Current mode: "+string(mode))
 				continue
-			case interactiveCommandModel:
-				modelName := parseModelCommandName(trimmed)
+			case interactivepkg.CommandModel:
+				modelName := interactivepkg.ParseModelCommandName(trimmed)
 				if modelName == "" {
 					printModelProfilesTo(deps.Stdout, ui, cfg)
 					continue
 				}
 				if err := switchInteractiveModel(&cfg, modelName); err != nil {
-					printWarningTo(deps.Stderr, ui, err.Error())
+					uipkg.PrintWarningTo(deps.Stderr, ui, err.Error())
 					continue
 				}
-				printModelSwitchTo(deps.Stdout, ui, cfg)
+				uipkg.PrintModelSwitchTo(deps.Stdout, ui, cfg)
 				continue
-			case interactiveCommandTheme:
-				themeName := parseThemeCommandName(trimmed)
+			case interactivepkg.CommandTheme:
+				themeName := interactivepkg.ParseThemeCommandName(trimmed)
 				if themeName == "" {
 					printVisualThemesTo(deps.Stdout, ui, cfg)
 					continue
 				}
 				if err := switchInteractiveTheme(&cfg, &deps, ctxInfo.User, themeName); err != nil {
-					printWarningTo(deps.Stderr, ui, err.Error())
+					uipkg.PrintWarningTo(deps.Stderr, ui, err.Error())
 					continue
 				}
 				fmt.Fprintln(deps.Stdout)
-				printInfoTo(deps.Stdout, ui, "Theme switched to "+string(cfg.VisualStyle)+".")
+				uipkg.PrintInfoTo(deps.Stdout, ui, "Theme switched to "+string(cfg.VisualStyle)+".")
 				continue
-			case interactiveCommandPlan:
-				printWarningTo(deps.Stderr, ui, "Missing plan instruction.")
+			case interactivepkg.CommandPlan:
+				uipkg.PrintWarningTo(deps.Stderr, ui, "Missing plan instruction.")
 				continue
-			case interactiveCommandRetry:
+			case interactivepkg.CommandRetry:
 				if strings.TrimSpace(state.LastRetryInstruction) == "" {
-					printWarningTo(deps.Stderr, ui, "No failed or cancelled request to retry.")
+					uipkg.PrintWarningTo(deps.Stderr, ui, "No failed or cancelled request to retry.")
 					continue
 				}
 				trimmed = state.LastRetryInstruction
 				input = state.LastRetryInstruction
 				forcePromptMode = true
-				printInfoTo(deps.Stdout, ui, fmt.Sprintf("Retrying: %s", input))
-			case interactiveCommandNew:
+				uipkg.PrintInfoTo(deps.Stdout, ui, fmt.Sprintf("Retrying: %s", input))
+			case interactivepkg.CommandNew:
 				history = make([]historyEntry, 0, maxHistoryEntries)
 				state = sessionState{}
-				printNewSessionSeparatorTo(deps.Stdout, ui)
+				uipkg.PrintNewSessionSeparatorTo(deps.Stdout, ui)
 				continue
 			}
 		}
@@ -689,13 +698,13 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			continue
 		}
 
-		if !forcePromptMode && mode == interactiveModeAI && strings.TrimSpace(state.PendingProposal.Objective) != "" && isProposalDecline(trimmed) {
+		if !forcePromptMode && mode == interactiveModeAI && strings.TrimSpace(state.PendingProposal.Objective) != "" && sessionpkg.IsProposalDecline(trimmed) {
 			declined := state.PendingProposal
 			state.PendingProposal = pendingProposal{}
 			deps.Trace.Record("pending_proposal_declined", "", "session", -1, map[string]any{
 				"objective": declined.Objective,
 			})
-			printInfoTo(deps.Stdout, ui, "D’acord. No ho executaré.")
+			uipkg.PrintInfoTo(deps.Stdout, ui, "D’acord. No ho executaré.")
 			continue
 		}
 
@@ -707,7 +716,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 				renderMode = renderModeForManualCommand(cfg)
 			}
 			if command == "" {
-				printWarningTo(deps.Stderr, ui, "Missing shell command.")
+				uipkg.PrintWarningTo(deps.Stderr, ui, "Missing shell command.")
 				continue
 			}
 
@@ -717,21 +726,21 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			stop()
 
 			if errors.Is(err, context.Canceled) {
-				printWarningTo(deps.Stderr, ui, "Command cancelled.")
+				uipkg.PrintWarningTo(deps.Stderr, ui, "Command cancelled.")
 				continue
 			}
 			if err != nil {
-				printWarningTo(deps.Stderr, ui, err.Error())
+				uipkg.PrintWarningTo(deps.Stderr, ui, err.Error())
 				continue
 			}
 
-			updateSessionStateFromExecution(&state, command, execution, cfg)
+			sessionpkg.UpdateStateFromExecution(&state, command, execution, cfg)
 			continue
 		}
 
 		instruction := input
 		priorProposal := state.PendingProposal
-		resolvedInstruction := resolveInstructionForPlanning(instruction, state)
+		resolvedInstruction := sessionpkg.ResolveInstructionForPlanning(instruction, state)
 		acceptedProposal := resolvedInstruction != strings.TrimSpace(instruction) && strings.TrimSpace(state.PendingProposal.Objective) != ""
 		retryInstruction := instruction
 		if acceptedProposal {
@@ -755,21 +764,21 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			state.PendingProposal = pendingProposal{}
 		}
 		if err != nil && len(turn.Executions) > 0 {
-			updateSessionState(&state, retryInstruction, turn, cfg)
+			sessionpkg.UpdateState(&state, retryInstruction, turn, cfg)
 		}
 
-		if errors.Is(err, errAborted) || errors.Is(err, context.Canceled) {
+		if errors.Is(err, core.ErrAborted) || errors.Is(err, context.Canceled) {
 			state.LastRetryInstruction = retryInstruction
-			rememberUnfinishedInstruction(&state, retryInstruction)
-			printWarningTo(deps.Stderr, ui, "Request cancelled.")
+			sessionpkg.RememberUnfinishedInstruction(&state, retryInstruction)
+			uipkg.PrintWarningTo(deps.Stderr, ui, "Request cancelled.")
 			fmt.Fprintln(deps.Stdout)
-			printSeparator(deps.Stdout, ui)
+			uipkg.PrintSeparator(deps.Stdout, ui)
 			continue
 		}
 		if err != nil {
-			printWarningTo(deps.Stderr, ui, err.Error())
+			uipkg.PrintWarningTo(deps.Stderr, ui, err.Error())
 			state.LastRetryInstruction = retryInstruction
-			rememberUnfinishedInstruction(&state, retryInstruction)
+			sessionpkg.RememberUnfinishedInstruction(&state, retryInstruction)
 			continue
 		}
 		if !acceptedProposal && strings.TrimSpace(priorProposal.Objective) != "" && turn.Outcome == turnOutcomeCompleted && strings.TrimSpace(turn.Proposal.Objective) != strings.TrimSpace(priorProposal.Objective) {
@@ -779,10 +788,10 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 			})
 		}
 		history = append(history, historyEntry{Instruction: instruction, Result: turn.Result})
-		updateSessionState(&state, retryInstruction, turn, cfg)
+		sessionpkg.UpdateState(&state, retryInstruction, turn, cfg)
 		if acceptedProposal && turn.Outcome != turnOutcomeCompleted && turn.Outcome != turnOutcomeDeclined {
 			state.LastRetryInstruction = retryInstruction
-			rememberUnfinishedInstruction(&state, retryInstruction)
+			sessionpkg.RememberUnfinishedInstruction(&state, retryInstruction)
 		}
 		if turn.Outcome == turnOutcomeCompleted {
 			state.LastRetryInstruction = ""
@@ -795,24 +804,24 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 
 // renderModeForShellSession maps the configured shell mode to the executor mode.
 func renderModeForShellSession(cfg config) manualRenderMode {
-	if cfg.ShellMode == commandEnginePlain {
-		return manualRenderDirect
+	if cfg.ShellMode == configpkg.CommandEnginePlain {
+		return executorpkg.ManualRenderDirect
 	}
-	return manualRenderShellInteractive
+	return executorpkg.ManualRenderShellInteractive
 }
 
 // renderModeForManualCommand maps the configured one-off command mode to the executor mode.
 func renderModeForManualCommand(cfg config) manualRenderMode {
-	if cfg.CommandMode == commandEngineInteractive {
-		return manualRenderInteractive
+	if cfg.CommandMode == configpkg.CommandEngineInteractive {
+		return executorpkg.ManualRenderInteractive
 	}
-	return manualRenderInline
+	return executorpkg.ManualRenderInline
 }
 
 // printModelProfilesTo lists configured model profiles and marks the active one.
 func printModelProfilesTo(target io.Writer, ui bool, cfg config) {
 	if len(cfg.Models) == 0 {
-		renderPanel(target, ui, "models", colorYellow, []string{
+		uipkg.RenderPanel(target, ui, "models", uipkg.ColorYellow, []string{
 			"No configured model profiles.",
 			"Add [[models]] entries to config.toml.",
 		})
@@ -827,20 +836,20 @@ func printModelProfilesTo(target io.Writer, ui bool, cfg config) {
 		}
 		lines = append(lines, fmt.Sprintf("%s %s · %s", marker, model.Name, model.Model))
 	}
-	renderPanel(target, ui, "models", colorCyan, lines)
+	uipkg.RenderPanel(target, ui, "models", uipkg.ColorCyan, lines)
 }
 
 // printVisualThemesTo lists every selectable visual style and marks the configured one.
 func printVisualThemesTo(target io.Writer, ui bool, cfg config) {
-	lines := make([]string, 0, len(visualStyles()))
-	for _, visualStyle := range visualStyles() {
+	lines := make([]string, 0, len(configpkg.VisualStyles()))
+	for _, visualStyle := range configpkg.VisualStyles() {
 		marker := " "
 		if visualStyle == cfg.VisualStyle {
 			marker = "*"
 		}
 		lines = append(lines, fmt.Sprintf("%s %s", marker, visualStyle))
 	}
-	renderPanel(target, ui, "themes", colorCyan, lines)
+	uipkg.RenderPanel(target, ui, "themes", uipkg.ColorCyan, lines)
 }
 
 // switchInteractiveModel applies a configured model profile and persists it as the default.
@@ -865,7 +874,7 @@ func switchInteractiveModel(cfg *config, name string) error {
 
 	*cfg = next
 	cfg.DefaultModelName = selected.Name
-	if err := persistDefaultModel(*cfg, selected.Name); err != nil {
+	if err := configpkg.PersistDefaultModel(*cfg, selected.Name); err != nil {
 		return fmt.Errorf("model switched to %s, but default_model was not persisted: %w", selected.Name, err)
 	}
 	return nil
@@ -873,19 +882,19 @@ func switchInteractiveModel(cfg *config, name string) error {
 
 // switchInteractiveTheme persists and applies one visual style between turns.
 func switchInteractiveTheme(cfg *config, deps *runtimeDeps, user string, name string) error {
-	selected := normalizeVisualStyle(name, "")
+	selected := configpkg.NormalizeVisualStyle(name, "")
 	if selected == "" {
 		return fmt.Errorf("visual theme %q not found", strings.TrimSpace(name))
 	}
 
 	next := *cfg
 	next.VisualStyle = selected
-	if err := persistVisualStyle(next, selected); err != nil {
+	if err := configpkg.PersistVisualStyle(next, selected); err != nil {
 		return fmt.Errorf("theme was not changed: %w", err)
 	}
 
 	effective := effectivePresentation(next, *deps)
-	nextRenderer := newRenderer(deps.Stdout, presentation{
+	nextRenderer := uipkg.NewRenderer(deps.Stdout, presentation{
 		Style: effective.Style,
 		ANSI:  effective.ANSI,
 		User:  promptPresentationUser(next, user),
@@ -919,7 +928,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		"history_count":      len(history),
 		"state":              state,
 	})
-	ctx = withTraceTurnID(ctx, turnID)
+	ctx = tracepkg.WithTurnID(ctx, turnID)
 	if request.AcceptedProposal {
 		deps.Trace.Record("pending_proposal_accepted", turnID, "session", -1, map[string]any{
 			"objective": objective,
@@ -958,11 +967,11 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 	}()
 
 	if cfg.Debug || cfg.Verbose {
-		printContextTo(deps.Stdout, ui, cfg, *ctxInfo)
+		uipkg.PrintContextTo(deps.Stdout, ui, cfg, *ctxInfo)
 	}
 
 	if deps.Renderer == nil {
-		deps.Renderer = newRenderer(deps.Stdout, presentation{Style: visualStylePlain, ANSI: ui, User: promptPresentationUser(cfg, ctxInfo.User)})
+		deps.Renderer = uipkg.NewRenderer(deps.Stdout, presentation{Style: configpkg.VisualStylePlain, ANSI: ui, User: promptPresentationUser(cfg, ctxInfo.User)})
 	}
 	turnUI := deps.Renderer.BeginShelliaTurn(cfg, *ctxInfo)
 	defer turnUI.Close()
@@ -1164,7 +1173,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		}
 
 		if cfg.AskConfirmPlan {
-			executePlan, err := promptPlanExecution(deps.Stdout, ui, deps.Stdin)
+			executePlan, err := uipkg.PromptPlanExecution(deps.Stdout, ui, deps.Stdin)
 			if err != nil {
 				return partialResult(), fmt.Errorf("cannot read plan confirmation: %w", err)
 			}
@@ -1172,7 +1181,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 				"accepted": executePlan,
 			})
 			if !executePlan {
-				printInfoTo(deps.Stdout, ui, "Plan not executed.")
+				uipkg.PrintInfoTo(deps.Stdout, ui, "Plan not executed.")
 				return workflow.result(turnOutcomeDeclined, "declined", "The user declined the plan."), nil
 			}
 		}
@@ -1188,7 +1197,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 				"after":  workflow.evidenceRevision,
 			})
 		}
-		if errors.Is(err, errAborted) {
+		if errors.Is(err, core.ErrAborted) {
 			aborted := partialResult()
 			aborted.Outcome = turnOutcomeDeclined
 			return aborted, err
@@ -1227,7 +1236,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		}
 
 		if workflow.planningLimitReached(round) {
-			keepGoing, limitErr := promptPlanningLimitContinuation(deps.Stdout, ui, deps.Stdin, workflow.planningBudget)
+			keepGoing, limitErr := uipkg.PromptPlanningLimitContinuation(deps.Stdout, ui, deps.Stdin, workflow.planningBudget)
 			if limitErr != nil {
 				return partialResult(), limitErr
 			}
@@ -1269,9 +1278,9 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 	deps := request.Deps
 	ui := request.UI
 
-	systemPrompt, userPrompt := buildLLMPrompts(request.Prompt)
+	systemPrompt, userPrompt := llmpkg.BuildPrompts(request.Prompt)
 	if cfg.RawPrompt {
-		printRawPromptsTo(deps.Stdout, ui, "Raw LLM prompt", systemPrompt, userPrompt)
+		uipkg.PrintRawPromptsTo(deps.Stdout, ui, "Raw LLM prompt", systemPrompt, userPrompt)
 	}
 
 	deps.Trace.Record("llm_prompt", request.TurnID, "planning", request.Round, map[string]any{
@@ -1293,8 +1302,8 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 	if deps.Turn != nil {
 		thinkingPrefix = deps.Turn.ThinkingPrefix()
 	}
-	thinking := startThinkingIndicator(ui, deps.Stdout, thinkingPrefix)
-	rawResponse, err := callPlanningPrompt(ctx, deps.HTTPClient, cfg, systemPrompt, userPrompt)
+	thinking := uipkg.StartThinkingIndicator(ui, deps.Stdout, thinkingPrefix)
+	rawResponse, err := llmpkg.CallPlanningPrompt(ctx, deps.HTTPClient, cfg, systemPrompt, userPrompt)
 	if thinking != nil {
 		thinking.Stop()
 	}
@@ -1309,12 +1318,12 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 	})
 
 	if cfg.RawResponse {
-		printSectionTo(deps.Stdout, ui, "Raw LLM response", colorBlue)
+		uipkg.PrintSectionTo(deps.Stdout, ui, "Raw LLM response", uipkg.ColorBlue)
 		fmt.Fprintln(deps.Stdout, rawResponse)
 		fmt.Fprintln(deps.Stdout)
 	}
 
-	parsed, err := parseResponse(rawResponse)
+	parsed, err := llmpkg.ParseResponse(rawResponse)
 	structuralRepairUsed := false
 	if err != nil {
 		deps.Trace.Record("llm_error", request.TurnID, "planning", request.Round, map[string]any{
@@ -1331,20 +1340,20 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 			"system_prompt": systemPrompt,
 			"user_prompt":   repairPrompt,
 		})
-		repairedRaw, repairErr := callPlanningPrompt(ctx, deps.HTTPClient, cfg, systemPrompt, repairPrompt)
+		repairedRaw, repairErr := llmpkg.CallPlanningPrompt(ctx, deps.HTTPClient, cfg, systemPrompt, repairPrompt)
 		if repairErr != nil {
 			return planningRoundResult{}, repairErr
 		}
 		deps.Trace.Record("llm_response", request.TurnID, "structural_repair", request.Round, map[string]any{
 			"raw_response": repairedRaw,
 		})
-		parsed, err = parseResponse(repairedRaw)
+		parsed, err = llmpkg.ParseResponse(repairedRaw)
 		if err != nil {
 			return planningRoundResult{}, fmt.Errorf("%w: %w", errStructuralResponse, err)
 		}
 	}
 
-	summary, plans, err := normalizePlan(parsed)
+	summary, plans, err := llmpkg.NormalizePlan(parsed)
 	if err != nil {
 		deps.Trace.Record("llm_error", request.TurnID, "planning", request.Round, map[string]any{
 			"error":  err.Error(),

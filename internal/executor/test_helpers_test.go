@@ -22,11 +22,6 @@ const (
 	classificationSafe       = safetypkg.ClassificationSafe
 )
 
-var (
-	defaultConfig   = configpkg.DefaultConfig
-	withTraceTurnID = tracepkg.WithTurnID
-)
-
 func shouldRetryAfterExecutionError(err error, round int, maxRounds int) bool {
 	if round >= maxRounds-1 {
 		return false
@@ -46,9 +41,9 @@ func loopTestContext(t *testing.T) contextInfo {
 	}
 }
 
-func openLoopTrace(t *testing.T) *traceLogger {
+func openLoopTrace(t *testing.T) *tracepkg.Logger {
 	t.Helper()
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.TraceEnabled = true
 	cfg.TraceDir = t.TempDir()
 	logger, err := tracepkg.OpenSession(cfg, loopTestContext(t))
@@ -58,7 +53,7 @@ func openLoopTrace(t *testing.T) *traceLogger {
 	return logger
 }
 
-func closeLoopTraceAndRead(t *testing.T, logger *traceLogger) []map[string]any {
+func closeLoopTraceAndRead(t *testing.T, logger *tracepkg.Logger) []map[string]any {
 	t.Helper()
 	path := logger.Path()
 	if err := logger.Close(); err != nil {

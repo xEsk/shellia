@@ -1,6 +1,10 @@
 package app
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/xEsk/shellia/internal/core"
+)
 
 // TestWorkflowStateKeepsExecutionAuthorityImmutable checks decisions cannot grant authority to /plan.
 func TestWorkflowStateKeepsExecutionAuthorityImmutable(t *testing.T) {
@@ -128,11 +132,11 @@ func TestWorkflowStateAdmitsContextualRepetitions(t *testing.T) {
 
 // TestWorkflowStateAdmitsEveryTypedRepeatReason checks the closed cause set has identical admission semantics.
 func TestWorkflowStateAdmitsEveryTypedRepeatReason(t *testing.T) {
-	reasons := []repeatReason{
-		repeatReasonUserRequested,
-		repeatReasonRetry,
-		repeatReasonVerifyAfterChange,
-		repeatReasonPollChangedState,
+	reasons := []core.RepeatReason{
+		core.RepeatReasonUserRequested,
+		core.RepeatReasonRetry,
+		core.RepeatReasonVerifyAfterChange,
+		core.RepeatReasonPollChangedState,
 	}
 	for _, reason := range reasons {
 		t.Run(string(reason), func(t *testing.T) {

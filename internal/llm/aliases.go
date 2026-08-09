@@ -3,15 +3,12 @@ package llm
 import (
 	configpkg "github.com/xEsk/shellia/internal/config"
 	"github.com/xEsk/shellia/internal/core"
-	safetypkg "github.com/xEsk/shellia/internal/safety"
-	sessionpkg "github.com/xEsk/shellia/internal/session"
 )
 
 type (
 	config             = configpkg.Config
 	contextInfo        = core.ContextInfo
 	historyEntry       = core.HistoryEntry
-	observationMemory  = core.ObservationMemory
 	pendingProposal    = core.PendingProposal
 	sessionState       = core.SessionState
 	commandExecution   = core.CommandExecution
@@ -31,13 +28,4 @@ const (
 	truncationStart               = core.TruncationStart
 	truncationEnd                 = core.TruncationEnd
 	truncationMixed               = core.TruncationMixed
-)
-
-const classificationSafe = safetypkg.ClassificationSafe
-
-var (
-	classifyCommand               = safetypkg.ClassifyCommand
-	higherRisk                    = safetypkg.HigherRisk
-	resolveInstructionForPlanning = sessionpkg.ResolveInstructionForPlanning
-	defaultConfig                 = configpkg.DefaultConfig
 )

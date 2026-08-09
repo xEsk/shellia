@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -218,7 +220,7 @@ func TestBuildUserPromptDeclaresImmutableExecutionAuthority(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := defaultConfig()
+			cfg := configpkg.DefaultConfig()
 			cfg.PlanOnly = tt.planOnly
 			prompt := buildUserPrompt(PromptRequest{
 				Config:                  cfg,
@@ -237,7 +239,7 @@ func TestBuildUserPromptDeclaresImmutableExecutionAuthority(t *testing.T) {
 }
 
 func TestBuildUserPromptIncludesPendingStructuredProposal(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	prompt := buildUserPrompt(PromptRequest{
 		Config:      cfg,
 		Instruction: "potser",
@@ -258,7 +260,7 @@ func TestBuildUserPromptIncludesPendingStructuredProposal(t *testing.T) {
 // TestBuildUserPromptOmitsDisabledSessionMemory checks local memory is not
 // leaked when its configuration switch is off.
 func TestBuildUserPromptOmitsDisabledSessionMemory(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.IncludeSessionMemory = false
 	prompt := buildUserPrompt(PromptRequest{
 		Config:      cfg,
@@ -283,7 +285,7 @@ func TestBuildUserPromptOmitsDisabledSessionMemory(t *testing.T) {
 // TestBuildUserPromptOmitsDisabledObservations checks command output respects
 // the existing recent-observation configuration boundary.
 func TestBuildUserPromptOmitsDisabledObservations(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.IncludeRecentObservations = false
 	prompt := buildUserPrompt(PromptRequest{
 		Config:           cfg,
@@ -310,7 +312,7 @@ func TestBuildUserPromptOmitsDisabledObservations(t *testing.T) {
 
 // TestBuildUserPromptBoundsEvidenceButKeepsLatestAndRecentFailure checks current evidence is a projection, not a transcript.
 func TestBuildUserPromptBoundsEvidenceButKeepsLatestAndRecentFailure(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.MaxObservationEntries = 2
 	cfg.ObservationOutputChars = 40
 	prompt := buildUserPrompt(PromptRequest{
@@ -342,7 +344,7 @@ func TestBuildUserPromptBoundsEvidenceButKeepsLatestAndRecentFailure(t *testing.
 
 func TestBuildUserPromptMapsValidCompletionReferencesDuringRepair(t *testing.T) {
 	prompt := buildUserPrompt(PromptRequest{
-		Config:        defaultConfig(),
+		Config:        configpkg.DefaultConfig(),
 		Instruction:   "actualitza codex",
 		ContextInfo:   contextInfo{CWD: "/tmp"},
 		DecisionError: "attempt 1 does not belong to evidence revision 2",
@@ -371,7 +373,7 @@ func TestBuildUserPromptMapsValidCompletionReferencesDuringRepair(t *testing.T) 
 
 // TestBuildUserPromptKeepsEntireLatestSkippedBatch checks the entry limit never slices the current decision batch.
 func TestBuildUserPromptKeepsEntireLatestSkippedBatch(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.MaxObservationEntries = 1
 	prompt := buildUserPrompt(PromptRequest{
 		Config:                  cfg,
@@ -400,7 +402,7 @@ func TestBuildUserPromptKeepsEntireLatestSkippedBatch(t *testing.T) {
 
 // TestBuildUserPromptAppliesOneOutputBudget checks multiple observations share the configured evidence budget.
 func TestBuildUserPromptAppliesOneOutputBudget(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.ObservationOutputChars = 12
 	prompt := buildUserPrompt(PromptRequest{
 		Config:                    cfg,
@@ -425,7 +427,7 @@ func TestBuildUserPromptAppliesOneOutputBudget(t *testing.T) {
 
 // TestBuildUserPromptProjectsDecisionAndBoundedAttempts checks causal workflow state survives across rounds without an unbounded ledger.
 func TestBuildUserPromptProjectsDecisionAndBoundedAttempts(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.MaxObservationEntries = 2
 	previous := Response{Action: "execute", Summary: "Inspect and verify."}
 	prompt := buildUserPrompt(PromptRequest{
@@ -463,7 +465,7 @@ func TestTrimForSummaryHandlesNonPositiveLimit(t *testing.T) {
 
 // TestCallPlanningPromptAppliesRequestTimeout checks every workflow decision has the configured request deadline.
 func TestCallPlanningPromptAppliesRequestTimeout(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.RequestTimeout = 10 * time.Millisecond
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		<-request.Context().Done()

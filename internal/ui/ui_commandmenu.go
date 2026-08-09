@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	configpkg "github.com/xEsk/shellia/internal/config"
+	interactivepkg "github.com/xEsk/shellia/internal/interactive"
 )
 
 const (
@@ -67,7 +68,7 @@ func commandMenuSuggestions(input string, cfg config) []commandMenuItem {
 		return modelMenuSuggestions(prefix, cfg)
 	}
 
-	matches := matchingInteractiveSlashCommands(input)
+	matches := interactivepkg.MatchingSlashCommands(input)
 	if len(matches) == 0 {
 		return nil
 	}
@@ -210,5 +211,5 @@ func completeInteractiveCommand(input string, cfg config) (string, bool) {
 		}
 		return "", false
 	}
-	return completeInteractiveSlashCommand(input)
+	return interactivepkg.CompleteSlashCommand(input)
 }

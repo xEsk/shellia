@@ -11,23 +11,23 @@ import (
 
 // TestDefaultConfigShowsSystemOutput checks the visible-output default stays unchanged.
 func TestDefaultConfigShowsSystemOutput(t *testing.T) {
-	if !defaultConfig().ShowSystemOutput {
-		t.Fatalf("defaultConfig().ShowSystemOutput = false, want true")
+	if !configpkg.DefaultConfig().ShowSystemOutput {
+		t.Fatalf("configpkg.DefaultConfig().ShowSystemOutput = false, want true")
 	}
-	if !defaultConfig().ShowCommandPopup {
-		t.Fatalf("defaultConfig().ShowCommandPopup = false, want true")
+	if !configpkg.DefaultConfig().ShowCommandPopup {
+		t.Fatalf("configpkg.DefaultConfig().ShowCommandPopup = false, want true")
 	}
-	if defaultConfig().ConfirmationDefault != ConfirmationDefaultNone {
-		t.Fatalf("defaultConfig().ConfirmationDefault = %q, want %q", defaultConfig().ConfirmationDefault, ConfirmationDefaultNone)
+	if configpkg.DefaultConfig().ConfirmationDefault != configpkg.ConfirmationDefaultNone {
+		t.Fatalf("configpkg.DefaultConfig().ConfirmationDefault = %q, want %q", configpkg.DefaultConfig().ConfirmationDefault, configpkg.ConfirmationDefaultNone)
 	}
-	if defaultConfig().PlanningMaxRounds != defaultPlanningMaxRounds {
-		t.Fatalf("defaultConfig().PlanningMaxRounds = %d, want %d", defaultConfig().PlanningMaxRounds, defaultPlanningMaxRounds)
+	if configpkg.DefaultConfig().PlanningMaxRounds != defaultPlanningMaxRounds {
+		t.Fatalf("configpkg.DefaultConfig().PlanningMaxRounds = %d, want %d", configpkg.DefaultConfig().PlanningMaxRounds, defaultPlanningMaxRounds)
 	}
-	if defaultConfig().TraceEnabled {
-		t.Fatalf("defaultConfig().TraceEnabled = true, want false")
+	if configpkg.DefaultConfig().TraceEnabled {
+		t.Fatalf("configpkg.DefaultConfig().TraceEnabled = true, want false")
 	}
-	if defaultConfig().TraceDir != "" {
-		t.Fatalf("defaultConfig().TraceDir = %q, want empty", defaultConfig().TraceDir)
+	if configpkg.DefaultConfig().TraceDir != "" {
+		t.Fatalf("configpkg.DefaultConfig().TraceDir = %q, want empty", configpkg.DefaultConfig().TraceDir)
 	}
 }
 
@@ -64,9 +64,9 @@ func TestLoadBaseConfigResolvesEveryVisualStyle(t *testing.T) {
 
 // TestDefaultConfigIncludesLocalContext checks context sharing defaults preserve current behaviour.
 func TestDefaultConfigIncludesLocalContext(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	if !cfg.IncludeUser || !cfg.IncludeOS || !cfg.IncludeShell || !cfg.IncludeCWD || !cfg.IncludeSessionMemory || !cfg.IncludeRecentObservations {
-		t.Fatalf("defaultConfig() context flags = %#v, want all enabled", cfg)
+		t.Fatalf("configpkg.DefaultConfig() context flags = %#v, want all enabled", cfg)
 	}
 }
 
@@ -78,8 +78,8 @@ func TestDefaultConfigTemplateOmitsImplicitGitContext(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 
 	var output strings.Builder
-	if err := initConfigFileTo(&output, false); err != nil {
-		t.Fatalf("initConfigFileTo() error = %v", err)
+	if err := configpkg.InitConfigFileTo(&output, false); err != nil {
+		t.Fatalf("configpkg.InitConfigFileTo() error = %v", err)
 	}
 	path := filepath.Join(home, ".config", "shellia", "config.toml")
 	template, err := os.ReadFile(path)
@@ -104,23 +104,23 @@ func TestLoadFileConfigAcceptsObsoleteIncludeGit(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	fileCfg, loadedPath, err := loadFileConfig()
+	fileCfg, loadedPath, err := configpkg.LoadFileConfig()
 	if err != nil {
-		t.Fatalf("loadFileConfig() error = %v", err)
+		t.Fatalf("configpkg.LoadFileConfig() error = %v", err)
 	}
 	if loadedPath != path {
-		t.Fatalf("loadFileConfig() path = %q, want %q", loadedPath, path)
+		t.Fatalf("configpkg.LoadFileConfig() path = %q, want %q", loadedPath, path)
 	}
 	if fileCfg.Context.IncludeCWD == nil || !*fileCfg.Context.IncludeCWD {
-		t.Fatalf("loadFileConfig() did not preserve supported context setting: %#v", fileCfg.Context)
+		t.Fatalf("configpkg.LoadFileConfig() did not preserve supported context setting: %#v", fileCfg.Context)
 	}
 }
 
 // TestApplyFileConfigCanDisableContextFields checks the context visibility Config flags.
 func TestApplyFileConfigCanDisableContextFields(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	disabled := false
-	fileCfg := FileConfig{}
+	fileCfg := configpkg.FileConfig{}
 	fileCfg.Context.IncludeUser = &disabled
 	fileCfg.Context.IncludeOS = &disabled
 	fileCfg.Context.IncludeShell = &disabled
@@ -128,7 +128,7 @@ func TestApplyFileConfigCanDisableContextFields(t *testing.T) {
 	fileCfg.Context.IncludeSessionMemory = &disabled
 	fileCfg.Context.IncludeRecentObservations = &disabled
 
-	applyFileConfig(&cfg, fileCfg)
+	configpkg.ApplyFileConfig(&cfg, fileCfg)
 
 	if cfg.IncludeUser || cfg.IncludeOS || cfg.IncludeShell || cfg.IncludeCWD || cfg.IncludeSessionMemory || cfg.IncludeRecentObservations {
 		t.Fatalf("context flags = %#v, want all disabled", cfg)
@@ -137,11 +137,11 @@ func TestApplyFileConfigCanDisableContextFields(t *testing.T) {
 
 // TestApplyFileConfigCanDisableSystemOutput checks the UI output visibility Config flag.
 func TestApplyFileConfigCanDisableSystemOutput(t *testing.T) {
-	cfg := defaultConfig()
-	fileCfg := FileConfig{}
+	cfg := configpkg.DefaultConfig()
+	fileCfg := configpkg.FileConfig{}
 	fileCfg.UI.ShowSystemOutput = new(false)
 
-	applyFileConfig(&cfg, fileCfg)
+	configpkg.ApplyFileConfig(&cfg, fileCfg)
 
 	if cfg.ShowSystemOutput {
 		t.Fatalf("ShowSystemOutput = true, want false")
@@ -150,11 +150,11 @@ func TestApplyFileConfigCanDisableSystemOutput(t *testing.T) {
 
 // TestApplyFileConfigCanHideCommandPopup checks the command popup visibility Config flag.
 func TestApplyFileConfigCanHideCommandPopup(t *testing.T) {
-	cfg := defaultConfig()
-	fileCfg := FileConfig{}
+	cfg := configpkg.DefaultConfig()
+	fileCfg := configpkg.FileConfig{}
 	fileCfg.UI.ShowCommandPopup = new(false)
 
-	applyFileConfig(&cfg, fileCfg)
+	configpkg.ApplyFileConfig(&cfg, fileCfg)
 
 	if cfg.ShowCommandPopup {
 		t.Fatalf("ShowCommandPopup = true, want false")
@@ -163,24 +163,24 @@ func TestApplyFileConfigCanHideCommandPopup(t *testing.T) {
 
 // TestApplyFileConfigCanSetConfirmationDefault checks the Enter confirmation shortcut Config.
 func TestApplyFileConfigCanSetConfirmationDefault(t *testing.T) {
-	cfg := defaultConfig()
-	fileCfg := FileConfig{}
+	cfg := configpkg.DefaultConfig()
+	fileCfg := configpkg.FileConfig{}
 	fileCfg.Execution.ConfirmationDefault = "yes"
 
-	applyFileConfig(&cfg, fileCfg)
+	configpkg.ApplyFileConfig(&cfg, fileCfg)
 
-	if cfg.ConfirmationDefault != ConfirmationDefaultYes {
-		t.Fatalf("ConfirmationDefault = %q, want %q", cfg.ConfirmationDefault, ConfirmationDefaultYes)
+	if cfg.ConfirmationDefault != configpkg.ConfirmationDefaultYes {
+		t.Fatalf("configpkg.ConfirmationDefault = %q, want %q", cfg.ConfirmationDefault, configpkg.ConfirmationDefaultYes)
 	}
 }
 
 // TestApplyFileConfigCanSetPlanningMaxRounds checks the planning round cap is configurable.
 func TestApplyFileConfigCanSetPlanningMaxRounds(t *testing.T) {
-	cfg := defaultConfig()
-	fileCfg := FileConfig{}
+	cfg := configpkg.DefaultConfig()
+	fileCfg := configpkg.FileConfig{}
 	fileCfg.Execution.PlanningMaxRounds = 7
 
-	applyFileConfig(&cfg, fileCfg)
+	configpkg.ApplyFileConfig(&cfg, fileCfg)
 
 	if cfg.PlanningMaxRounds != 7 {
 		t.Fatalf("PlanningMaxRounds = %d, want 7", cfg.PlanningMaxRounds)
@@ -189,13 +189,13 @@ func TestApplyFileConfigCanSetPlanningMaxRounds(t *testing.T) {
 
 // TestApplyFileConfigCanEnableTrace checks the trace Config block.
 func TestApplyFileConfigCanEnableTrace(t *testing.T) {
-	cfg := defaultConfig()
-	fileCfg := FileConfig{}
+	cfg := configpkg.DefaultConfig()
+	fileCfg := configpkg.FileConfig{}
 	fileCfg.Trace.Enabled = new(bool)
 	*fileCfg.Trace.Enabled = true
 	fileCfg.Trace.Dir = "/tmp/shellia-traces"
 
-	applyFileConfig(&cfg, fileCfg)
+	configpkg.ApplyFileConfig(&cfg, fileCfg)
 
 	if !cfg.TraceEnabled {
 		t.Fatalf("TraceEnabled = false, want true")
@@ -208,9 +208,9 @@ func TestApplyFileConfigCanEnableTrace(t *testing.T) {
 // TestApplyEnvConfigCanOverridePlanningMaxRounds checks one-shot planning cap overrides.
 func TestApplyEnvConfigCanOverridePlanningMaxRounds(t *testing.T) {
 	t.Setenv("SHELLIA_PLANNING_MAX_ROUNDS", "9")
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 
-	applyEnvConfig(&cfg)
+	configpkg.ApplyEnvConfig(&cfg)
 
 	if cfg.PlanningMaxRounds != 9 {
 		t.Fatalf("PlanningMaxRounds = %d, want 9", cfg.PlanningMaxRounds)
@@ -222,20 +222,20 @@ func TestNormalizeConfirmationDefaultAcceptsShortAliases(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
-		want  ConfirmationDefault
+		want  configpkg.ConfirmationDefault
 	}{
-		{name: "yes alias", input: "y", want: ConfirmationDefaultYes},
-		{name: "no alias", input: "n", want: ConfirmationDefaultNo},
-		{name: "edit alias", input: "e", want: ConfirmationDefaultEdit},
-		{name: "interactive alias", input: "i", want: ConfirmationDefaultInteractive},
-		{name: "null alias", input: "null", want: ConfirmationDefaultNone},
-		{name: "unsupported fallback", input: "unsupported", want: ConfirmationDefaultNo},
+		{name: "yes alias", input: "y", want: configpkg.ConfirmationDefaultYes},
+		{name: "no alias", input: "n", want: configpkg.ConfirmationDefaultNo},
+		{name: "edit alias", input: "e", want: configpkg.ConfirmationDefaultEdit},
+		{name: "interactive alias", input: "i", want: configpkg.ConfirmationDefaultInteractive},
+		{name: "null alias", input: "null", want: configpkg.ConfirmationDefaultNone},
+		{name: "unsupported fallback", input: "unsupported", want: configpkg.ConfirmationDefaultNo},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := normalizeConfirmationDefault(tt.input, ConfirmationDefaultNo); got != tt.want {
-				t.Fatalf("normalizeConfirmationDefault(%q) = %q, want %q", tt.input, got, tt.want)
+			if got := configpkg.NormalizeConfirmationDefault(tt.input, configpkg.ConfirmationDefaultNo); got != tt.want {
+				t.Fatalf("configpkg.NormalizeConfirmationDefault(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
 	}
@@ -757,8 +757,8 @@ func TestInitConfigFileCreatesPreferredConfigPath(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 
 	var output strings.Builder
-	if err := initConfigFileTo(&output, false); err != nil {
-		t.Fatalf("initConfigFileTo() error = %v", err)
+	if err := configpkg.InitConfigFileTo(&output, false); err != nil {
+		t.Fatalf("configpkg.InitConfigFileTo() error = %v", err)
 	}
 
 	path := filepath.Join(home, ".config", "shellia", "config.toml")
@@ -773,20 +773,20 @@ func TestInitConfigFileCreatesPreferredConfigPath(t *testing.T) {
 // TestUpdateDefaultModelTOMLReplacesExisting checks the top-level default_model is updated in place.
 func TestUpdateDefaultModelTOMLReplacesExisting(t *testing.T) {
 	input := "# Config\n default_model = \"openai\"\n\n[[models]]\nname = \"mlx\"\n"
-	got := updateDefaultModelTOML(input, "mlx")
+	got := configpkg.UpdateDefaultModelTOML(input, "mlx")
 	want := "# Config\ndefault_model = \"mlx\"\n\n[[models]]\nname = \"mlx\"\n"
 	if got != want {
-		t.Fatalf("updateDefaultModelTOML() = %q, want %q", got, want)
+		t.Fatalf("configpkg.UpdateDefaultModelTOML() = %q, want %q", got, want)
 	}
 }
 
 // TestUpdateDefaultModelTOMLInsertsBeforeFirstTable checks missing defaults are inserted without reordering tables.
 func TestUpdateDefaultModelTOMLInsertsBeforeFirstTable(t *testing.T) {
 	input := "# Config\n\n[[models]]\nname = \"mlx\"\n"
-	got := updateDefaultModelTOML(input, "mlx")
+	got := configpkg.UpdateDefaultModelTOML(input, "mlx")
 	want := "# Config\n\ndefault_model = \"mlx\"\n[[models]]\nname = \"mlx\"\n"
 	if got != want {
-		t.Fatalf("updateDefaultModelTOML() = %q, want %q", got, want)
+		t.Fatalf("configpkg.UpdateDefaultModelTOML() = %q, want %q", got, want)
 	}
 }
 
@@ -798,10 +798,10 @@ func TestPersistDefaultModelKeepsConfigBody(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.ConfigPath = path
-	if err := persistDefaultModel(cfg, "mlx"); err != nil {
-		t.Fatalf("persistDefaultModel() error = %v", err)
+	if err := configpkg.PersistDefaultModel(cfg, "mlx"); err != nil {
+		t.Fatalf("configpkg.PersistDefaultModel() error = %v", err)
 	}
 
 	data, err := os.ReadFile(path)
@@ -821,13 +821,13 @@ func TestSettingsPathUsesXDGConfigHome(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", configHome)
 
-	path, err := settingsPath()
+	path, err := configpkg.SettingsPath()
 	if err != nil {
-		t.Fatalf("settingsPath() error = %v", err)
+		t.Fatalf("configpkg.SettingsPath() error = %v", err)
 	}
 	want := filepath.Join(configHome, "shellia", "config.toml")
 	if path != want {
-		t.Fatalf("settingsPath() = %q, want %q", path, want)
+		t.Fatalf("configpkg.SettingsPath() = %q, want %q", path, want)
 	}
 }
 

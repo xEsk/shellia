@@ -6,11 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	configpkg "github.com/xEsk/shellia/internal/config"
 )
 
 func TestOpenSessionTraceDisabledCreatesNoFile(t *testing.T) {
 	dir := t.TempDir()
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.TraceDir = dir
 
 	logger, err := openSessionTrace(cfg, contextInfo{})
@@ -32,7 +34,7 @@ func TestOpenSessionTraceDisabledCreatesNoFile(t *testing.T) {
 
 func TestOpenSessionTraceCreatesJSONLEvents(t *testing.T) {
 	dir := t.TempDir()
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.TraceEnabled = true
 	cfg.TraceDir = dir
 

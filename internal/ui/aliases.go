@@ -3,8 +3,6 @@ package ui
 import (
 	configpkg "github.com/xEsk/shellia/internal/config"
 	"github.com/xEsk/shellia/internal/core"
-	interactivepkg "github.com/xEsk/shellia/internal/interactive"
-	llmpkg "github.com/xEsk/shellia/internal/llm"
 	safetypkg "github.com/xEsk/shellia/internal/safety"
 )
 
@@ -15,7 +13,6 @@ type (
 	contextInfo         = core.ContextInfo
 	interactiveMode     = core.InteractiveMode
 	commandPlan         = core.CommandPlan
-	llmResponse         = llmpkg.Response
 )
 
 const (
@@ -32,10 +29,4 @@ const (
 	riskHigh                = safetypkg.RiskHigh
 	classificationSafe      = safetypkg.ClassificationSafe
 	classificationDangerous = safetypkg.ClassificationDangerous
-)
-
-var (
-	defaultConfig                    = configpkg.DefaultConfig
-	matchingInteractiveSlashCommands = interactivepkg.MatchingSlashCommands
-	completeInteractiveSlashCommand  = interactivepkg.CompleteSlashCommand
 )

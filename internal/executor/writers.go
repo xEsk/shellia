@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	uipkg "github.com/xEsk/shellia/internal/ui"
 )
 
 type prefixedWriter struct {
-	box     *stepBox
+	box     *uipkg.StepBox
 	hidden  bool
 	started bool
 	buffer  string
@@ -83,7 +85,7 @@ func (writer *directShellWriter) Write(data []byte) (int, error) {
 				}
 				writer.started = true
 			}
-			if _, err := fmt.Fprint(writer.target, styleStart(writer.ui, colorDim)); err != nil {
+			if _, err := fmt.Fprint(writer.target, uipkg.StyleStart(writer.ui, uipkg.ColorDim)); err != nil {
 				return 0, err
 			}
 			writer.lineStart = false
@@ -98,7 +100,7 @@ func (writer *directShellWriter) Write(data []byte) (int, error) {
 		}
 
 		chunk := text[:newlineIndex]
-		if _, err := fmt.Fprint(writer.target, chunk, styleEnd(writer.ui), "\n"); err != nil {
+		if _, err := fmt.Fprint(writer.target, chunk, uipkg.StyleEnd(writer.ui), "\n"); err != nil {
 			return 0, err
 		}
 		writer.lineStart = true
@@ -113,6 +115,6 @@ func (writer *directShellWriter) Flush() error {
 	if writer.lineStart {
 		return nil
 	}
-	_, err := fmt.Fprint(writer.target, styleEnd(writer.ui))
+	_, err := fmt.Fprint(writer.target, uipkg.StyleEnd(writer.ui))
 	return err
 }

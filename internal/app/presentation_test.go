@@ -38,7 +38,7 @@ func TestEffectivePresentation(t *testing.T) {
 			}
 			defer stdout.Close()
 
-			cfg := defaultConfig()
+			cfg := configpkg.DefaultConfig()
 			cfg.VisualStyle = tt.style
 			cfg.NoColor = tt.noColor
 			deps := runtimeDeps{
@@ -55,7 +55,7 @@ func TestEffectivePresentation(t *testing.T) {
 }
 
 func TestPromptPresentationUserHonorsConfiguredIdentity(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	if got, want := promptPresentationUser(cfg, "xesc"), "xesc"; got != want {
 		t.Fatalf("user identity label = %q, want %q", got, want)
 	}

@@ -15,6 +15,9 @@ import (
 	"unicode/utf8"
 
 	configpkg "github.com/xEsk/shellia/internal/config"
+	"github.com/xEsk/shellia/internal/core"
+	safetypkg "github.com/xEsk/shellia/internal/safety"
+	tracepkg "github.com/xEsk/shellia/internal/trace"
 	uipkg "github.com/xEsk/shellia/internal/ui"
 )
 
@@ -22,7 +25,7 @@ import (
 // rendered immediately while a trailing partial line waits for Flush.
 func TestPrefixedWriterStreamsLinesAndFlushesPartial(t *testing.T) {
 	var output bytes.Buffer
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.VisualStyle = configpkg.VisualStyleCards
 	turn := uipkg.NewRenderer(&output, uipkg.Presentation{Style: cfg.VisualStyle}).BeginShelliaTurn(cfg, loopTestContext(t))
 	defer turn.Close()
@@ -51,7 +54,7 @@ func TestPrefixedWriterStreamsLinesAndFlushesPartial(t *testing.T) {
 // TestPrefixedWriterDefersPartialOutputState checks a partial write is not
 // classified as visible output until it is flushed to the step surface.
 func TestPrefixedWriterDefersPartialOutputState(t *testing.T) {
-	box := newStepBox(io.Discard, false, "step 1/1")
+	box := uipkg.NewStepBox(io.Discard, false, "step 1/1")
 	writer := &prefixedWriter{box: box}
 
 	if _, err := writer.Write([]byte("partial")); err != nil {
@@ -72,7 +75,7 @@ func TestPrefixedWriterDefersPartialOutputState(t *testing.T) {
 // boundaries do not corrupt UTF-8 and stdout/stderr can share one step.
 func TestPrefixedWriterPreservesSplitUTF8AndIndependentStreams(t *testing.T) {
 	var output bytes.Buffer
-	box := newStepBox(&output, false, "step 1/1")
+	box := uipkg.NewStepBox(&output, false, "step 1/1")
 	stdout := &prefixedWriter{box: box}
 	stderr := &prefixedWriter{box: box}
 	payload := []byte("cafè ☕\n")
@@ -105,7 +108,7 @@ func TestPrefixedWriterPreservesSplitUTF8AndIndependentStreams(t *testing.T) {
 // invisible even after complete and partial writes are flushed.
 func TestPrefixedWriterHiddenModeEmitsNothing(t *testing.T) {
 	var output bytes.Buffer
-	box := newStepBox(&output, false, "step 1/1")
+	box := uipkg.NewStepBox(&output, false, "step 1/1")
 	baseline := output.String()
 	writer := &prefixedWriter{box: box, hidden: true}
 
@@ -149,7 +152,7 @@ func TestExecuteCommandsUsesActiveTurn(t *testing.T) {
 	}
 	t.Cleanup(func() { stdin.Close() }) //nolint:errcheck // best-effort test cleanup.
 
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.YesSafe = true
 	cfg.ShowSystemOutput = true
 	cfg.ShowCommandPopup = true
@@ -203,7 +206,7 @@ func TestExecuteManualCommandUsesActiveTurn(t *testing.T) {
 	}
 	t.Cleanup(func() { stdin.Close() }) //nolint:errcheck // best-effort test cleanup.
 
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.VisualStyle = configpkg.VisualStyleCards
 	cfg.ShowSystemOutput = false
 	ctxInfo := loopTestContext(t)
@@ -271,7 +274,7 @@ func TestExecuteInteractiveCommandSuspendsCardsAroundRawPTY(t *testing.T) {
 			}
 			t.Cleanup(func() { stdin.Close() }) //nolint:errcheck // best-effort test cleanup.
 
-			cfg := defaultConfig()
+			cfg := configpkg.DefaultConfig()
 			cfg.VisualStyle = configpkg.VisualStyleCards
 			ctxInfo := loopTestContext(t)
 			turn := uipkg.NewRenderer(stdout, uipkg.Presentation{Style: cfg.VisualStyle}).BeginShelliaTurn(cfg, ctxInfo)
@@ -519,7 +522,7 @@ func TestCommandRunErrorUnwrapsCause(t *testing.T) {
 
 // TestExecuteOneCommandRespectsTimeout checks command deadlines cancel subprocesses.
 func TestExecuteOneCommandRespectsTimeout(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.CommandTimeout = 10 * time.Millisecond
 	cfg.ShowSystemOutput = false
 	cfg.CaptureStdoutBytes = 1024
@@ -549,7 +552,7 @@ func TestExecuteOneCommandRespectsTimeout(t *testing.T) {
 
 // TestExecuteOneCommandTimeoutStopsDescendants checks timed-out commands cannot leave child processes running.
 func TestExecuteOneCommandTimeoutStopsDescendants(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.CommandTimeout = 20 * time.Millisecond
 	cfg.ShowSystemOutput = false
 	cfg.CaptureStdoutBytes = 1024
@@ -672,7 +675,7 @@ func TestApplySessionStateIgnoresFailedCommand(t *testing.T) {
 
 // TestExecuteCommandsContinuesOnlyIndependentStepsAfterFailure checks dependent commands are skipped after an ordinary failure.
 func TestExecuteCommandsContinuesOnlyIndependentStepsAfterFailure(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.YesSafe = true
 	cfg.ContinueOnError = true
 	cfg.ShowSystemOutput = false
@@ -688,11 +691,11 @@ func TestExecuteCommandsContinuesOnlyIndependentStepsAfterFailure(t *testing.T) 
 	logger := openLoopTrace(t)
 	turnID := logger.StartTurn(nil)
 
-	var batch commandBatchResult
+	var batch core.CommandBatchResult
 	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
 		deps.Trace = logger
 		var err error
-		batch, err = executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
+		batch, err = executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -731,7 +734,7 @@ func TestExecuteCommandsContinuesOnlyIndependentStepsAfterFailure(t *testing.T) 
 // TestExecuteCommandsSkipsDuplicateSuccessfulCommandInBatch checks a command
 // completed successfully earlier in the batch is not confirmed or executed again.
 func TestExecuteCommandsSkipsDuplicateSuccessfulCommandInBatch(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.YesSafe = true
 	cfg.ShowSystemOutput = false
 	cfg.ShowCommandPopup = false
@@ -743,11 +746,11 @@ func TestExecuteCommandsSkipsDuplicateSuccessfulCommandInBatch(t *testing.T) {
 	logger := openLoopTrace(t)
 	turnID := logger.StartTurn(nil)
 
-	var batch commandBatchResult
+	var batch core.CommandBatchResult
 	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
 		deps.Trace = logger
 		var err error
-		batch, err = executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
+		batch, err = executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -756,7 +759,7 @@ func TestExecuteCommandsSkipsDuplicateSuccessfulCommandInBatch(t *testing.T) {
 	if len(batch.Executions) != 1 || batch.Executions[0].Command != plans[0].Command {
 		t.Fatalf("executions = %#v, want first command only", batch.Executions)
 	}
-	if len(batch.Skipped) != 1 || batch.Skipped[0].Command != plans[1].Command || batch.Skipped[0].Reason != repeatReasonRequired {
+	if len(batch.Skipped) != 1 || batch.Skipped[0].Command != plans[1].Command || batch.Skipped[0].Reason != core.RepeatReasonRequired {
 		t.Fatalf("skipped = %#v, want duplicate success skip", batch.Skipped)
 	}
 	if batch.HadOrdinaryFailure || batch.HadTimeout {
@@ -768,7 +771,7 @@ func TestExecuteCommandsSkipsDuplicateSuccessfulCommandInBatch(t *testing.T) {
 		t.Fatalf("duplicate command was confirmed or started")
 	}
 	skippedEvents := traceEventsByName(events, "command_skipped")
-	if len(skippedEvents) != 1 || traceEventData(t, skippedEvents[0])["reason"] != repeatReasonRequired {
+	if len(skippedEvents) != 1 || traceEventData(t, skippedEvents[0])["reason"] != core.RepeatReasonRequired {
 		t.Fatalf("command_skipped events = %#v, want duplicate success reason", skippedEvents)
 	}
 }
@@ -776,24 +779,24 @@ func TestExecuteCommandsSkipsDuplicateSuccessfulCommandInBatch(t *testing.T) {
 // TestExecuteCommandsDoesNotAutoRunCommandSubstitutionWithYesSafe checks local
 // auto-safe execution cannot bypass confirmation for executable substitutions.
 func TestExecuteCommandsDoesNotAutoRunCommandSubstitutionWithYesSafe(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.YesSafe = true
 	cfg.ShowSystemOutput = false
 	cfg.ShowCommandPopup = false
 	ctxInfo := loopTestContext(t)
 	marker := filepath.Join(ctxInfo.CWD, "command-substitution-ran")
 	command := fmt.Sprintf(`echo "$(touch %s)"`, marker)
-	localSafety := classifyCommand(command)
+	localSafety := safetypkg.ClassifyCommand(command)
 	plans := []commandPlan{{
 		Command:              command,
 		Purpose:              "Print safe-looking output",
-		Risk:                 higherRisk("safe", localSafety.Risk),
+		Risk:                 safetypkg.HigherRisk("safe", localSafety.Risk),
 		RequiresConfirmation: localSafety.RequiresConfirmation,
 		Classification:       localSafety.Classification,
 		LocalSafe:            localSafety.Classification == classificationSafe && !localSafety.RequiresConfirmation,
 	}}
 
-	var batch commandBatchResult
+	var batch core.CommandBatchResult
 	var runErr error
 	captureMainLoopIO(t, "n\n", nil, func(deps RuntimeDeps) {
 		batch, runErr = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, nil)
@@ -802,7 +805,7 @@ func TestExecuteCommandsDoesNotAutoRunCommandSubstitutionWithYesSafe(t *testing.
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("command substitution ran despite rejected confirmation: marker error = %v, want os.ErrNotExist", err)
 	}
-	if !errors.Is(runErr, errAborted) {
+	if !errors.Is(runErr, core.ErrAborted) {
 		t.Fatalf("executeCommands() error = %v, want confirmation abort", runErr)
 	}
 	if len(batch.Executions) != 0 {
@@ -812,7 +815,7 @@ func TestExecuteCommandsDoesNotAutoRunCommandSubstitutionWithYesSafe(t *testing.
 
 // TestExecuteCommandsConfirmsTypedRiskyRepeat checks repeat admission never bypasses normal confirmation.
 func TestExecuteCommandsConfirmsTypedRiskyRepeat(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.YesSafe = false
 	cfg.ShowSystemOutput = false
 	cfg.ShowCommandPopup = false
@@ -820,16 +823,16 @@ func TestExecuteCommandsConfirmsTypedRiskyRepeat(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "repeat-marker")
 	plans := []commandPlan{
 		{Command: "touch " + marker, Purpose: "Create marker", Risk: "medium", RequiresConfirmation: true},
-		{Command: "touch " + marker, Purpose: "Repeat marker creation", Risk: "medium", RequiresConfirmation: true, RepeatReason: repeatReasonUserRequested},
+		{Command: "touch " + marker, Purpose: "Repeat marker creation", Risk: "medium", RequiresConfirmation: true, RepeatReason: core.RepeatReasonUserRequested},
 	}
 	logger := openLoopTrace(t)
 	turnID := logger.StartTurn(nil)
 
-	var batch commandBatchResult
+	var batch core.CommandBatchResult
 	captureMainLoopIO(t, "y\ny\n", nil, func(deps RuntimeDeps) {
 		deps.Trace = logger
 		var err error
-		batch, err = executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
+		batch, err = executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -846,7 +849,7 @@ func TestExecuteCommandsConfirmsTypedRiskyRepeat(t *testing.T) {
 
 // TestExecuteCommandsAllowsEditedDuplicateWithReason checks final effective-command admission uses the typed cause.
 func TestExecuteCommandsAllowsEditedDuplicateWithReason(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.YesSafe = false
 	cfg.ShowSystemOutput = false
 	cfg.ShowCommandPopup = false
@@ -854,11 +857,11 @@ func TestExecuteCommandsAllowsEditedDuplicateWithReason(t *testing.T) {
 	plans := []commandPlan{{
 		Command:      "printf proposed",
 		Purpose:      "Repeat edited inspection",
-		RepeatReason: repeatReasonUserRequested,
+		RepeatReason: core.RepeatReasonUserRequested,
 	}}
 	prior := []commandExecution{{Command: "printf prior", ExitCode: 0}}
 
-	var batch commandBatchResult
+	var batch core.CommandBatchResult
 	captureMainLoopIO(t, "e\nprintf prior\ny\n", nil, func(deps RuntimeDeps) {
 		var err error
 		batch, err = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, prior)
@@ -874,7 +877,7 @@ func TestExecuteCommandsAllowsEditedDuplicateWithReason(t *testing.T) {
 
 // TestExecuteCommandsReconfirmsRiskyEditedCommand checks an edit cannot inherit confirmation for a different command.
 func TestExecuteCommandsReconfirmsRiskyEditedCommand(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.YesSafe = false
 	cfg.ShowSystemOutput = false
 	cfg.ShowCommandPopup = false
@@ -885,13 +888,13 @@ func TestExecuteCommandsReconfirmsRiskyEditedCommand(t *testing.T) {
 	}
 	plans := []commandPlan{{Command: "printf original", Purpose: "Edit command"}}
 
-	var batch commandBatchResult
+	var batch core.CommandBatchResult
 	var runErr error
 	captureMainLoopIO(t, "e\nrm "+marker+"\n", nil, func(deps RuntimeDeps) {
 		batch, runErr = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, nil)
 	})
 
-	if !errors.Is(runErr, errAborted) {
+	if !errors.Is(runErr, core.ErrAborted) {
 		t.Fatalf("executeCommands() error = %v, want confirmation abort", runErr)
 	}
 	if len(batch.Executions) != 0 {
@@ -905,7 +908,7 @@ func TestExecuteCommandsReconfirmsRiskyEditedCommand(t *testing.T) {
 // TestExecuteCommandsDoesNotSuppressPreviouslyFailedEffectiveCommand checks
 // a failed effective identity from an earlier turn batch remains retryable.
 func TestExecuteCommandsDoesNotSuppressPreviouslyFailedEffectiveCommand(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.YesSafe = true
 	cfg.ShowSystemOutput = false
 	cfg.ShowCommandPopup = false
@@ -913,7 +916,7 @@ func TestExecuteCommandsDoesNotSuppressPreviouslyFailedEffectiveCommand(t *testi
 	plans := []commandPlan{{Command: "false", Purpose: "Retry failure", Classification: classificationSafe, LocalSafe: true}}
 	priorExecutions := []commandExecution{{Command: " false\t", Purpose: "Earlier failure", ExitCode: 1}}
 
-	var batch commandBatchResult
+	var batch core.CommandBatchResult
 	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
 		var err error
 		batch, err = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, priorExecutions)
@@ -932,7 +935,7 @@ func TestExecuteCommandsDoesNotSuppressPreviouslyFailedEffectiveCommand(t *testi
 
 // TestExecuteCommandsStopsBatchWhenContinueOnErrorIsFalse checks a failure stops all later commands.
 func TestExecuteCommandsStopsBatchWhenContinueOnErrorIsFalse(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.YesSafe = true
 	cfg.ContinueOnError = false
 	cfg.ShowSystemOutput = false
@@ -946,7 +949,7 @@ func TestExecuteCommandsStopsBatchWhenContinueOnErrorIsFalse(t *testing.T) {
 		{Command: "touch " + independent, Purpose: "Independent", Classification: classificationSafe, LocalSafe: true, IndependentOnFailure: true},
 	}
 
-	var batch commandBatchResult
+	var batch core.CommandBatchResult
 	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
 		var err error
 		batch, err = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, nil)
@@ -970,7 +973,7 @@ func TestExecuteCommandsStopsBatchWhenContinueOnErrorIsFalse(t *testing.T) {
 
 // TestExecuteCommandsTracksTimeoutWithoutOrdinaryFailure checks timeouts block only dependent commands.
 func TestExecuteCommandsTracksTimeoutWithoutOrdinaryFailure(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.YesSafe = true
 	cfg.ContinueOnError = true
 	cfg.ShowSystemOutput = false
@@ -986,7 +989,7 @@ func TestExecuteCommandsTracksTimeoutWithoutOrdinaryFailure(t *testing.T) {
 		{Command: "touch " + independent, Purpose: "Independent", Classification: classificationSafe, LocalSafe: true, IndependentOnFailure: true},
 	}
 
-	var batch commandBatchResult
+	var batch core.CommandBatchResult
 	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
 		var err error
 		batch, err = executeCommands(t.Context(), deps, false, cfg, &ctxInfo, plans, nil)
@@ -1014,7 +1017,7 @@ func TestExecuteCommandsTracksTimeoutWithoutOrdinaryFailure(t *testing.T) {
 
 // TestExecuteCommandsStopsImmediatelyOnCancellation checks parent cancellation is returned without a fabricated execution.
 func TestExecuteCommandsStopsImmediatelyOnCancellation(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.YesSafe = true
 	cfg.ContinueOnError = true
 	cfg.ShowSystemOutput = false
@@ -1033,7 +1036,7 @@ func TestExecuteCommandsStopsImmediatelyOnCancellation(t *testing.T) {
 		cancel()
 	}()
 
-	var batch commandBatchResult
+	var batch core.CommandBatchResult
 	var runErr error
 	captureMainLoopIO(t, "", nil, func(deps RuntimeDeps) {
 		batch, runErr = executeCommands(ctx, deps, false, cfg, &ctxInfo, plans, nil)
@@ -1052,7 +1055,7 @@ func TestExecuteCommandsStopsImmediatelyOnCancellation(t *testing.T) {
 
 // TestExecuteCommandsTraceRecordsCapturedOutput checks command output metadata is traceable.
 func TestExecuteCommandsTraceRecordsCapturedOutput(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.YesSafe = true
 	cfg.ShowCommandPopup = false
 	cfg.ShowSystemOutput = false
@@ -1071,7 +1074,7 @@ func TestExecuteCommandsTraceRecordsCapturedOutput(t *testing.T) {
 			Classification: classificationSafe,
 			LocalSafe:      true,
 		}}
-		batch, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
+		batch, err := executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -1104,7 +1107,7 @@ func TestExecuteCommandsTraceRecordsCapturedOutput(t *testing.T) {
 
 // TestExecuteCommandsTraceRecordsCommandErrors checks failed commands are diagnosable.
 func TestExecuteCommandsTraceRecordsCommandErrors(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.YesSafe = true
 	cfg.ShowCommandPopup = false
 	cfg.ShowSystemOutput = false
@@ -1122,7 +1125,7 @@ func TestExecuteCommandsTraceRecordsCommandErrors(t *testing.T) {
 			Classification: classificationSafe,
 			LocalSafe:      true,
 		}}
-		batch, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
+		batch, err := executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -1147,7 +1150,7 @@ func TestExecuteCommandsTraceRecordsCommandErrors(t *testing.T) {
 
 // TestExecuteCommandsTraceRecordsEditedCommand checks edited commands are traceable.
 func TestExecuteCommandsTraceRecordsEditedCommand(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.YesSafe = false
 	cfg.ShowCommandPopup = false
 	cfg.ShowSystemOutput = false
@@ -1165,7 +1168,7 @@ func TestExecuteCommandsTraceRecordsEditedCommand(t *testing.T) {
 			Classification: classificationSafe,
 			LocalSafe:      true,
 		}}
-		batch, err := executeCommands(withTraceTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
+		batch, err := executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, cfg, &ctxInfo, plans, nil)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
@@ -1206,7 +1209,7 @@ func TestExecuteCommandsTraceRecordsEditedCommand(t *testing.T) {
 
 // TestExecuteManualCommandTraceRecordsCommand checks direct shell commands are traced.
 func TestExecuteManualCommandTraceRecordsCommand(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.ShowCommandPopup = false
 	cfg.ShowSystemOutput = false
 	cfg.CommandTimeout = 2 * time.Second

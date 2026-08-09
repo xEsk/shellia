@@ -11,5 +11,3 @@ type (
 	capturedStream   = core.CapturedStream
 	commandExecution = core.CommandExecution
 )
-
-var defaultConfig = configpkg.DefaultConfig

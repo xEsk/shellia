@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	configpkg "github.com/xEsk/shellia/internal/config"
+	uipkg "github.com/xEsk/shellia/internal/ui"
 )
 
 func TestSwitchInteractiveThemePersistsAndReplacesRenderer(t *testing.T) {
@@ -21,13 +22,13 @@ func TestSwitchInteractiveThemePersistsAndReplacesRenderer(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = stdout.Close() })
 
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.ConfigPath = path
 	cfg.NoColor = true
 	deps := defaultRuntimeDeps()
 	deps.Stdout = stdout
 	deps.StdoutIsTerminal = func(*os.File) bool { return true }
-	deps.Renderer = newRenderer(stdout, presentation{Style: configpkg.VisualStylePlain})
+	deps.Renderer = uipkg.NewRenderer(stdout, presentation{Style: configpkg.VisualStylePlain})
 	previous := deps.Renderer
 
 	if err := switchInteractiveTheme(&cfg, &deps, "test-user", "CARDS"); err != nil {
@@ -57,11 +58,11 @@ func TestSwitchInteractiveThemePersistsAndReplacesRenderer(t *testing.T) {
 }
 
 func TestSwitchInteractiveThemeFailureKeepsConfigAndRenderer(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.ConfigPath = filepath.Join(t.TempDir(), "missing.toml")
 	cfg.VisualStyle = configpkg.VisualStylePlain
 	deps := defaultRuntimeDeps()
-	deps.Renderer = newRenderer(deps.Stdout, presentation{Style: configpkg.VisualStylePlain})
+	deps.Renderer = uipkg.NewRenderer(deps.Stdout, presentation{Style: configpkg.VisualStylePlain})
 	previous := deps.Renderer
 
 	if err := switchInteractiveTheme(&cfg, &deps, "test-user", "guide"); err == nil {

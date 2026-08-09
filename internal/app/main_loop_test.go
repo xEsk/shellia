@@ -24,7 +24,8 @@ import (
 
 	"github.com/creack/pty"
 	configpkg "github.com/xEsk/shellia/internal/config"
-
+	llmpkg "github.com/xEsk/shellia/internal/llm"
+	tracepkg "github.com/xEsk/shellia/internal/trace"
 	uipkg "github.com/xEsk/shellia/internal/ui"
 )
 
@@ -77,7 +78,7 @@ func (fake *loopLLMClient) RoundTrip(r *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 
-	var request chatCompletionRequest
+	var request llmpkg.ChatCompletionRequest
 	if err := json.Unmarshal(body, &request); err != nil {
 		return nil, fmt.Errorf("invalid fake llm request: %w", err)
 	}
@@ -178,7 +179,7 @@ func (fake *loopLLMClient) requestAuthorizations() []string {
 
 // loopTestConfig returns a minimal config that points every model call at the fake transport.
 func loopTestConfig(baseURL string) config {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.BaseURL = baseURL
 	cfg.APIKey = "test-key"
 	cfg.Model = "test-model"
@@ -218,7 +219,7 @@ var visualAcceptanceANSI = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
 func renderVisualWidthFixture(t *testing.T, style configpkg.VisualStyle, ansi bool, terminalWidth int) string {
 	t.Helper()
 
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.Model = "test-model"
 	cfg.VisualStyle = style
 	cfg.NoColor = !ansi
@@ -235,7 +236,7 @@ func renderVisualWidthFixture(t *testing.T, style configpkg.VisualStyle, ansi bo
 	}
 
 	render := func(target *os.File) {
-		renderer := newRenderer(target, presentation{Style: style, ANSI: ansi, User: ctxInfo.User})
+		renderer := uipkg.NewRenderer(target, presentation{Style: style, ANSI: ansi, User: ctxInfo.User})
 		renderer.UserTurn(core.InteractiveModeAI, "quant d'espai queda al disc?")
 		turn := renderer.BeginShelliaTurn(cfg, ctxInfo)
 		turn.Plan(cfg, "Cal consultar l'espai disponible.", []core.CommandPlan{plan}, false)
@@ -557,12 +558,12 @@ func TestVisualStylesFallBackToPlainWithoutTerminalCapability(t *testing.T) {
 func openLoopTrace(t *testing.T) *traceLogger {
 	t.Helper()
 
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.TraceEnabled = true
 	cfg.TraceDir = t.TempDir()
-	logger, err := openSessionTrace(cfg, contextInfo{})
+	logger, err := tracepkg.OpenSession(cfg, contextInfo{})
 	if err != nil {
-		t.Fatalf("openSessionTrace() error = %v", err)
+		t.Fatalf("tracepkg.OpenSession() error = %v", err)
 	}
 	t.Cleanup(func() {
 		_ = logger.Close()
@@ -677,7 +678,7 @@ func TestSwitchInteractiveModelAppliesAndPersistsDefault(t *testing.T) {
 		content: `{"action":"complete","objective_mode":"explain","success_criteria":"Test answer provided","summary":"Model switched.","completion_basis":{"type":"model_knowledge"},"commands":[]}`,
 	})
 
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.ConfigPath = path
 	cfg.ModelName = "openai"
 	cfg.BaseURL = "http://localhost:8080/v1"
@@ -920,7 +921,7 @@ func TestInteractiveSIGINTCancelsTurnWithoutClosingSession(t *testing.T) {
 
 // TestSwitchInteractiveModelMissingKeepsCurrent checks bad model names do not mutate the session.
 func TestSwitchInteractiveModelMissingKeepsCurrent(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.ModelName = "openai"
 	cfg.BaseURL = "http://localhost:8080/v1"
 	cfg.Model = "openai-model"
@@ -940,7 +941,7 @@ func TestSwitchInteractiveModelMissingKeepsCurrent(t *testing.T) {
 
 // TestPrintModelProfilesToListsActiveModel checks /model without args lists configured profiles.
 func TestPrintModelProfilesToListsActiveModel(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.ModelName = "mlx"
 	cfg.Models = []modelConfig{
 		{Name: "openai", Model: "gpt"},
@@ -1005,13 +1006,13 @@ func TestDoLLMRequestOmitsAuthorizationWhenAPIKeyEmpty(t *testing.T) {
 	cfg := loopTestConfig("http://localhost")
 	cfg.APIKey = ""
 
-	_, err := doLLMRequest(t.Context(), fake.HTTPClient(), cfg, chatCompletionRequest{
+	_, err := llmpkg.DoRequest(t.Context(), fake.HTTPClient(), cfg, llmpkg.ChatCompletionRequest{
 		Model:       cfg.Model,
 		Temperature: 0,
-		Messages:    []chatMessage{{Role: "user", Content: "hello"}},
+		Messages:    []llmpkg.ChatMessage{{Role: "user", Content: "hello"}},
 	})
 	if err != nil {
-		t.Fatalf("doLLMRequest() error = %v", err)
+		t.Fatalf("llmpkg.DoRequest() error = %v", err)
 	}
 
 	headers := fake.requestAuthorizations()
@@ -1026,13 +1027,13 @@ func TestDoLLMRequestSendsAuthorizationWhenAPIKeySet(t *testing.T) {
 	cfg := loopTestConfig(fake.URL())
 	cfg.APIKey = "test-key"
 
-	_, err := doLLMRequest(t.Context(), fake.HTTPClient(), cfg, chatCompletionRequest{
+	_, err := llmpkg.DoRequest(t.Context(), fake.HTTPClient(), cfg, llmpkg.ChatCompletionRequest{
 		Model:       cfg.Model,
 		Temperature: 0,
-		Messages:    []chatMessage{{Role: "user", Content: "hello"}},
+		Messages:    []llmpkg.ChatMessage{{Role: "user", Content: "hello"}},
 	})
 	if err != nil {
-		t.Fatalf("doLLMRequest() error = %v", err)
+		t.Fatalf("llmpkg.DoRequest() error = %v", err)
 	}
 
 	headers := fake.requestAuthorizations()
@@ -1098,12 +1099,12 @@ func TestDoLLMRequestPropagatesContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	_, err := doLLMRequest(ctx, client, cfg, chatCompletionRequest{
+	_, err := llmpkg.DoRequest(ctx, client, cfg, llmpkg.ChatCompletionRequest{
 		Model:    cfg.Model,
-		Messages: []chatMessage{{Role: "user", Content: "hello"}},
+		Messages: []llmpkg.ChatMessage{{Role: "user", Content: "hello"}},
 	})
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("doLLMRequest() error = %v, want context.Canceled", err)
+		t.Fatalf("llmpkg.DoRequest() error = %v, want context.Canceled", err)
 	}
 }
 
@@ -1113,8 +1114,8 @@ func TestCallPlanningPromptUsesResponseFormatForLocalNoKey(t *testing.T) {
 	cfg := loopTestConfig("http://localhost")
 	cfg.APIKey = ""
 
-	if _, err := callPlanningPrompt(t.Context(), fake.HTTPClient(), cfg, "system", "user"); err != nil {
-		t.Fatalf("callPlanningPrompt() error = %v", err)
+	if _, err := llmpkg.CallPlanningPrompt(t.Context(), fake.HTTPClient(), cfg, "system", "user"); err != nil {
+		t.Fatalf("llmpkg.CallPlanningPrompt() error = %v", err)
 	}
 
 	bodies := fake.requestBodies()
@@ -1123,7 +1124,7 @@ func TestCallPlanningPromptUsesResponseFormatForLocalNoKey(t *testing.T) {
 	}
 
 	var body struct {
-		ResponseFormat *responseFormat `json:"response_format"`
+		ResponseFormat *llmpkg.ResponseFormat `json:"response_format"`
 	}
 	if err := json.Unmarshal([]byte(bodies[0]), &body); err != nil {
 		t.Fatalf("Unmarshal(request body) error = %v", err)
@@ -1139,8 +1140,8 @@ func TestCallPlanningPromptOmitsResponseFormatWhenUnsupported(t *testing.T) {
 	cfg := loopTestConfig("http://localhost")
 	cfg.SupportsResponseFormat = false
 
-	if _, err := callPlanningPrompt(t.Context(), fake.HTTPClient(), cfg, "system", "user"); err != nil {
-		t.Fatalf("callPlanningPrompt() error = %v", err)
+	if _, err := llmpkg.CallPlanningPrompt(t.Context(), fake.HTTPClient(), cfg, "system", "user"); err != nil {
+		t.Fatalf("llmpkg.CallPlanningPrompt() error = %v", err)
 	}
 
 	bodies := fake.requestBodies()
@@ -1162,8 +1163,8 @@ func TestCallPlanningPromptKeepsResponseFormatWithKey(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{content: "ok"})
 	cfg := loopTestConfig(fake.URL())
 
-	if _, err := callPlanningPrompt(t.Context(), fake.HTTPClient(), cfg, "system", "user"); err != nil {
-		t.Fatalf("callPlanningPrompt() error = %v", err)
+	if _, err := llmpkg.CallPlanningPrompt(t.Context(), fake.HTTPClient(), cfg, "system", "user"); err != nil {
+		t.Fatalf("llmpkg.CallPlanningPrompt() error = %v", err)
 	}
 
 	bodies := fake.requestBodies()
@@ -1172,7 +1173,7 @@ func TestCallPlanningPromptKeepsResponseFormatWithKey(t *testing.T) {
 	}
 
 	var body struct {
-		ResponseFormat *responseFormat `json:"response_format"`
+		ResponseFormat *llmpkg.ResponseFormat `json:"response_format"`
 	}
 	if err := json.Unmarshal([]byte(bodies[0]), &body); err != nil {
 		t.Fatalf("Unmarshal(request body) error = %v", err)

@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/xEsk/shellia/internal/safety"
+	"github.com/xEsk/shellia/internal/session"
 )
 
 const (
@@ -241,7 +244,7 @@ func newLLMHTTPStatusError(statusCode int, body string, err error) error {
 
 // buildLLMPrompts builds the initial planning prompt pair.
 func buildLLMPrompts(request PromptRequest) (string, string) {
-	resolvedInstruction := resolveInstructionForPlanning(request.Instruction, request.State)
+	resolvedInstruction := session.ResolveInstructionForPlanning(request.Instruction, request.State)
 	if !request.Config.IncludeSessionMemory {
 		resolvedInstruction = request.Instruction
 	}
@@ -422,14 +425,14 @@ func normalizePlan(response Response) (string, []commandPlan, error) {
 	plans := make([]commandPlan, 0, len(response.Commands))
 	for _, item := range response.Commands {
 		command := strings.TrimSpace(item.Command)
-		local := classifyCommand(command)
+		local := safety.ClassifyCommand(command)
 		plans = append(plans, commandPlan{
 			Command:              command,
 			Purpose:              strings.TrimSpace(item.Purpose),
-			Risk:                 higherRisk(strings.TrimSpace(strings.ToLower(item.Risk)), local.Risk),
+			Risk:                 safety.HigherRisk(strings.TrimSpace(strings.ToLower(item.Risk)), local.Risk),
 			RequiresConfirmation: item.RequiresConfirmation || local.RequiresConfirmation,
 			Classification:       local.Classification,
-			LocalSafe:            local.Classification == classificationSafe && !local.RequiresConfirmation,
+			LocalSafe:            local.Classification == safety.ClassificationSafe && !local.RequiresConfirmation,
 			IndependentOnFailure: item.IndependentOnFailure,
 			RepeatReason:         repeatReason(item.RepeatReason),
 			Interactive:          item.Interactive,

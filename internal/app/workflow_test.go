@@ -4,6 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/xEsk/shellia/internal/core"
+	sessionpkg "github.com/xEsk/shellia/internal/session"
 )
 
 // TestRunTurnRepairsActionCompletionWithoutCurrentEvidence checks knowing how
@@ -162,7 +165,7 @@ func TestRunTurnRejectsStalePriorObservationForCurrentQuery(t *testing.T) {
 	state := sessionState{
 		LastRetryInstruction:     "quant espai queda al disc?",
 		LastObservationObjective: "una altra consulta",
-		LastObservations:         []observationMemory{{Command: "df -h /", Purpose: "Old disk state", Transcript: "20 GB"}},
+		LastObservations:         []core.ObservationMemory{{Command: "df -h /", Purpose: "Old disk state", Transcript: "20 GB"}},
 	}
 
 	var result turnResult
@@ -830,7 +833,7 @@ func TestMissingInputFollowUpCarriesBlockerUntilCompletion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("first runTurn() error = %v", err)
 		}
-		updateSessionState(&state, "restart it", first, cfg)
+		sessionpkg.UpdateState(&state, "restart it", first, cfg)
 		second, err := runTurn(t.Context(), deps, false, turnRequest{
 			Config:      cfg,
 			ContextInfo: &ctxInfo,
@@ -840,7 +843,7 @@ func TestMissingInputFollowUpCarriesBlockerUntilCompletion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("second runTurn() error = %v", err)
 		}
-		updateSessionState(&state, "nginx", second, cfg)
+		sessionpkg.UpdateState(&state, "nginx", second, cfg)
 	})
 
 	bodies := fake.requestBodies()
