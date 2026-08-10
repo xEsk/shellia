@@ -241,6 +241,7 @@ func TestClassifyCommandAllowsOnlyKnownReadOnlyGitSubcommands(t *testing.T) {
 		{name: "diff", command: "git diff"},
 		{name: "rev parse", command: "git rev-parse --show-toplevel"},
 		{name: "remote verbose", command: "git remote -v"},
+		{name: "remote get url", command: "git remote get-url --all origin"},
 	}
 
 	for _, tt := range safeCommands {
@@ -260,6 +261,9 @@ func TestClassifyCommandAllowsOnlyKnownReadOnlyGitSubcommands(t *testing.T) {
 		{name: "fetch", command: "git fetch"},
 		{name: "branch", command: "git branch"},
 		{name: "worktree", command: "git worktree list"},
+		{name: "remote remove", command: "git remote remove origin"},
+		{name: "remote set url", command: "git remote set-url origin https://example.invalid/repo.git"},
+		{name: "diff output", command: "git diff --output=changes.patch"},
 	}
 
 	for _, tt := range riskyCommands {
@@ -283,6 +287,10 @@ func TestClassifyCommandRequiresConfirmationForMutatingFind(t *testing.T) {
 		{name: "execdir chmod", command: "find . -execdir chmod 644 {} \\;"},
 		{name: "ok rm", command: "find . -ok rm {} \\;"},
 		{name: "okdir rm", command: "find . -okdir rm {} \\;"},
+		{name: "fprint", command: "find . -fprint results.txt"},
+		{name: "fprint zero", command: "find . -fprint0 results.bin"},
+		{name: "fprintf", command: "find . -fprintf results.txt '%p\\n'"},
+		{name: "fls", command: "find . -fls results.txt"},
 	}
 
 	for _, tt := range riskyCommands {
@@ -292,6 +300,33 @@ func TestClassifyCommandRequiresConfirmationForMutatingFind(t *testing.T) {
 				t.Fatalf("classifyCommand(%q) = %#v, want confirmation required", tt.command, got)
 			}
 		})
+	}
+}
+
+// TestClassifyCommandRequiresConfirmationForRipgrepExecutables checks ripgrep cannot launch helpers under yes-safe.
+func TestClassifyCommandRequiresConfirmationForRipgrepExecutables(t *testing.T) {
+	riskyCommands := []struct {
+		name    string
+		command string
+	}{
+		{name: "pre separate", command: "rg --pre sh marker file"},
+		{name: "pre equals", command: "rg --pre=sh marker file"},
+		{name: "hostname separate", command: "rg --hostname-bin hostname-helper marker file"},
+		{name: "hostname equals", command: "rg --hostname-bin=hostname-helper marker file"},
+	}
+
+	for _, tt := range riskyCommands {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classifyCommand(tt.command)
+			if got.Classification == classificationSafe || !got.RequiresConfirmation {
+				t.Fatalf("classifyCommand(%q) = %#v, want confirmation required", tt.command, got)
+			}
+		})
+	}
+
+	got := classifyCommand("rg --hidden marker internal")
+	if got.Classification != classificationSafe || got.RequiresConfirmation {
+		t.Fatalf("classifyCommand() = %#v, want ordinary ripgrep search safe without confirmation", got)
 	}
 }
 

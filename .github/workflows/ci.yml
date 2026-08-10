@@ -31,4 +31,4 @@ jobs:
           version: v2.12.2
 
       - name: Race tests
-        run: go test -race -count=1 ./internal/app ./internal/executor ./internal/trace ./internal/ui
+        run: go test -race -count=1 ./...

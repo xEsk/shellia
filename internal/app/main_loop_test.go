@@ -144,7 +144,7 @@ func loopHTTPResponse(request *http.Request, status int, body string, headers ma
 
 // URL returns the fake LLM base URL.
 func (fake *loopLLMClient) URL() string {
-	return "http://shellia.test"
+	return "https://shellia.test"
 }
 
 // requestCount returns how many LLM requests reached the fake transport.
@@ -290,7 +290,7 @@ default_model = "test"
 
 [[models]]
 name = "test"
-base_url = "http://shellia.test"
+base_url = "https://shellia.test"
 model = "test-model"
 api_key = "test-key"
 
@@ -1182,7 +1182,7 @@ func TestRunPlanningRoundSelectsResponseModeForProviderCapabilities(t *testing.T
 
 // TestDoLLMRequestPropagatesContextCancellation checks LLM calls preserve cancellation identity.
 func TestDoLLMRequestPropagatesContextCancellation(t *testing.T) {
-	cfg := loopTestConfig("http://shellia.test")
+	cfg := loopTestConfig("https://shellia.test")
 	client := &http.Client{Transport: contextErrorTransport{}}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

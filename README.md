@@ -101,6 +101,8 @@ In practice, if you can configure:
 
 and the endpoint behaves like an OpenAI-compatible chat completions API, Shellia can use it.
 
+Remote endpoints must use HTTPS. Plain HTTP remains available for `localhost` and loopback IPs used by local model servers. Shellia does not follow model endpoint redirects, so credentials are never forwarded to a different URL.
+
 ## Installation
 
 Shellia is a single Go binary.
@@ -353,6 +355,8 @@ Define one or more `[[models]]` entries. Shellia selects the active profile in t
 `--base-url`, `--model`, and `--api-key` are one-shot overrides over the selected profile.
 
 Use `supports_response_format = false` for endpoints that do not support OpenAI's `response_format` parameter. If omitted, Shellia assumes `true`. The official `mlx_lm.server` should normally use `supports_response_format = false`; OpenAI and llama.cpp can use the default.
+
+Unknown TOML keys are rejected with their full path. This makes configuration typos fail explicitly instead of silently falling back to defaults.
 
 ### Configuration precedence
 

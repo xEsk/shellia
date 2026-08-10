@@ -17,6 +17,7 @@ import (
 	configpkg "github.com/xEsk/shellia/internal/config"
 	"github.com/xEsk/shellia/internal/core"
 	executorpkg "github.com/xEsk/shellia/internal/executor"
+	llmpkg "github.com/xEsk/shellia/internal/llm"
 	tracepkg "github.com/xEsk/shellia/internal/trace"
 	uipkg "github.com/xEsk/shellia/internal/ui"
 )
@@ -317,6 +318,9 @@ func finalizeConfig(fs *flag.FlagSet, cfg config, timeoutSecs, reqTimeoutSecs in
 	}
 	if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.Model) == "" {
 		return config{}, fmt.Errorf("missing model configuration: configure [[models]] or pass --base-url and --model")
+	}
+	if err := llmpkg.ValidateBaseURL(cfg.BaseURL); err != nil {
+		return config{}, err
 	}
 
 	remaining := fs.Args()

@@ -20,6 +20,11 @@ func DoRequest(ctx context.Context, client *http.Client, options ClientOptions, 
 	return doLLMRequest(ctx, client, options, req)
 }
 
+// ValidateBaseURL checks that an LLM endpoint uses an allowed transport.
+func ValidateBaseURL(rawURL string) error {
+	return validateBaseURL(rawURL)
+}
+
 // BuildPrompts builds the system and user prompts for one planning request.
 func BuildPrompts(request PromptRequest) (string, string) {
 	return buildLLMPrompts(request)

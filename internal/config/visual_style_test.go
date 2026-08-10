@@ -92,6 +92,10 @@ func TestPersistVisualStyleKeepsConfigBodyAndPermissions(t *testing.T) {
 	if err := os.WriteFile(path, []byte(input), 0o640); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() before update error = %v", err)
+	}
 	cfg := defaultConfig()
 	cfg.ConfigPath = path
 	if err := persistVisualStyle(cfg, VisualStyleCards); err != nil {
@@ -110,5 +114,8 @@ func TestPersistVisualStyleKeepsConfigBodyAndPermissions(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o640 {
 		t.Fatalf("permissions = %o, want 640", got)
+	}
+	if os.SameFile(before, info) {
+		t.Fatal("persistVisualStyle() rewrote the existing inode instead of atomically replacing it")
 	}
 }

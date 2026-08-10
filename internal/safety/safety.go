@@ -37,6 +37,7 @@ var safetyRules = []safetyRule{
 	filesystemModificationRule,
 	systemModificationRule,
 	findRule,
+	ripgrepRule,
 	safeRootRule,
 }
 

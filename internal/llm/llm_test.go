@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -17,6 +18,124 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return fn(request)
+}
+
+type fixedByteReader struct {
+	remaining int
+	read      int
+}
+
+func (reader *fixedByteReader) Read(target []byte) (int, error) {
+	if reader.remaining == 0 {
+		return 0, io.EOF
+	}
+	n := min(len(target), reader.remaining)
+	for index := range n {
+		target[index] = 'x'
+	}
+	reader.remaining -= n
+	reader.read += n
+	return n, nil
+}
+
+func validLLMHTTPResponse() *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"ok"}}]}`)),
+	}
+}
+
+// TestDoLLMRequestRejectsRemoteHTTPBeforeSendingCredentials checks bearer credentials never cross cleartext transport.
+func TestDoLLMRequestRejectsRemoteHTTPBeforeSendingCredentials(t *testing.T) {
+	called := false
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		called = true
+		return validLLMHTTPResponse(), nil
+	})}
+
+	_, err := doLLMRequest(t.Context(), client, ClientOptions{
+		BaseURL: "http://api.example.invalid/v1",
+		APIKey:  "audit-secret",
+	}, chatCompletionRequest{})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "https") {
+		t.Fatalf("doLLMRequest() error = %v, want remote HTTPS requirement", err)
+	}
+	if called {
+		t.Fatal("doLLMRequest() sent a request before rejecting remote HTTP")
+	}
+}
+
+// TestDoLLMRequestAllowsLoopbackHTTP checks local OpenAI-compatible endpoints remain supported.
+func TestDoLLMRequestAllowsLoopbackHTTP(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return validLLMHTTPResponse(), nil
+	})}
+
+	content, err := doLLMRequest(t.Context(), client, ClientOptions{
+		BaseURL: "http://127.0.0.1:11434/v1",
+	}, chatCompletionRequest{})
+	if err != nil {
+		t.Fatalf("doLLMRequest() error = %v", err)
+	}
+	if content != "ok" {
+		t.Fatalf("doLLMRequest() content = %q, want ok", content)
+	}
+}
+
+// TestDoLLMRequestRejectsRedirects checks credentials cannot be forwarded to a redirected endpoint.
+func TestDoLLMRequestRejectsRedirects(t *testing.T) {
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if requests == 1 {
+			response := &http.Response{
+				StatusCode: http.StatusFound,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("redirect")),
+			}
+			response.Header.Set("Location", "https://redirected.example.invalid/v1/chat/completions")
+			return response, nil
+		}
+		return validLLMHTTPResponse(), nil
+	})}
+
+	_, err := doLLMRequest(t.Context(), client, ClientOptions{
+		BaseURL: "https://api.example.invalid/v1",
+		APIKey:  "audit-secret",
+	}, chatCompletionRequest{})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "redirect") {
+		t.Fatalf("doLLMRequest() error = %v, want redirect rejection", err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want only the original endpoint request", requests)
+	}
+}
+
+// TestDoLLMRequestRejectsOversizedResponse checks provider bodies are bounded before decoding.
+func TestDoLLMRequestRejectsOversizedResponse(t *testing.T) {
+	const (
+		maximumResponseBytes = 8 << 20
+		providedBytes        = 16 << 20
+	)
+	body := &fixedByteReader{remaining: providedBytes}
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(body),
+		}, nil
+	})}
+
+	_, err := doLLMRequest(t.Context(), client, ClientOptions{
+		BaseURL: "https://api.example.invalid/v1",
+	}, chatCompletionRequest{})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "too large") {
+		t.Fatalf("doLLMRequest() error = %v, want response-too-large error", err)
+	}
+	if body.read > maximumResponseBytes+1 {
+		t.Fatalf("response bytes read = %d, want at most %d", body.read, maximumResponseBytes+1)
+	}
 }
 
 // TestBuildUserPromptGoldenCharacterizes the complete prompt contract before
@@ -579,6 +698,7 @@ func TestTrimForSummaryHandlesNonPositiveLimit(t *testing.T) {
 // TestCallPlanningPromptAppliesRequestTimeout checks every workflow decision has the configured request deadline.
 func TestCallPlanningPromptAppliesRequestTimeout(t *testing.T) {
 	cfg := configpkg.DefaultConfig()
+	cfg.BaseURL = "https://shellia.test"
 	cfg.RequestTimeout = 10 * time.Millisecond
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		<-request.Context().Done()

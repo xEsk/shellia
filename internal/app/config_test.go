@@ -757,6 +757,51 @@ func TestParseArgsRequiresAPIKeyForRemoteEndpoints(t *testing.T) {
 	}
 }
 
+// TestParseArgsRejectsRemoteHTTP checks insecure hosted endpoints fail during configuration.
+func TestParseArgsRejectsRemoteHTTP(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("SHELLIA_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+
+	_, err := parseArgs([]string{
+		"--base-url", "http://api.example.invalid/v1",
+		"--api-key", "audit-secret",
+		"--model", "test-model",
+		"run git status",
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "https") {
+		t.Fatalf("parseArgs() error = %v, want remote HTTPS requirement", err)
+	}
+}
+
+// TestParseArgsRejectsInvalidBaseURLs checks malformed or unsupported endpoint URLs fail early.
+func TestParseArgsRejectsInvalidBaseURLs(t *testing.T) {
+	baseURLs := []string{
+		"api.example.invalid/v1",
+		"ftp://api.example.invalid/v1",
+		"https:///v1",
+	}
+	for _, baseURL := range baseURLs {
+		t.Run(baseURL, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_CONFIG_HOME", "")
+			t.Setenv("SHELLIA_API_KEY", "")
+			t.Setenv("OPENAI_API_KEY", "")
+
+			_, err := parseArgs([]string{
+				"--base-url", baseURL,
+				"--api-key", "audit-secret",
+				"--model", "test-model",
+				"run git status",
+			})
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), "base url") {
+				t.Fatalf("parseArgs() error = %v, want invalid base URL", err)
+			}
+		})
+	}
+}
+
 // TestParseArgsAllowsEmptyAPIKeyForLoopbackEndpoints checks local model servers need no fake key.
 func TestParseArgsAllowsEmptyAPIKeyForLoopbackEndpoints(t *testing.T) {
 	for _, baseURL := range []string{

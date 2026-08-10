@@ -1,5 +1,7 @@
 package safety
 
+import "strings"
+
 // shellOperatorRule treats any shell composition as requiring confirmation.
 func shellOperatorRule(command string, _ []string) (commandSafety, bool) {
 	if hasShellOperators(command) {
@@ -36,11 +38,21 @@ func gitRule(_ string, tokens []string) (commandSafety, bool) {
 		return commandSafety{}, false
 	}
 
+	if tokens[1] == "remote" {
+		if isSafeGitRemote(tokens) {
+			return safeSafety(), true
+		}
+		return riskySafety(), true
+	}
+
 	// "branch" excluded: `git branch -D` is destructive and subflags can't be checked here.
 	safeGit := map[string]bool{
-		"status": true, "log": true, "show": true, "diff": true, "rev-parse": true, "remote": true,
+		"status": true, "log": true, "show": true, "diff": true, "rev-parse": true,
 	}
 	if safeGit[tokens[1]] {
+		if hasCommandOption(tokens[2:], "--output", "--ext-diff", "--textconv") {
+			return riskySafety(), true
+		}
 		return safeSafety(), true
 	}
 	return riskySafety(), true
@@ -84,11 +96,22 @@ func findRule(_ string, tokens []string) (commandSafety, bool) {
 	return safeSafety(), true
 }
 
+// ripgrepRule allows ordinary searches while requiring confirmation for options that launch executables.
+func ripgrepRule(_ string, tokens []string) (commandSafety, bool) {
+	if len(tokens) == 0 || tokens[0] != "rg" {
+		return commandSafety{}, false
+	}
+	if hasCommandOption(tokens[1:], "--pre", "--hostname-bin") {
+		return riskySafety(), true
+	}
+	return safeSafety(), true
+}
+
 // safeRootRule allows simple read-only commands to skip confirmation.
 func safeRootRule(_ string, tokens []string) (commandSafety, bool) {
 	safeRoots := map[string]bool{
 		"ls": true, "pwd": true, "cat": true, "echo": true, "whoami": true, "id": true,
-		"uname": true, "date": true, "grep": true, "rg": true, "which": true,
+		"uname": true, "date": true, "grep": true, "which": true,
 		"whereis": true, "head": true, "tail": true, "wc": true, "stat": true,
 		"du": true, "df": true, "ps": true, "man": true,
 	}
@@ -96,6 +119,45 @@ func safeRootRule(_ string, tokens []string) (commandSafety, bool) {
 		return safeSafety(), true
 	}
 	return commandSafety{}, false
+}
+
+// isSafeGitRemote reports whether git remote is only listing or reading configured URLs.
+func isSafeGitRemote(tokens []string) bool {
+	if len(tokens) == 2 {
+		return true
+	}
+	if len(tokens) == 3 && (tokens[2] == "-v" || tokens[2] == "--verbose") {
+		return true
+	}
+	if len(tokens) < 4 || tokens[2] != "get-url" {
+		return false
+	}
+
+	remoteNames := 0
+	for _, token := range tokens[3:] {
+		switch token {
+		case "--all", "--push":
+			continue
+		default:
+			if strings.HasPrefix(token, "-") {
+				return false
+			}
+			remoteNames++
+		}
+	}
+	return remoteNames == 1
+}
+
+// hasCommandOption reports whether any token is an exact or --option=value match.
+func hasCommandOption(tokens []string, options ...string) bool {
+	for _, token := range tokens {
+		for _, option := range options {
+			if token == option || strings.HasPrefix(token, option+"=") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isSafeDockerRead reports whether the docker command is a read-only inspection.
@@ -130,6 +192,10 @@ func isMutatingFind(tokens []string) bool {
 		"-execdir": true,
 		"-ok":      true,
 		"-okdir":   true,
+		"-fprint":  true,
+		"-fprint0": true,
+		"-fprintf": true,
+		"-fls":     true,
 	}
 	for _, token := range tokens[1:] {
 		if mutatingActions[token] {

@@ -161,6 +161,7 @@ type FileConfig struct {
 		IncludeCWD                *bool `toml:"include_cwd"`
 		IncludeSessionMemory      *bool `toml:"include_session_memory"`
 		IncludeRecentObservations *bool `toml:"include_recent_observations"`
+		IncludeGit                *bool `toml:"include_git"` // Deprecated compatibility key; intentionally ignored.
 	} `toml:"context"`
 
 	// [trace]
@@ -372,8 +373,16 @@ func loadFileConfig() (FileConfig, string, error) {
 	}
 
 	var cfg FileConfig
-	if _, err := toml.Decode(string(data), &cfg); err != nil {
+	metadata, err := toml.Decode(string(data), &cfg)
+	if err != nil {
 		return FileConfig{}, "", fmt.Errorf("invalid config file %s: %w", path, err)
+	}
+	if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
+		keys := make([]string, 0, len(undecoded))
+		for _, key := range undecoded {
+			keys = append(keys, key.String())
+		}
+		return FileConfig{}, "", fmt.Errorf("invalid config file %s: unknown keys: %s", path, strings.Join(keys, ", "))
 	}
 
 	return cfg, path, nil
@@ -450,7 +459,7 @@ func persistDefaultModel(cfg Config, name string) error {
 	}
 
 	updated := updateDefaultModelTOML(string(data), name)
-	if err := os.WriteFile(path, []byte(updated), info.Mode().Perm()); err != nil {
+	if err := writeFileAtomically(path, []byte(updated), info.Mode().Perm()); err != nil {
 		return fmt.Errorf("cannot write config file: %w", err)
 	}
 	return nil
@@ -477,9 +486,54 @@ func persistVisualStyle(cfg Config, style VisualStyle) error {
 	}
 
 	updated := updateVisualStyleTOML(string(data), normalized)
-	if err := os.WriteFile(path, []byte(updated), info.Mode().Perm()); err != nil {
+	if err := writeFileAtomically(path, []byte(updated), info.Mode().Perm()); err != nil {
 		return fmt.Errorf("cannot write config file: %w", err)
 	}
+	return nil
+}
+
+// writeFileAtomically replaces one existing file without exposing partial content.
+func writeFileAtomically(path string, data []byte, permissions os.FileMode) error {
+	resolvedPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return fmt.Errorf("cannot resolve config path: %w", err)
+	}
+
+	dir := filepath.Dir(resolvedPath)
+	temporary, err := os.CreateTemp(dir, "."+filepath.Base(resolvedPath)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("cannot create temporary config file: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	keepTemporary := true
+	defer func() {
+		if temporary != nil {
+			_ = temporary.Close()
+		}
+		if keepTemporary {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+
+	if err := temporary.Chmod(permissions); err != nil {
+		return fmt.Errorf("cannot preserve config permissions: %w", err)
+	}
+	if _, err := temporary.Write(data); err != nil {
+		return fmt.Errorf("cannot write temporary config file: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		return fmt.Errorf("cannot sync temporary config file: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		temporary = nil
+		return fmt.Errorf("cannot close temporary config file: %w", err)
+	}
+	temporary = nil
+
+	if err := os.Rename(temporaryPath, resolvedPath); err != nil {
+		return fmt.Errorf("cannot replace config file: %w", err)
+	}
+	keepTemporary = false
 	return nil
 }
 

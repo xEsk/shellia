@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -16,8 +19,14 @@ import (
 const (
 	maxRetries                = 3
 	retryBaseDelay            = 500 * time.Millisecond
+	maxLLMResponseBytes       = 8 << 20
 	httpErrorBodyPreviewChars = 1200
 	historyEntryPreviewChars  = 240
+)
+
+var (
+	errLLMRedirect         = errors.New("llm endpoint redirects are not allowed")
+	errLLMResponseTooLarge = errors.New("llm response too large")
 )
 
 // ClientOptions contains the LLM transport and provider capability settings.
@@ -159,6 +168,10 @@ func isRetryable(statusCode int) bool {
 // doLLMRequest is the single non-streaming HTTP entry point for all model calls.
 // It retries up to maxRetries times on transient errors (429, 5xx) with exponential backoff.
 func doLLMRequest(ctx context.Context, client *http.Client, options ClientOptions, req chatCompletionRequest) (string, error) {
+	if err := validateBaseURL(options.BaseURL); err != nil {
+		return "", err
+	}
+
 	body, err := json.Marshal(req)
 	if err != nil {
 		return "", fmt.Errorf("cannot encode llm request: %w", err)
@@ -166,8 +179,9 @@ func doLLMRequest(ctx context.Context, client *http.Client, options ClientOption
 	if client == nil {
 		client = http.DefaultClient
 	}
+	requestClient := clientWithoutRedirects(client)
 
-	url := strings.TrimRight(options.BaseURL, "/") + "/chat/completions"
+	endpoint := strings.TrimRight(options.BaseURL, "/") + "/chat/completions"
 
 	var (
 		responseBody []byte
@@ -185,23 +199,29 @@ func doLLMRequest(ctx context.Context, client *http.Client, options ClientOption
 			}
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if err != nil {
 			return "", fmt.Errorf("cannot create llm request: %w", err)
 		}
 		applyLLMRequestHeaders(httpReq, options)
 
-		resp, err := client.Do(httpReq)
+		resp, err := requestClient.Do(httpReq)
 		if err != nil {
+			if errors.Is(err, errLLMRedirect) {
+				return "", fmt.Errorf("llm request rejected: %w", errLLMRedirect)
+			}
 			lastErr = fmt.Errorf("llm request failed: %w", err)
 			continue
 		}
 
-		responseBody, err = io.ReadAll(resp.Body)
+		responseBody, err = readLLMResponseBody(resp.Body)
 		resp.Body.Close()
 		statusCode = resp.StatusCode
 
 		if err != nil {
+			if errors.Is(err, errLLMResponseTooLarge) {
+				return "", err
+			}
 			lastErr = fmt.Errorf("cannot read llm response: %w", err)
 			continue
 		}
@@ -230,6 +250,60 @@ func doLLMRequest(ctx context.Context, client *http.Client, options ClientOption
 	}
 
 	return envelope.Choices[0].Message.Content, nil
+}
+
+// validateBaseURL rejects malformed endpoints and cleartext transport outside loopback.
+func validateBaseURL(rawURL string) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fmt.Errorf("invalid llm base URL: %w", err)
+	}
+	if parsed.Hostname() == "" {
+		return fmt.Errorf("invalid llm base URL: missing host")
+	}
+
+	switch strings.ToLower(parsed.Scheme) {
+	case "https":
+		return nil
+	case "http":
+		if isLoopbackHostname(parsed.Hostname()) {
+			return nil
+		}
+		return fmt.Errorf("invalid llm base URL: remote endpoints must use HTTPS")
+	default:
+		return fmt.Errorf("invalid llm base URL: scheme must be HTTP or HTTPS")
+	}
+}
+
+// isLoopbackHostname reports whether a URL hostname is local-only.
+func isLoopbackHostname(hostname string) bool {
+	hostname = strings.ToLower(strings.TrimSpace(hostname))
+	if hostname == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(hostname)
+	return ip != nil && ip.IsLoopback()
+}
+
+// clientWithoutRedirects clones the caller's client and prevents credential forwarding.
+func clientWithoutRedirects(client *http.Client) *http.Client {
+	clone := *client
+	clone.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return errLLMRedirect
+	}
+	return &clone
+}
+
+// readLLMResponseBody reads one bounded provider response.
+func readLLMResponseBody(body io.Reader) ([]byte, error) {
+	responseBody, err := io.ReadAll(io.LimitReader(body, maxLLMResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(responseBody) > maxLLMResponseBytes {
+		return nil, fmt.Errorf("%w: limit is %d bytes", errLLMResponseTooLarge, maxLLMResponseBytes)
+	}
+	return responseBody, nil
 }
 
 // applyLLMRequestHeaders attaches the shared headers for OpenAI-compatible requests.
