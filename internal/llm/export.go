@@ -25,6 +25,11 @@ func ValidateBaseURL(rawURL string) error {
 	return validateBaseURL(rawURL)
 }
 
+// ValidateRequestParams checks provider body fields preserve Shellia's request and response contract.
+func ValidateRequestParams(params map[string]any) error {
+	return validateRequestParams(params)
+}
+
 // BuildPrompts builds the system and user prompts for one planning request.
 func BuildPrompts(request PromptRequest) (string, string) {
 	return buildLLMPrompts(request)

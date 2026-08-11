@@ -52,6 +52,7 @@ type Config struct {
 	Models                 []ModelConfig
 	ConfigPath             string
 	SupportsResponseFormat bool
+	RequestParams          map[string]any
 
 	// Execution options control command timeouts, confirmation flow and shell execution mode.
 	CommandTimeout      time.Duration
@@ -103,15 +104,17 @@ type ModelConfig struct {
 	APIKey                 string
 	APIKeyEnv              string
 	SupportsResponseFormat bool
+	RequestParams          map[string]any
 }
 
 type FileModelConfig struct {
-	Name                   string `toml:"name"`
-	BaseURL                string `toml:"base_url"`
-	Model                  string `toml:"model"`
-	APIKey                 string `toml:"api_key"`
-	APIKeyEnv              string `toml:"api_key_env"`
-	SupportsResponseFormat *bool  `toml:"supports_response_format"`
+	Name                   string         `toml:"name"`
+	BaseURL                string         `toml:"base_url"`
+	Model                  string         `toml:"model"`
+	APIKey                 string         `toml:"api_key"`
+	APIKeyEnv              string         `toml:"api_key_env"`
+	SupportsResponseFormat *bool          `toml:"supports_response_format"`
+	RequestParams          map[string]any `toml:"request_params"`
 }
 
 // FileConfig mirrors the structure of the persistent Shellia config file.
@@ -340,6 +343,7 @@ func normalizeModelConfigs(fileModels []FileModelConfig) []ModelConfig {
 			APIKey:                 strings.TrimSpace(fileModel.APIKey),
 			APIKeyEnv:              strings.TrimSpace(fileModel.APIKeyEnv),
 			SupportsResponseFormat: supportsResponseFormat,
+			RequestParams:          fileModel.RequestParams,
 		})
 	}
 	return models
@@ -380,12 +384,22 @@ func loadFileConfig() (FileConfig, string, error) {
 	if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
 		keys := make([]string, 0, len(undecoded))
 		for _, key := range undecoded {
+			if isModelRequestParamKey(key) {
+				continue
+			}
 			keys = append(keys, key.String())
 		}
-		return FileConfig{}, "", fmt.Errorf("invalid config file %s: unknown keys: %s", path, strings.Join(keys, ", "))
+		if len(keys) > 0 {
+			return FileConfig{}, "", fmt.Errorf("invalid config file %s: unknown keys: %s", path, strings.Join(keys, ", "))
+		}
 	}
 
 	return cfg, path, nil
+}
+
+// isModelRequestParamKey reports whether an undecoded TOML key belongs to the provider body extension table.
+func isModelRequestParamKey(key toml.Key) bool {
+	return len(key) >= 2 && key[0] == "models" && key[1] == "request_params"
 }
 
 // settingsPath returns the preferred path of the Shellia persistent config file.
@@ -624,7 +638,7 @@ func defaultConfigTemplate() string {
 	return `# Shellia configuration — ~/.config/shellia/config.toml
 # If XDG_CONFIG_HOME is set, Shellia uses $XDG_CONFIG_HOME/shellia/config.toml instead.
 # Legacy fallback: Shellia can still read ~/.shellia/config.toml when this file does not exist.
-# All values shown are the built-in defaults.
+# All uncommented values shown are the built-in defaults.
 # Environment variables override the selected model profile: SHELLIA_API_KEY,
 # SHELLIA_BASE_URL, SHELLIA_MODEL, OPENAI_API_KEY, OPENAI_BASE_URL,
 # OPENAI_MODEL (in priority order). SHELLIA_MODEL_NAME selects a profile.
@@ -635,10 +649,14 @@ default_model = "openai"
 [[models]]
 name = "openai"
 base_url = "https://api.openai.com/v1"
-model = "gpt-5.4-mini"
+model = "gpt-5.6-luna"
 api_key_env = "SHELLIA_API_KEY"
 # Most OpenAI-compatible endpoints support response_format. Defaults to true when omitted.
 supports_response_format = true
+# Optional provider-specific Chat Completions JSON body fields belong to this profile.
+# Missing fields use the provider default.
+# [models.request_params]
+# temperature = 1
 
 [[models]]
 name = "llama-cpp"

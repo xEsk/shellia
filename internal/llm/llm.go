@@ -36,6 +36,7 @@ type ClientOptions struct {
 	Model                  string
 	RequestTimeout         time.Duration
 	SupportsResponseFormat bool
+	RequestParams          map[string]any
 }
 
 // PromptOptions contains the configuration that controls prompt content.
@@ -54,7 +55,6 @@ type PromptOptions struct {
 
 type chatCompletionRequest struct {
 	Model          string          `json:"model"`
-	Temperature    float64         `json:"temperature"`
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
 	Messages       []chatMessage   `json:"messages"`
 }
@@ -171,8 +171,21 @@ func doLLMRequest(ctx context.Context, client *http.Client, options ClientOption
 	if err := validateBaseURL(options.BaseURL); err != nil {
 		return "", err
 	}
+	if err := validateRequestParams(options.RequestParams); err != nil {
+		return "", err
+	}
 
-	body, err := json.Marshal(req)
+	payload := make(map[string]any, len(options.RequestParams)+3)
+	for key, value := range options.RequestParams {
+		payload[key] = value
+	}
+	payload["model"] = req.Model
+	payload["messages"] = req.Messages
+	if req.ResponseFormat != nil {
+		payload["response_format"] = req.ResponseFormat
+	}
+
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", fmt.Errorf("cannot encode llm request: %w", err)
 	}
@@ -345,7 +358,6 @@ func callPlanningPrompt(ctx context.Context, client *http.Client, options Client
 
 	return doLLMRequest(requestCtx, client, options, chatCompletionRequest{
 		Model:          options.Model,
-		Temperature:    0,
 		ResponseFormat: planningResponseFormat(options),
 		Messages: []chatMessage{
 			{Role: "system", Content: systemPrompt},

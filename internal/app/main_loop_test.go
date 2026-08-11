@@ -684,15 +684,16 @@ func TestSwitchInteractiveModelAppliesAndPersistsDefault(t *testing.T) {
 	cfg.ModelName = "openai"
 	cfg.BaseURL = "http://localhost:8080/v1"
 	cfg.Model = "openai-model"
+	cfg.RequestParams = map[string]any{"temperature": 0.5}
 	cfg.Models = []modelConfig{
-		{Name: "openai", BaseURL: "http://localhost:8080/v1", Model: "openai-model", SupportsResponseFormat: true},
-		{Name: "mlx", BaseURL: fake.URL(), Model: "mlx-model", APIKey: "test-key", SupportsResponseFormat: false},
+		{Name: "openai", BaseURL: "http://localhost:8080/v1", Model: "openai-model", SupportsResponseFormat: true, RequestParams: map[string]any{"temperature": 0.5}},
+		{Name: "mlx", BaseURL: fake.URL(), Model: "mlx-model", APIKey: "test-key", SupportsResponseFormat: false, RequestParams: map[string]any{"reasoning_effort": "high"}},
 	}
 
 	if err := switchInteractiveModel(&cfg, "mlx"); err != nil {
 		t.Fatalf("switchInteractiveModel() error = %v", err)
 	}
-	if cfg.ModelName != "mlx" || cfg.BaseURL != fake.URL() || cfg.Model != "mlx-model" || cfg.SupportsResponseFormat {
+	if cfg.ModelName != "mlx" || cfg.BaseURL != fake.URL() || cfg.Model != "mlx-model" || cfg.SupportsResponseFormat || cfg.RequestParams["reasoning_effort"] != "high" {
 		t.Fatalf("cfg after switch = %#v, want mlx profile without response_format", cfg)
 	}
 
@@ -714,14 +715,15 @@ func TestSwitchInteractiveModelAppliesAndPersistsDefault(t *testing.T) {
 	if len(bodies) != 1 {
 		t.Fatalf("LLM request bodies = %d, want 1", len(bodies))
 	}
-	var body struct {
-		Model string `json:"model"`
-	}
+	var body map[string]any
 	if err := json.Unmarshal([]byte(bodies[0]), &body); err != nil {
 		t.Fatalf("Unmarshal(request body) error = %v", err)
 	}
-	if body.Model != "mlx-model" {
-		t.Fatalf("request model = %q, want mlx-model", body.Model)
+	if body["model"] != "mlx-model" || body["reasoning_effort"] != "high" {
+		t.Fatalf("request body = %#v, want mlx model and params", body)
+	}
+	if _, ok := body["temperature"]; ok {
+		t.Fatalf("request body retained prior profile temperature: %#v", body)
 	}
 }
 
@@ -1008,9 +1010,8 @@ func TestDoLLMRequestOmitsAuthorizationWhenAPIKeyEmpty(t *testing.T) {
 	cfg.APIKey = ""
 
 	_, err := llmpkg.DoRequest(t.Context(), fake.HTTPClient(), llmClientOptions(cfg), llmpkg.ChatCompletionRequest{
-		Model:       cfg.Model,
-		Temperature: 0,
-		Messages:    []llmpkg.ChatMessage{{Role: "user", Content: "hello"}},
+		Model:    cfg.Model,
+		Messages: []llmpkg.ChatMessage{{Role: "user", Content: "hello"}},
 	})
 	if err != nil {
 		t.Fatalf("llmpkg.DoRequest() error = %v", err)
@@ -1029,9 +1030,8 @@ func TestDoLLMRequestSendsAuthorizationWhenAPIKeySet(t *testing.T) {
 	cfg.APIKey = "test-key"
 
 	_, err := llmpkg.DoRequest(t.Context(), fake.HTTPClient(), llmClientOptions(cfg), llmpkg.ChatCompletionRequest{
-		Model:       cfg.Model,
-		Temperature: 0,
-		Messages:    []llmpkg.ChatMessage{{Role: "user", Content: "hello"}},
+		Model:    cfg.Model,
+		Messages: []llmpkg.ChatMessage{{Role: "user", Content: "hello"}},
 	})
 	if err != nil {
 		t.Fatalf("llmpkg.DoRequest() error = %v", err)

@@ -1136,6 +1136,7 @@ p{margin:0}
       <ul>
         <li><b>[[models]]</b><span>name each endpoint and select it with <code>default_model</code> or <code>--model-name</code></span></li>
         <li><b>supports_response_format</b><span>leave enabled for OpenAI/llama.cpp · disable for MLX LM Server</span></li>
+        <li><b>request_params</b><span>optional provider JSON body fields scoped to one model profile · omitted fields use provider defaults</span></li>
         <li><b>shell_mode</b><span><code>"interactive"</code> drops into a real TTY · <code>"plain"</code> stays structured</span></li>
         <li><b>command_mode</b><span>same toggle for <code>!&lt;cmd&gt;</code></span></li>
         <li><b>ui.style</b><span><code>plain</code> · <code>guide</code> · <code>bands</code> · <code>cards</code>; switch live with <code>/theme</code></span></li>
@@ -1145,6 +1146,8 @@ p{margin:0}
         <li><b>continue_on_error</b><span>after a failure, skips dependent steps and runs only explicitly independent ones</span></li>
         <li><b>capture_*_bytes</b><span>bounded log capture so the model never sees a 4MB log</span></li>
       </ul>
+      <p><code>[models.request_params]</code> accepts strings, booleans, integers, finite floats, arrays, and nested tables. JSON <code>null</code>, TOML dates/times, <code>nan</code>, and infinities are rejected at startup. Shellia also reserves <code>model</code>, <code>messages</code>, <code>response_format</code>, <code>stream</code>, <code>stream_options</code>, <code>n</code>, <code>tools</code>, <code>tool_choice</code>, <code>parallel_tool_calls</code>, <code>functions</code>, <code>function_call</code>, <code>modalities</code>, <code>audio</code>, and <code>web_search_options</code>; the provider validates other keys and ranges.</p>
+      <p><code>/model</code>, <code>--model-name</code>, and <code>SHELLIA_MODEL_NAME</code> select the complete parameter set for that profile. One-shot base URL, model, and API-key overrides keep those parameters. They may change cost, latency, retention, privacy, or other remote provider behavior, so do not store credentials in this table. Shellia versions released before this option reject <code>[models.request_params]</code> as unknown configuration.</p>
     </div>
     <div class="codeblock">
       <div class="codeblock-head">
@@ -1156,9 +1159,12 @@ p{margin:0}
 <span class="cb-section">[[models]]</span>
 <span class="cb-key">name</span> = <span class="cb-str">"openai"</span>
 <span class="cb-key">base_url</span> = <span class="cb-str">"https://api.openai.com/v1"</span>
-<span class="cb-key">model</span> = <span class="cb-str">"gpt-5.4-mini"</span>
+<span class="cb-key">model</span> = <span class="cb-str">"gpt-5.6-luna"</span>
 <span class="cb-key">api_key_env</span> = <span class="cb-str">"SHELLIA_API_KEY"</span>
 <span class="cb-key">supports_response_format</span> = <span class="cb-num">true</span>
+<span class="cb-comment"># Optional per-profile provider fields:</span>
+<span class="cb-comment"># [models.request_params]</span>
+<span class="cb-comment"># temperature = 1</span>
 
 <span class="cb-section">[[models]]</span>
 <span class="cb-key">name</span> = <span class="cb-str">"mlx"</span>
@@ -1217,7 +1223,7 @@ p{margin:0}
       <span class="int-card-tag">hosted</span>
       <h4>OpenAI</h4>
       <p>The default. Drop in your key and pick a model.</p>
-      <div class="int-list"><span>gpt-5.4-mini</span><span>gpt-5</span><span>o4</span></div>
+      <div class="int-list"><span>gpt-5.6-luna</span><span>gpt-5</span><span>o4</span></div>
     </div>
     <div class="int-card">
       <span class="int-card-tag">hosted</span>
@@ -1413,7 +1419,7 @@ $ shellia \
     <div class="faq-item">
       <button class="faq-q"><span class="q-text">Can I bring my own model?</span><span class="ic">+</span></button>
       <div class="faq-a">
-        <p>Yes. Anything that speaks OpenAI Chat Completions: hosted (OpenAI, OpenRouter), local (Ollama, MLX Server, llama.cpp, LM Studio), or your private gateway. Configure it as a <code>[[models]]</code> profile with <code>base_url</code>, <code>model</code>, and an API key when the endpoint requires one. For MLX LM Server, set <code>supports_response_format = false</code>.</p>
+        <p>Yes. Anything that speaks OpenAI Chat Completions: hosted (OpenAI, OpenRouter), local (Ollama, MLX Server, llama.cpp, LM Studio), or your private gateway. Configure it as a <code>[[models]]</code> profile with <code>base_url</code>, <code>model</code>, and an API key when the endpoint requires one. Optional <code>[models.request_params]</code> fields are scoped to that profile and omitted fields use provider defaults. For MLX LM Server, set <code>supports_response_format = false</code>.</p>
       </div>
     </div>
     <div class="faq-item">

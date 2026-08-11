@@ -397,6 +397,7 @@ func applyModelConfig(cfg *config, selected modelConfig) {
 		cfg.APIKey = strings.TrimSpace(os.Getenv(selected.APIKeyEnv))
 	}
 	cfg.SupportsResponseFormat = selected.SupportsResponseFormat
+	cfg.RequestParams = selected.RequestParams
 }
 
 // validateModelConfigs checks configured model profiles before selection.
@@ -415,6 +416,9 @@ func validateModelConfigs(models []modelConfig) error {
 		}
 		if strings.TrimSpace(model.Model) == "" {
 			return fmt.Errorf("configured model profile %q is missing model", model.Name)
+		}
+		if err := llmpkg.ValidateRequestParams(model.RequestParams); err != nil {
+			return fmt.Errorf("configured model profile %q: %w", model.Name, err)
 		}
 	}
 	return nil

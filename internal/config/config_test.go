@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -27,10 +28,64 @@ func TestLoadFileConfigRejectsUnknownKeys(t *testing.T) {
 	}
 }
 
+// TestLoadFileConfigDecodesModelRequestParams checks provider body fields remain attached to their profile.
+func TestLoadFileConfigDecodesModelRequestParams(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	path := filepath.Join(home, ".config", "shellia", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	content := `
+[[models]]
+name = "custom"
+base_url = "https://example.test/v1"
+model = "custom-model"
+
+[models.request_params]
+temperature = 1
+enabled = true
+ratio = 0.75
+stop = ["END", "STOP"]
+thinking = { type = "enabled" }
+
+[[models]]
+name = "provider-default"
+base_url = "https://example.test/v1"
+model = "default-model"
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	fileCfg, _, err := loadFileConfig()
+	if err != nil {
+		t.Fatalf("loadFileConfig() error = %v", err)
+	}
+	if len(fileCfg.Models) != 2 {
+		t.Fatalf("models = %#v, want two profiles", fileCfg.Models)
+	}
+	want := map[string]any{
+		"temperature": int64(1),
+		"enabled":     true,
+		"ratio":       0.75,
+		"stop":        []any{"END", "STOP"},
+		"thinking":    map[string]any{"type": "enabled"},
+	}
+	if got := fileCfg.Models[0].RequestParams; !reflect.DeepEqual(got, want) {
+		t.Fatalf("request_params = %#v, want %#v", got, want)
+	}
+	if got := fileCfg.Models[1].RequestParams; len(got) != 0 {
+		t.Fatalf("second request_params = %#v, want empty", got)
+	}
+}
+
 // TestPersistDefaultModelReplacesConfigAtomically checks default model persistence swaps in a complete file.
 func TestPersistDefaultModelReplacesConfigAtomically(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	input := "default_model = \"openai\"\n\n[[models]]\nname = \"openai\"\n"
+	input := "default_model = \"openai\"\n\n[[models]]\nname = \"openai\"\n\n[models.request_params]\ntemperature = 1\n"
 	if err := os.WriteFile(path, []byte(input), 0o640); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
@@ -61,6 +116,9 @@ func TestPersistDefaultModelReplacesConfigAtomically(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "default_model = \"local\"") {
 		t.Fatalf("config = %q, want local default model", data)
+	}
+	if !strings.Contains(string(data), "[models.request_params]\ntemperature = 1") {
+		t.Fatalf("config = %q, want request_params preserved", data)
 	}
 }
 

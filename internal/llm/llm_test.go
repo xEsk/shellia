@@ -2,10 +2,13 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +46,237 @@ func validLLMHTTPResponse() *http.Response {
 		StatusCode: http.StatusOK,
 		Header:     make(http.Header),
 		Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"ok"}}]}`)),
+	}
+}
+
+// TestCallPlanningPromptOmitsUnconfiguredRequestParams checks absent provider fields use provider defaults.
+func TestCallPlanningPromptOmitsUnconfiguredRequestParams(t *testing.T) {
+	var body map[string]any
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("Decode(request body) error = %v", err)
+		}
+		return validLLMHTTPResponse(), nil
+	})}
+
+	_, err := callPlanningPrompt(t.Context(), client, ClientOptions{
+		BaseURL:        "http://127.0.0.1:11434/v1",
+		Model:          "provider-default",
+		RequestTimeout: time.Second,
+	}, "system", "user")
+	if err != nil {
+		t.Fatalf("callPlanningPrompt() error = %v", err)
+	}
+	if _, ok := body["temperature"]; ok {
+		t.Fatalf("request body includes temperature: %#v", body)
+	}
+}
+
+// TestCallPlanningPromptIncludesConfiguredRequestParams checks provider body fields are merged without mutating the profile.
+func TestCallPlanningPromptIncludesConfiguredRequestParams(t *testing.T) {
+	params := map[string]any{
+		"temperature":      int64(1),
+		"reasoning_effort": "medium",
+		"stop":             []any{"END", "STOP"},
+		"thinking":         map[string]any{"type": "enabled"},
+	}
+	wantParams := map[string]any{
+		"temperature":      int64(1),
+		"reasoning_effort": "medium",
+		"stop":             []any{"END", "STOP"},
+		"thinking":         map[string]any{"type": "enabled"},
+	}
+	var body map[string]any
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("Decode(request body) error = %v", err)
+		}
+		return validLLMHTTPResponse(), nil
+	})}
+
+	_, err := callPlanningPrompt(t.Context(), client, ClientOptions{
+		BaseURL:        "http://127.0.0.1:11434/v1",
+		Model:          "custom-model",
+		RequestTimeout: time.Second,
+		RequestParams:  params,
+	}, "system", "user")
+	if err != nil {
+		t.Fatalf("callPlanningPrompt() error = %v", err)
+	}
+	wantBodyFields := map[string]any{
+		"temperature":      float64(1),
+		"reasoning_effort": "medium",
+		"stop":             []any{"END", "STOP"},
+		"thinking":         map[string]any{"type": "enabled"},
+	}
+	for key, want := range wantBodyFields {
+		if got := body[key]; !reflect.DeepEqual(got, want) {
+			t.Fatalf("request body %s = %#v, want %#v", key, got, want)
+		}
+	}
+	if body["model"] != "custom-model" {
+		t.Fatalf("request body model = %#v, want custom-model", body["model"])
+	}
+	if !reflect.DeepEqual(params, wantParams) {
+		t.Fatalf("RequestParams mutated to %#v, want %#v", params, wantParams)
+	}
+}
+
+// TestValidateRequestParamsRejectsProtectedFields checks provider parameters cannot change Shellia's wire contract.
+func TestValidateRequestParamsRejectsProtectedFields(t *testing.T) {
+	protected := []string{
+		"model",
+		"messages",
+		"response_format",
+		"stream",
+		"stream_options",
+		"n",
+		"tools",
+		"tool_choice",
+		"parallel_tool_calls",
+		"functions",
+		"function_call",
+		"modalities",
+		"audio",
+		"web_search_options",
+	}
+	for _, key := range protected {
+		t.Run(key, func(t *testing.T) {
+			err := validateRequestParams(map[string]any{key: true})
+			if err == nil {
+				t.Fatalf("validateRequestParams(%q) error = nil, want protected-field error", key)
+			}
+			if !strings.Contains(err.Error(), "request_params."+key) || strings.Contains(err.Error(), "true") {
+				t.Fatalf("validateRequestParams(%q) error = %q, want path without value", key, err.Error())
+			}
+		})
+	}
+
+	allowed := []struct {
+		name   string
+		params map[string]any
+	}{
+		{name: "case-sensitive key", params: map[string]any{"Model": "provider-extension"}},
+		{name: "nested protected name", params: map[string]any{"thinking": map[string]any{"model": "provider-extension"}}},
+	}
+	for _, tt := range allowed {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := validateRequestParams(tt.params); err != nil {
+				t.Fatalf("validateRequestParams() error = %v, want allowed", err)
+			}
+		})
+	}
+}
+
+// TestValidateRequestParamsRejectsNonJSONValues checks invalid TOML-to-JSON shapes fail with their path.
+func TestValidateRequestParamsRejectsNonJSONValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		params   map[string]any
+		wantPath string
+	}{
+		{
+			name:     "datetime",
+			params:   map[string]any{"created_at": time.Date(2026, time.August, 11, 8, 0, 0, 0, time.UTC)},
+			wantPath: "request_params.created_at",
+		},
+		{
+			name:     "nested nan",
+			params:   map[string]any{"sampling": map[string]any{"temperature": math.NaN()}},
+			wantPath: "request_params.sampling.temperature",
+		},
+		{
+			name:     "infinity in array",
+			params:   map[string]any{"levels": []any{0.5, math.Inf(1)}},
+			wantPath: "request_params.levels[1]",
+		},
+		{
+			name:     "null",
+			params:   map[string]any{"optional": nil},
+			wantPath: "request_params.optional",
+		},
+		{
+			name:     "typed nil array",
+			params:   map[string]any{"stop": []any(nil)},
+			wantPath: "request_params.stop",
+		},
+		{
+			name:     "typed nil table array",
+			params:   map[string]any{"strategies": []map[string]any(nil)},
+			wantPath: "request_params.strategies",
+		},
+		{
+			name:     "typed nil table",
+			params:   map[string]any{"thinking": map[string]any(nil)},
+			wantPath: "request_params.thinking",
+		},
+		{
+			name:     "unsupported type",
+			params:   map[string]any{"events": make(chan int)},
+			wantPath: "request_params.events",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateRequestParams(tt.params)
+			if err == nil {
+				t.Fatal("validateRequestParams() error = nil, want incompatible-value error")
+			}
+			if !strings.Contains(err.Error(), tt.wantPath) || !strings.Contains(err.Error(), "not JSON-compatible") {
+				t.Fatalf("validateRequestParams() error = %q, want path %q", err.Error(), tt.wantPath)
+			}
+		})
+	}
+}
+
+// TestDoLLMRequestRejectsInvalidRequestParamsBeforeSending checks internal callers cannot bypass the wire guard.
+func TestDoLLMRequestRejectsInvalidRequestParamsBeforeSending(t *testing.T) {
+	called := false
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		called = true
+		return validLLMHTTPResponse(), nil
+	})}
+
+	_, err := doLLMRequest(t.Context(), client, ClientOptions{
+		BaseURL:       "http://127.0.0.1:11434/v1",
+		RequestParams: map[string]any{"model": "override"},
+	}, chatCompletionRequest{Model: "shellia-model"})
+	if err == nil || !strings.Contains(err.Error(), "request_params.model") {
+		t.Fatalf("doLLMRequest() error = %v, want protected model path", err)
+	}
+	if called {
+		t.Fatal("doLLMRequest() sent HTTP before rejecting request_params.model")
+	}
+}
+
+// TestDoLLMRequestReusesRequestParamsBodyAcrossRetries checks retries cannot observe a mutated provider payload.
+func TestDoLLMRequestReusesRequestParamsBodyAcrossRetries(t *testing.T) {
+	var bodies []string
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("ReadAll(request body) error = %v", err)
+		}
+		bodies = append(bodies, string(body))
+		if len(bodies) == 1 {
+			return &http.Response{
+				StatusCode: http.StatusTooManyRequests,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("retry")),
+			}, nil
+		}
+		return validLLMHTTPResponse(), nil
+	})}
+
+	_, err := doLLMRequest(t.Context(), client, ClientOptions{
+		BaseURL:       "http://127.0.0.1:11434/v1",
+		RequestParams: map[string]any{"temperature": int64(1)},
+	}, chatCompletionRequest{Model: "custom-model", Messages: []chatMessage{{Role: "user", Content: "hello"}}})
+	if err != nil {
+		t.Fatalf("doLLMRequest() error = %v", err)
+	}
+	if len(bodies) != 2 || bodies[0] != bodies[1] {
+		t.Fatalf("retry bodies = %#v, want two identical requests", bodies)
 	}
 }
 

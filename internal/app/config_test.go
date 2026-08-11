@@ -27,6 +27,7 @@ func TestConsumerOptionsMapOwnedConfigFields(t *testing.T) {
 		ModelName:                 "primary",
 		Models:                    []modelConfig{{Name: "primary", Model: "provider-model", APIKey: "model-secret", APIKeyEnv: "MODEL_SECRET", BaseURL: "https://model.example/v1"}},
 		SupportsResponseFormat:    true,
+		RequestParams:             map[string]any{"temperature": int64(1)},
 		CommandTimeout:            17 * time.Second,
 		RequestTimeout:            23 * time.Second,
 		YesSafe:                   true,
@@ -94,6 +95,7 @@ func TestConsumerOptionsMapOwnedConfigFields(t *testing.T) {
 		Model:                  "provider-model",
 		RequestTimeout:         23 * time.Second,
 		SupportsResponseFormat: true,
+		RequestParams:          map[string]any{"temperature": int64(1)},
 	}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("llmClientOptions() = %#v, want %#v", got, want)
 	}
@@ -135,6 +137,23 @@ func TestConsumerOptionsMapOwnedConfigFields(t *testing.T) {
 		CaptureStderrBytes:        222,
 	}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("traceOptions() = %#v, want %#v", got, want)
+	}
+}
+
+// TestNonLLMOptionsExcludeRequestParams checks arbitrary provider values stay outside unrelated consumers.
+func TestNonLLMOptionsExcludeRequestParams(t *testing.T) {
+	for _, value := range []any{
+		uipkg.ViewOptions{},
+		uipkg.ModelOption{},
+		executorpkg.ContextOptions{},
+		executorpkg.Options{},
+		sessionpkg.MemoryOptions{},
+		tracepkg.Options{},
+	} {
+		typeOf := reflect.TypeOf(value)
+		if _, ok := typeOf.FieldByName("RequestParams"); ok {
+			t.Fatalf("%s unexpectedly exposes RequestParams", typeOf)
+		}
 	}
 }
 
@@ -604,6 +623,106 @@ supports_response_format = false
 	}
 }
 
+// TestParseArgsSelectsModelRequestParams checks provider body fields follow the selected profile into LLM options.
+func TestParseArgsSelectsModelRequestParams(t *testing.T) {
+	writeShelliaConfig(t, `
+default_model = "custom"
+
+[[models]]
+name = "provider-default"
+base_url = "http://localhost:8080/v1"
+model = "default-model"
+
+[[models]]
+name = "custom"
+base_url = "http://localhost:8081/v1"
+model = "custom-model"
+
+[models.request_params]
+temperature = 1
+thinking = { type = "enabled" }
+`)
+
+	cfg, err := parseArgs([]string{"run git status"})
+	if err != nil {
+		t.Fatalf("parseArgs() error = %v", err)
+	}
+	want := map[string]any{
+		"temperature": int64(1),
+		"thinking":    map[string]any{"type": "enabled"},
+	}
+	if !reflect.DeepEqual(cfg.RequestParams, want) {
+		t.Fatalf("cfg.RequestParams = %#v, want %#v", cfg.RequestParams, want)
+	}
+	if got := llmClientOptions(cfg).RequestParams; !reflect.DeepEqual(got, want) {
+		t.Fatalf("llm RequestParams = %#v, want %#v", got, want)
+	}
+	if got := cfg.Models[0].RequestParams; len(got) != 0 {
+		t.Fatalf("provider-default RequestParams = %#v, want empty", got)
+	}
+}
+
+// TestParseArgsRejectsProtectedRequestParamsInInactiveProfile checks every reachable profile is validated at startup.
+func TestParseArgsRejectsProtectedRequestParamsInInactiveProfile(t *testing.T) {
+	writeShelliaConfig(t, `
+default_model = "valid"
+
+[[models]]
+name = "valid"
+base_url = "http://localhost:8080/v1"
+model = "valid-model"
+
+[[models]]
+name = "invalid"
+base_url = "http://localhost:8081/v1"
+model = "invalid-model"
+
+[models.request_params]
+model = "override"
+`)
+
+	_, err := parseArgs([]string{"run git status"})
+	if err == nil {
+		t.Fatal("parseArgs() error = nil, want inactive profile validation error")
+	}
+	if !strings.Contains(err.Error(), `configured model profile "invalid"`) || !strings.Contains(err.Error(), "request_params.model") {
+		t.Fatalf("parseArgs() error = %q, want profile and protected path", err.Error())
+	}
+	if strings.Contains(err.Error(), "override") {
+		t.Fatalf("parseArgs() error = %q, want no configured value", err.Error())
+	}
+}
+
+// TestParseArgsRejectsNonJSONModelRequestParams checks TOML values fail before reaching the provider boundary.
+func TestParseArgsRejectsNonJSONModelRequestParams(t *testing.T) {
+	tests := []struct {
+		name     string
+		param    string
+		wantPath string
+	}{
+		{name: "datetime", param: "created_at = 2026-08-11T08:00:00Z", wantPath: "request_params.created_at"},
+		{name: "nan", param: "temperature = nan", wantPath: "request_params.temperature"},
+		{name: "infinity", param: "temperature = +inf", wantPath: "request_params.temperature"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			writeShelliaConfig(t, `
+[[models]]
+name = "invalid"
+base_url = "http://localhost:8080/v1"
+model = "invalid-model"
+
+[models.request_params]
+`+tt.param+"\n")
+
+			_, err := parseArgs([]string{"run git status"})
+			if err == nil || !strings.Contains(err.Error(), `configured model profile "invalid"`) || !strings.Contains(err.Error(), tt.wantPath) {
+				t.Fatalf("parseArgs() error = %v, want profile and path %q", err, tt.wantPath)
+			}
+		})
+	}
+}
+
 // TestParseArgsModelNamePrecedence checks flag and env profile selection precedence.
 func TestParseArgsModelNamePrecedence(t *testing.T) {
 	writeShelliaConfig(t, `
@@ -619,10 +738,16 @@ name = "env"
 base_url = "http://localhost:8081/v1"
 model = "env-model"
 
+[models.request_params]
+profile_marker = "env"
+
 [[models]]
 name = "flag"
 base_url = "http://localhost:8082/v1"
 model = "flag-model"
+
+[models.request_params]
+profile_marker = "flag"
 `)
 	t.Setenv("SHELLIA_MODEL_NAME", "env")
 
@@ -630,16 +755,16 @@ model = "flag-model"
 	if err != nil {
 		t.Fatalf("parseArgs(env) error = %v", err)
 	}
-	if envCfg.ModelName != "env" {
-		t.Fatalf("env ModelName = %q, want env", envCfg.ModelName)
+	if envCfg.ModelName != "env" || envCfg.RequestParams["profile_marker"] != "env" {
+		t.Fatalf("env profile = (%q, %#v), want env params", envCfg.ModelName, envCfg.RequestParams)
 	}
 
 	flagCfg, err := parseArgs([]string{"--model-name", "flag", "run git status"})
 	if err != nil {
 		t.Fatalf("parseArgs(flag) error = %v", err)
 	}
-	if flagCfg.ModelName != "flag" {
-		t.Fatalf("flag ModelName = %q, want flag", flagCfg.ModelName)
+	if flagCfg.ModelName != "flag" || flagCfg.RequestParams["profile_marker"] != "flag" {
+		t.Fatalf("flag profile = (%q, %#v), want flag params", flagCfg.ModelName, flagCfg.RequestParams)
 	}
 }
 
@@ -670,6 +795,9 @@ func TestParseArgsModelOverrides(t *testing.T) {
 name = "local"
 base_url = "http://localhost:8080/v1"
 model = "local-model"
+
+[models.request_params]
+temperature = 0.25
 `)
 
 	cfg, err := parseArgs([]string{
@@ -683,6 +811,9 @@ model = "local-model"
 	}
 	if cfg.BaseURL != "http://localhost:9090/v1" || cfg.Model != "override-model" || cfg.APIKey != "override-key" {
 		t.Fatalf("overrides = (%q, %q, %q), want flag values", cfg.BaseURL, cfg.Model, cfg.APIKey)
+	}
+	if cfg.RequestParams["temperature"] != 0.25 {
+		t.Fatalf("RequestParams = %#v, want selected profile params preserved", cfg.RequestParams)
 	}
 }
 
@@ -959,6 +1090,32 @@ func TestInitConfigFileCreatesPreferredConfigPath(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), path) {
 		t.Fatalf("output = %q, want preferred path", output.String())
+	}
+}
+
+// TestInitConfigFileUsesGPT56LunaByDefault checks new configurations select the intended OpenAI model.
+func TestInitConfigFileUsesGPT56LunaByDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	var output strings.Builder
+	if err := configpkg.InitConfigFileTo(&output, false); err != nil {
+		t.Fatalf("configpkg.InitConfigFileTo() error = %v", err)
+	}
+
+	fileCfg, _, err := configpkg.LoadFileConfig()
+	if err != nil {
+		t.Fatalf("configpkg.LoadFileConfig() error = %v", err)
+	}
+	if fileCfg.DefaultModelName != "openai" {
+		t.Fatalf("default_model = %q, want openai", fileCfg.DefaultModelName)
+	}
+	if len(fileCfg.Models) == 0 || fileCfg.Models[0].Model != "gpt-5.6-luna" {
+		t.Fatalf("first model profile = %#v, want gpt-5.6-luna", fileCfg.Models)
+	}
+	if len(fileCfg.Models[0].RequestParams) != 0 {
+		t.Fatalf("default request_params = %#v, want provider defaults", fileCfg.Models[0].RequestParams)
 	}
 }
 

@@ -298,7 +298,7 @@ default_model = "openai"
 [[models]]
 name = "openai"
 base_url = "https://api.openai.com/v1"
-model = "gpt-5.4-mini"
+model = "gpt-5.6-luna"
 api_key_env = "SHELLIA_API_KEY"
 supports_response_format = true
 
@@ -356,7 +356,28 @@ Define one or more `[[models]]` entries. Shellia selects the active profile in t
 
 Use `supports_response_format = false` for endpoints that do not support OpenAI's `response_format` parameter. If omitted, Shellia assumes `true`. The official `mlx_lm.server` should normally use `supports_response_format = false`; OpenAI and llama.cpp can use the default.
 
-Unknown TOML keys are rejected with their full path. This makes configuration typos fail explicitly instead of silently falling back to defaults.
+Each profile can add provider-specific Chat Completions JSON body fields with `[models.request_params]`:
+
+```toml
+[[models]]
+name = "custom"
+base_url = "https://api.example.com/v1"
+model = "provider-model"
+
+[models.request_params]
+temperature = 1
+reasoning_effort = "medium"
+thinking = { type = "enabled" }
+stop = ["END", "STOP"]
+```
+
+`request_params` belongs only to the immediately preceding `[[models]]` profile. Missing fields are omitted from the request, so the provider chooses its default. Selecting another profile with `--model-name`, `SHELLIA_MODEL_NAME`, or `/model` switches the complete parameter set. The existing `--base-url`, `--model`, and `--api-key` overrides do not clear the selected profile's parameters.
+
+Strings, booleans, integers, finite floats, arrays, and nested tables are supported. TOML dates/times, `nan`, infinities, and JSON `null` are not. Shellia protects fields that it needs to control: `model`, `messages`, `response_format`, `stream`, `stream_options`, `n`, `tools`, `tool_choice`, `parallel_tool_calls`, `functions`, `function_call`, `modalities`, `audio`, and `web_search_options`. Invalid profiles fail during startup with the profile name and parameter path. Other keys and value ranges are validated by the provider.
+
+Provider parameters are trusted local configuration and may affect cost, latency, retention, or remote provider behavior. Do not store credentials in this table; use `api_key` or `api_key_env`. Shellia versions released before this option reject `[models.request_params]` as an unknown table.
+
+Unknown TOML keys outside `request_params` are rejected with their full path. This makes configuration typos fail explicitly instead of silently falling back to defaults.
 
 ### Configuration precedence
 
@@ -433,7 +454,7 @@ If output is truncated, Shellia marks it explicitly instead of pretending it cap
 
 ### Session trace diagnostics
 
-Shellia can write one JSONL diagnostic file per session. This is useful when you want to inspect exactly what Shellia sent to the model, what the model returned, which internal decision Shellia made, and which commands were confirmed or executed.
+Shellia can write one JSONL diagnostic file per session. This is useful when you want to inspect the prompts, model responses, internal decisions, and commands that were confirmed or executed.
 
 Enable it for one run:
 
@@ -455,7 +476,7 @@ enabled = true
 dir = ""
 ```
 
-When `dir` is empty, Shellia writes traces to `$XDG_STATE_HOME/shellia/sessions` or `~/.local/state/shellia/sessions`. Trace files include prompts, raw model responses, planner decisions, command confirmations, executed commands, exit codes, and the command output that Shellia captured locally.
+When `dir` is empty, Shellia writes traces to `$XDG_STATE_HOME/shellia/sessions` or `~/.local/state/shellia/sessions`. Trace files include prompts, raw model responses, provider errors, planner decisions, command confirmations, executed commands, exit codes, and the command output that Shellia captured locally. Shellia does not add API keys or `request_params` values to traces, but provider responses and errors are recorded as returned and may contain provider-supplied detail.
 
 ### Planning controls
 
