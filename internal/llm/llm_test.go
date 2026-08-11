@@ -393,6 +393,63 @@ func TestBuildUserPromptGoldenCharacterizes(t *testing.T) {
 	}
 }
 
+func TestBuildUserPromptSessionResultCatalog(t *testing.T) {
+	request := PromptRequest{
+		Config:      PromptOptions{IncludeSessionMemory: true, ObservationOutputChars: 1200},
+		Instruction: "Reformat the earlier answer",
+		History: []historyEntry{{
+			ID:             "result-4",
+			Instruction:    "List ports",
+			Outcome:        core.TurnOutcomeCompleted,
+			Result:         strings.Repeat("x", 300) + "SECRET_TAIL",
+			CharacterCount: 311,
+		}},
+	}
+
+	_, prompt := buildLLMPrompts(request)
+	for _, required := range []string{
+		"Session result catalog:",
+		"id: result-4",
+		"instruction: List ports",
+		"outcome: completed",
+		"character_count: 311",
+		"preview: " + trimForSummary(request.History[0].Result, historyEntryPreviewChars, truncationStart),
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("buildUserPrompt() missing catalog metadata %q: %q", required, prompt)
+		}
+	}
+	if strings.Contains(prompt, "SECRET_TAIL") {
+		t.Fatalf("buildUserPrompt() leaked unretrieved session result tail: %q", prompt)
+	}
+}
+
+func TestBuildUserPromptIncludesObservationBudget(t *testing.T) {
+	_, prompt := buildLLMPrompts(PromptRequest{
+		Config:      PromptOptions{ObservationOutputChars: 1200},
+		Instruction: "Inspect the project",
+	})
+
+	if !strings.Contains(prompt, "\nCommand evidence budget: 1200 characters.\n") {
+		t.Fatalf("buildUserPrompt() missing first-round observation budget: %q", prompt)
+	}
+}
+
+func TestBuildSystemPromptGuidesCompactObservation(t *testing.T) {
+	prompt := buildSystemPrompt()
+	for _, required := range []string{
+		"filter",
+		"aggregate",
+		"deduplicate",
+		"read-only pipeline",
+		"one compact replacement query after truncation",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("buildSystemPrompt() missing compact-observation guidance %q: %q", required, prompt)
+		}
+	}
+}
+
 // representativePromptRequest exercises every prompt section with stable data.
 func representativePromptRequest() PromptRequest {
 	cfg := configpkg.DefaultConfig()
@@ -406,7 +463,7 @@ func representativePromptRequest() PromptRequest {
 		Instruction:         "complete the maintenance task",
 		ResolvedInstruction: "complete the maintenance task for /srv/demo",
 		ContextInfo:         contextInfo{CWD: "/srv/demo", User: "demo-user", OS: "demo-os", Shell: "/bin/zsh"},
-		History:             []historyEntry{{Instruction: "inspect the old deployment", Result: "The old deployment needs maintenance."}},
+		History:             []historyEntry{{ID: "result-1", Instruction: "inspect the old deployment", Outcome: core.TurnOutcomeCompleted, Result: "The old deployment needs maintenance.", CharacterCount: 37}},
 		State: sessionState{
 			PendingIntent:        "finish maintenance",
 			LastRetryInstruction: "complete the maintenance task",

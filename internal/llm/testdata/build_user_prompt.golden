@@ -1,5 +1,6 @@
 User instruction:
 complete the maintenance task
+Command evidence budget: 24 characters.
 Planning rounds remaining: 2
 
 Resolved planning context:
@@ -67,9 +68,12 @@ Current context:
 - user: demo-user
 - os: demo-os
 - shell: /bin/zsh
-Recent session context:
-1. User: inspect the old deployment
-   Result: The old deployment needs maintenance.
+Session result catalog:
+- id: result-1
+  instruction: inspect the old deployment
+  outcome: completed
+  character_count: 37
+  preview: The old deployment needs maintenance.
 
 Retry observation: eligible for this same-objective retry.
 

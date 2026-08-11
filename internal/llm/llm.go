@@ -83,6 +83,8 @@ type PromptRequest struct {
 	Instruction               string
 	ResolvedInstruction       string
 	History                   []historyEntry
+	ContextRevision           int
+	RetrievedContext          []historyEntry
 	State                     sessionState
 	Observations              []commandExecution
 	Skipped                   []skippedCommand
