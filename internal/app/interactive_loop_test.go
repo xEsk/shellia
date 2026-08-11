@@ -10,6 +10,99 @@ import (
 	executorpkg "github.com/xEsk/shellia/internal/executor"
 )
 
+// TestInteractiveSessionResultIDs checks retained turns receive stable IDs and
+// complete metadata at the session boundary.
+func TestInteractiveSessionResultIDs(t *testing.T) {
+	session := interactiveSession{}
+
+	session.applyTurnResult(turnApplication{
+		historyInstruction: "consulta",
+		retryInstruction:   "consulta",
+		turn: turnResult{
+			Outcome: turnOutcomeCompleted,
+			Result:  "Resposta amb àccents",
+		},
+	})
+	session.applyTurnResult(turnApplication{
+		historyInstruction: "actua",
+		retryInstruction:   "actua",
+		turn: turnResult{
+			Outcome: turnOutcomeBlocked,
+			Result:  "Cal una dada més",
+		},
+	})
+
+	if len(session.history) != 2 {
+		t.Fatalf("history length = %d, want 2", len(session.history))
+	}
+	if got := session.history[0]; got.ID != "result-1" || got.Outcome != turnOutcomeCompleted || got.CharacterCount != len([]rune("Resposta amb àccents")) {
+		t.Fatalf("first history entry = %#v", got)
+	}
+	if got := session.history[1]; got.ID != "result-2" || got.Outcome != turnOutcomeBlocked || got.CharacterCount != len([]rune("Cal una dada més")) {
+		t.Fatalf("second history entry = %#v", got)
+	}
+}
+
+// TestInteractiveSessionResultRetention checks trimming history keeps each
+// result's original stable ID.
+func TestInteractiveSessionResultRetention(t *testing.T) {
+	session := interactiveSession{}
+
+	for index := 1; index <= maxHistoryEntries+1; index++ {
+		session.applyTurnResult(turnApplication{
+			historyInstruction: fmt.Sprintf("instruction-%d", index),
+			retryInstruction:   fmt.Sprintf("instruction-%d", index),
+			turn: turnResult{
+				Outcome: turnOutcomeCompleted,
+				Result:  fmt.Sprintf("result %d", index),
+			},
+		})
+	}
+
+	if len(session.history) != maxHistoryEntries {
+		t.Fatalf("history length = %d, want %d", len(session.history), maxHistoryEntries)
+	}
+	for index, entry := range session.history {
+		wantID := fmt.Sprintf("result-%d", index+2)
+		if entry.ID != wantID {
+			t.Fatalf("history[%d].ID = %q, want %q", index, entry.ID, wantID)
+		}
+	}
+}
+
+// TestInteractiveSessionNewPreservesResultCounter checks a fresh conversation
+// discards retained context without reusing a process-lifetime result ID.
+func TestInteractiveSessionNewPreservesResultCounter(t *testing.T) {
+	captureMainLoopIO(t, "", nil, func(deps runtimeDeps) {
+		session := interactiveSession{deps: deps}
+
+		for index := 1; index <= 9; index++ {
+			session.applyTurnResult(turnApplication{
+				historyInstruction: fmt.Sprintf("instruction-%d", index),
+				retryInstruction:   fmt.Sprintf("instruction-%d", index),
+				turn: turnResult{
+					Outcome: turnOutcomeCompleted,
+					Result:  fmt.Sprintf("result %d", index),
+				},
+			})
+		}
+
+		session.routeInteractiveInput(t.Context(), "/new")
+		session.applyTurnResult(turnApplication{
+			historyInstruction: "after new",
+			retryInstruction:   "after new",
+			turn: turnResult{
+				Outcome: turnOutcomeCompleted,
+				Result:  "fresh result",
+			},
+		})
+
+		if len(session.history) != 1 || session.history[0].ID != "result-10" || session.nextResultID != 10 {
+			t.Fatalf("session after /new = %#v, want only result-10 with nextResultID 10", session)
+		}
+	})
+}
+
 // TestInteractiveSessionExecuteTurnAppliesCompletedResultOnce checks the turn
 // route appends and trims one completed result while clearing retry state.
 func TestInteractiveSessionExecuteTurnAppliesCompletedResultOnce(t *testing.T) {
@@ -42,7 +135,7 @@ func TestInteractiveSessionExecuteTurnAppliesCompletedResultOnce(t *testing.T) {
 		if len(session.history) != maxHistoryEntries {
 			t.Fatalf("history length = %d, want %d", len(session.history), maxHistoryEntries)
 		}
-		if session.history[0].Instruction != "old-1" || session.history[maxHistoryEntries-1] != (historyEntry{Instruction: "completed instruction", Result: "completed result"}) {
+		if session.history[0].Instruction != "old-1" || session.history[maxHistoryEntries-1] != (historyEntry{ID: "result-1", Instruction: "completed instruction", Outcome: turnOutcomeCompleted, Result: "completed result", CharacterCount: 16}) {
 			t.Fatalf("history = %#v, want exactly one routed result", session.history)
 		}
 		if session.state.LastRetryInstruction != "" || session.state.PendingIntent != "" {
@@ -70,7 +163,7 @@ func TestInteractiveSessionExecuteTurnAppliesBlockedResultOnce(t *testing.T) {
 			retryInstruction:   "restart the service",
 		})
 
-		if len(session.history) != 1 || session.history[0] != (historyEntry{Instruction: "restart the service", Result: "service name required\nSpecify the service."}) {
+		if len(session.history) != 1 || session.history[0] != (historyEntry{ID: "result-1", Instruction: "restart the service", Outcome: turnOutcomeBlocked, Result: "service name required\nSpecify the service.", CharacterCount: 42}) {
 			t.Fatalf("history = %#v, want exactly one routed blocked result", session.history)
 		}
 		if session.state.PendingIntent != "restart the service" || session.state.LastBlockerKind != "missing_input" || session.state.LastBlockerReason != "Specify the service." {
@@ -192,7 +285,7 @@ func TestInteractiveSessionExecuteTurnAppliesAcceptedProposalOnce(t *testing.T) 
 			acceptedProposal:    true,
 		})
 
-		if len(session.history) != 1 || session.history[0] != (historyEntry{Instruction: "yes", Result: "offer completed"}) {
+		if len(session.history) != 1 || session.history[0] != (historyEntry{ID: "result-1", Instruction: "yes", Outcome: turnOutcomeCompleted, Result: "offer completed", CharacterCount: 15}) {
 			t.Fatalf("history = %#v, want accepted result exactly once", session.history)
 		}
 		if session.state.PendingProposal != (pendingProposal{}) || session.state.LastRetryInstruction != "" || session.state.PendingIntent != "" {

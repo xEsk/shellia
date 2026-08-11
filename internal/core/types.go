@@ -26,10 +26,13 @@ type ContextInfo struct {
 	Shell string `json:"shell"`
 }
 
-// HistoryEntry stores a compact prior turn for prompt context.
+// HistoryEntry stores one referencable prior turn for prompt context.
 type HistoryEntry struct {
-	Instruction string
-	Result      string
+	ID             string
+	Instruction    string
+	Outcome        TurnOutcome
+	Result         string
+	CharacterCount int
 }
 
 // InteractiveMode identifies the current interactive prompt mode.

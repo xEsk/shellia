@@ -20,14 +20,15 @@ import (
 
 // interactiveSession owns mutable state for one persistent prompt session.
 type interactiveSession struct {
-	deps        runtimeDeps
-	ui          bool
-	cfg         config
-	contextInfo *contextInfo
-	reader      *bufio.Reader
-	mode        interactiveMode
-	history     []historyEntry
-	state       sessionState
+	deps         runtimeDeps
+	ui           bool
+	cfg          config
+	contextInfo  *contextInfo
+	reader       *bufio.Reader
+	mode         interactiveMode
+	history      []historyEntry
+	state        sessionState
+	nextResultID int
 }
 
 // interactiveTurnRequest describes one runTurn invocation and how its result
@@ -341,7 +342,14 @@ func (session *interactiveSession) applyTurnResult(application turnApplication) 
 		})
 	}
 
-	session.history = append(session.history, historyEntry{Instruction: application.historyInstruction, Result: application.turn.Result})
+	session.nextResultID++
+	session.history = append(session.history, historyEntry{
+		ID:             fmt.Sprintf("result-%d", session.nextResultID),
+		Instruction:    application.historyInstruction,
+		Outcome:        application.turn.Outcome,
+		Result:         application.turn.Result,
+		CharacterCount: len([]rune(application.turn.Result)),
+	})
 	sessionpkg.UpdateState(&session.state, application.retryInstruction, application.turn, sessionMemoryOptions(session.cfg))
 	if application.acceptedProposal && application.turn.Outcome != turnOutcomeCompleted && application.turn.Outcome != turnOutcomeDeclined {
 		session.state.LastRetryInstruction = application.retryInstruction
