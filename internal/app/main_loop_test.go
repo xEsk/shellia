@@ -2684,6 +2684,64 @@ func TestRunInteractiveProcessesPromptThenExit(t *testing.T) {
 	}
 }
 
+// TestRunInteractiveReformatsPriorResultWithoutRediscovery checks a snapshot
+// follow-up loads its selected complete result without crossing the executor
+// boundary a second time.
+func TestRunInteractiveReformatsPriorResultWithoutRediscovery(t *testing.T) {
+	responses := []loopLLMResponse{
+		{content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Current listening ports listed","summary":"Inspect current listening ports.","completion_basis":{"source":"","freshness":""},"context_refs":[],"commands":[{"command":"compact-port-query","purpose":"List listening ports compactly","risk":"safe","requires_confirmation":false}]}`},
+		{content: `{"action":"complete","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Current listening ports listed","summary":"3000, 5432, 8080","completion_basis":{"source":"current_observation","freshness":"current","evidence_revision":1,"attempt_ids":[1]},"context_refs":[],"commands":[]}`},
+		{content: `{"action":"retrieve_context","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Return the earlier port list as Markdown","summary":"Retrieve the earlier result.","completion_basis":{"source":"","freshness":""},"context_refs":["result-1"],"commands":[]}`},
+		{content: `{"action":"complete","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Return the earlier port list as Markdown","summary":"- ` + "`" + `3000` + "`" + `\n- ` + "`" + `5432` + "`" + `\n- ` + "`" + `8080` + "`" + `","completion_basis":{"source":"session_result","freshness":"snapshot","context_revision":1},"context_refs":["result-1"],"commands":[]}`},
+	}
+	fake := newLoopLLMClient(t, responses...)
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	ctxInfo := loopTestContext(t)
+	logger := openLoopTrace(t)
+	executorBatches := 0
+
+	output := captureMainLoopIO(t, "quins ports estan oberts?\nretorna el resultat anterior en Markdown sense tornar-ho a comprovar\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.Trace = logger
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ executorpkg.Options, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
+			executorBatches++
+			if len(plans) != 1 || plans[0].Command != "compact-port-query" {
+				t.Fatalf("ExecuteCommands plans = %#v, want the one initial observation", plans)
+			}
+			return commandBatchResult{Executions: []commandExecution{{
+				Command:  plans[0].Command,
+				Purpose:  plans[0].Purpose,
+				ExitCode: 0,
+				Stdout:   capturedStream{Text: "3000\n5432\n8080"},
+			}}}, nil
+		}
+		if err := runInteractive(t.Context(), deps, false, cfg, &ctxInfo); err != nil {
+			t.Fatalf("runInteractive() error = %v", err)
+		}
+	})
+
+	if executorBatches != 1 || fake.requestCount() != 4 {
+		t.Fatalf("executor batches = %d, LLM requests = %d, want 1 and 4", executorBatches, fake.requestCount())
+	}
+	normalizedOutput := strings.ReplaceAll(output, "\r", "")
+	if !strings.Contains(normalizedOutput, "  - 3000\n  - 5432\n  - 8080") {
+		t.Fatalf("output missing Markdown reformatting: %q", output)
+	}
+	if strings.Contains(strings.ToLower(output), "truncat") {
+		t.Fatalf("output falsely describes the loaded result as truncated: %q", output)
+	}
+	if got := strings.Count(output, "Retrieving 1 session result(s)…"); got != 1 {
+		t.Fatalf("retrieval status lines = %d, want 1: %q", got, output)
+	}
+
+	events := closeLoopTraceAndRead(t, logger)
+	for _, name := range []string{"context_retrieval_requested", "context_revision"} {
+		if got := len(traceEventsByName(events, name)); got != 1 {
+			t.Fatalf("%s events = %d, want 1", name, got)
+		}
+	}
+}
+
 // TestRunInteractiveRoutesPlainConversationThroughRenderer checks the app and
 // executor boundary share one semantic turn without changing plain ordering.
 func TestRunInteractiveRoutesPlainConversationThroughRenderer(t *testing.T) {
@@ -2794,6 +2852,37 @@ func TestRunInteractivePlanCommandPlansWithoutExecuting(t *testing.T) {
 	}
 }
 
+// TestRunInteractivePlanRetrievesContextWithoutExecuting checks /plan keeps
+// immutable no-execution authority while loading and answering from history.
+func TestRunInteractivePlanRetrievesContextWithoutExecuting(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Remember the supplied value","summary":"Earlier value: 42.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"context_refs":[],"commands":[]}`},
+		loopLLMResponse{content: `{"action":"retrieve_context","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Restate the earlier value","summary":"Load the earlier result.","completion_basis":{"source":"","freshness":""},"context_refs":["result-1"],"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Restate the earlier value","summary":"The earlier value is forty-two.","completion_basis":{"source":"session_result","freshness":"snapshot","context_revision":1},"context_refs":["result-1"],"commands":[]}`},
+	)
+	cfg := loopTestConfig(fake.URL())
+	ctxInfo := loopTestContext(t)
+
+	output := captureMainLoopIO(t, "remember forty-two\n/plan restate the earlier value\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, executorpkg.Options, *contextInfo, []commandPlan, []commandExecution) (commandBatchResult, error) {
+			t.Fatal("ExecuteCommands was called for /plan context retrieval")
+			return commandBatchResult{}, nil
+		}
+		if err := runInteractive(t.Context(), deps, false, cfg, &ctxInfo); err != nil {
+			t.Fatalf("runInteractive() error = %v", err)
+		}
+	})
+
+	if fake.requestCount() != 3 || !strings.Contains(output, "The earlier value is forty-two.") {
+		t.Fatalf("requests = %d, output = %q, want retrieved /plan answer", fake.requestCount(), output)
+	}
+	for index, body := range fake.requestBodies()[1:] {
+		if !strings.Contains(body, "Execution authority: plan_only; commands may be shown but must not be executed.") {
+			t.Fatalf("/plan request %d lost plan-only authority: %q", index+1, body)
+		}
+	}
+}
+
 // TestRunInteractiveRetryCommandRepeatsLastFailedInstruction checks /retry is a local command.
 func TestRunInteractiveRetryCommandRepeatsLastFailedInstruction(t *testing.T) {
 	fake := newLoopLLMClient(t,
@@ -2853,7 +2942,7 @@ func TestRunInteractiveCancellationRemembersPartialObservations(t *testing.T) {
 		t.Fatalf("execution calls = %d, LLM requests = %d, want one cancelled execution and one retry plan", calls, fake.requestCount())
 	}
 	retryBody := fake.requestBodies()[1]
-	for _, snippet := range []string{"last_retry_instruction: inspect once", "Recent reusable observations:", "Inspect before cancellation", "observed-before-cancel", "Retry observation: eligible for this same-objective retry."} {
+	for _, snippet := range []string{"User instruction:\\ninspect once", "last_retry_instruction: inspect once", "Recent reusable observations:", "Inspect before cancellation", "observed-before-cancel", "Retry observation: eligible for this same-objective retry."} {
 		if !strings.Contains(retryBody, snippet) {
 			t.Fatalf("retry prompt missing %q: %q", snippet, retryBody)
 		}
@@ -2861,8 +2950,8 @@ func TestRunInteractiveCancellationRemembersPartialObservations(t *testing.T) {
 	if strings.Contains(retryBody, "Recent session context:") {
 		t.Fatalf("retry prompt treated cancellation as successful history: %q", retryBody)
 	}
-	if !strings.Contains(output, "Request cancelled.") || !strings.Contains(output, "Retrying: inspect once") {
-		t.Fatalf("output = %q, want cancellation and retry status", output)
+	if !strings.Contains(output, "Request cancelled.") || !strings.Contains(output, "Retrying: inspect once") || !strings.Contains(output, "Retry received partial context.") {
+		t.Fatalf("output = %q, want cancellation, exact retry, and retry-observation completion", output)
 	}
 }
 
