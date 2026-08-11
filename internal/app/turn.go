@@ -177,7 +177,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			continue
 		}
 
-		parsed := roundResult.Parsed
+		parsed := workflow.lastDecision
 		summary := roundResult.Summary
 		plans := roundResult.Plans
 		if parsed.Action == "retrieve_context" {
@@ -382,6 +382,9 @@ func routePlanningDecision(round turnRoundContext, workflow *workflowState, resu
 		workflow.repairOperation = result.StructuralRepairOperation
 	}
 	parsed := result.Parsed
+	if workflow.contractLocked {
+		parsed.SuccessCriteria = workflow.successCriteria
+	}
 	if decisionErr := workflow.validateDecision(parsed); decisionErr != nil {
 		workflow.recordDecision(parsed, result.Summary, result.Plans)
 		workflow.decisionError = decisionErr.Error()

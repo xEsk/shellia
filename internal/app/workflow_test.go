@@ -306,6 +306,52 @@ func TestRunTurnStopsAfterUnavailableContextSelection(t *testing.T) {
 	}
 }
 
+// TestRunTurnKeepsInitialSuccessCriteriaAcrossFollowUpDecisions checks a
+// follow-up reformulation cannot invalidate an otherwise coherent workflow.
+func TestRunTurnKeepsInitialSuccessCriteriaAcrossFollowUpDecisions(t *testing.T) {
+	completion := loopLLMResponse{content: `{"action":"complete","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"List current listening TCP and open UDP ports with process, PID, and address","summary":"Ports listed.","completion_basis":{"source":"current_observation","freshness":"current","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`}
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"List current listening TCP and open UDP ports with their process","summary":"Inspect ports.","commands":[{"command":"lsof -nP -iTCP -sTCP:LISTEN -iUDP","purpose":"List open ports","risk":"safe","requires_confirmation":false}]}`},
+		completion,
+		completion,
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	ctxInfo := loopTestContext(t)
+	logger := openLoopTrace(t)
+	runs := 0
+
+	var result turnResult
+	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.Trace = logger
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ executorpkg.Options, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
+			runs++
+			return commandBatchResult{Executions: []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 0}}}, nil
+		}
+		var err error
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "list open ports"))
+		if err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	if runs != 1 || fake.requestCount() != 2 || result.Outcome != turnOutcomeCompleted || result.Result != "Ports listed." {
+		t.Fatalf("runs = %d, requests = %d, result = %#v; want one execution and completion from the initial objective contract", runs, fake.requestCount(), result)
+	}
+
+	events := closeLoopTraceAndRead(t, logger)
+	for _, event := range events {
+		data := traceEventData(t, event)
+		if event["event"] == "completion_validation" && data["admitted"] == true {
+			if got := data["success_criteria"]; got != "List current listening TCP and open UDP ports with their process" {
+				t.Fatalf("admitted success_criteria = %q, want initial workflow criterion", got)
+			}
+			return
+		}
+	}
+	t.Fatal("admitted completion_validation trace not found")
+}
+
 // TestRunTurnRepairsActionCompletionWithoutCurrentEvidence checks knowing how
 // to perform a requested change cannot terminate the workflow as success.
 func TestRunTurnRepairsActionCompletionWithoutCurrentEvidence(t *testing.T) {
