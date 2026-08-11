@@ -350,7 +350,7 @@ func renderPlanningLimitPrompt(box *stepBox, limit int) {
 		return
 	}
 	question := fmt.Sprintf("Reached planning round limit %d. Continue planning?", limit)
-	box.writeRow(buildConfirmRow(box.ui, question, renderPlanExecutionOptions(box.ui), ""))
+	box.surface.renderEditableRow(buildConfirmRow(box.ui, question, renderPlanExecutionOptions(box.ui), ""), 0)
 }
 
 // logPlanningLimitChoice records the planning-limit continuation decision.
@@ -493,7 +493,7 @@ func printWarning(ui bool, message string) {
 
 // printWarningTo shows a non-fatal warning on the provided target.
 func printWarningTo(target io.Writer, ui bool, message string) {
-	fmt.Fprintf(target, "%s %s\n", style(ui, colorYellow+colorBold, "warning"), style(ui, colorWhite+colorBold, message))
+	fmt.Fprintf(target, "\n%s %s\n", style(ui, colorYellow+colorBold, "warning"), style(ui, colorWhite+colorBold, message))
 }
 
 // printSeparator shows the standard horizontal separator used between sections.

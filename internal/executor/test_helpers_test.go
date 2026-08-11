@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	defaultPlanningMaxRounds = 4
+	defaultPlanningMaxRounds = 5
 	classificationSafe       = safetypkg.ClassificationSafe
 )
 

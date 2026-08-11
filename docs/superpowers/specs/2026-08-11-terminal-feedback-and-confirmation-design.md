@@ -2,7 +2,7 @@
 
 **Data:** 2026-08-11
 
-**Estat:** aprovat per implementar
+**Estat:** implementat i verificat
 
 **Nivell:** BOUNDED
 

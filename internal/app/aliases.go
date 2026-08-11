@@ -47,7 +47,6 @@ const (
 	turnOutcomeNoProgress      = core.TurnOutcomeNoProgress
 	repeatReasonRequired       = core.RepeatReasonRequired
 
-	interactiveModeAI        = core.InteractiveModeAI
-	interactiveModeShell     = core.InteractiveModeShell
-	defaultPlanningMaxRounds = 4
+	interactiveModeAI    = core.InteractiveModeAI
+	interactiveModeShell = core.InteractiveModeShell
 )

@@ -17,7 +17,7 @@ import (
 
 const (
 	defaultTimeout           = 120 * time.Second
-	defaultPlanningMaxRounds = 4
+	defaultPlanningMaxRounds = 5
 )
 
 type (
@@ -693,7 +693,7 @@ ask_confirm_plan = true
 
 # Maximum number of planning follow-up rounds before Shellia asks whether to continue.
 # You can override it for one run with SHELLIA_PLANNING_MAX_ROUNDS.
-planning_max_rounds = 4
+planning_max_rounds = 5
 
 # What pressing Enter means in a confirmation prompt.
 # none        — must type y or n explicitly (safest)

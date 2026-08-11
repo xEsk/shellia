@@ -186,8 +186,8 @@ func TestDefaultConfigShowsSystemOutput(t *testing.T) {
 	if configpkg.DefaultConfig().ConfirmationDefault != configpkg.ConfirmationDefaultNone {
 		t.Fatalf("configpkg.DefaultConfig().ConfirmationDefault = %q, want %q", configpkg.DefaultConfig().ConfirmationDefault, configpkg.ConfirmationDefaultNone)
 	}
-	if configpkg.DefaultConfig().PlanningMaxRounds != defaultPlanningMaxRounds {
-		t.Fatalf("configpkg.DefaultConfig().PlanningMaxRounds = %d, want %d", configpkg.DefaultConfig().PlanningMaxRounds, defaultPlanningMaxRounds)
+	if configpkg.DefaultConfig().PlanningMaxRounds != 5 {
+		t.Fatalf("configpkg.DefaultConfig().PlanningMaxRounds = %d, want 5", configpkg.DefaultConfig().PlanningMaxRounds)
 	}
 	if configpkg.DefaultConfig().TraceEnabled {
 		t.Fatalf("configpkg.DefaultConfig().TraceEnabled = true, want false")
@@ -1116,6 +1116,26 @@ func TestInitConfigFileUsesGPT56LunaByDefault(t *testing.T) {
 	}
 	if len(fileCfg.Models[0].RequestParams) != 0 {
 		t.Fatalf("default request_params = %#v, want provider defaults", fileCfg.Models[0].RequestParams)
+	}
+}
+
+// TestInitConfigFileUsesFivePlanningRoundsByDefault checks new configurations preserve the built-in planning cap.
+func TestInitConfigFileUsesFivePlanningRoundsByDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	var output strings.Builder
+	if err := configpkg.InitConfigFileTo(&output, false); err != nil {
+		t.Fatalf("configpkg.InitConfigFileTo() error = %v", err)
+	}
+
+	fileCfg, _, err := configpkg.LoadFileConfig()
+	if err != nil {
+		t.Fatalf("configpkg.LoadFileConfig() error = %v", err)
+	}
+	if fileCfg.Execution.PlanningMaxRounds != 5 {
+		t.Fatalf("planning_max_rounds = %d, want 5", fileCfg.Execution.PlanningMaxRounds)
 	}
 }
 

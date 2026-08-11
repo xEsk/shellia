@@ -172,3 +172,37 @@ func TestRenderConfirmationPromptHighlightsDefault(t *testing.T) {
 		t.Fatalf("confirmation prompt moved the cursor to the next row: %q", buffer.String())
 	}
 }
+
+// TestDiagnosticsStartWithBlankLine checks warnings and errors stay separated from preceding output.
+func TestDiagnosticsStartWithBlankLine(t *testing.T) {
+	tests := []struct {
+		name   string
+		render func(*bytes.Buffer)
+	}{
+		{name: "warning", render: func(buffer *bytes.Buffer) { printWarningTo(buffer, false, "careful") }},
+		{name: "error", render: func(buffer *bytes.Buffer) { printErrorTo(buffer, false, "failed") }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buffer bytes.Buffer
+			tt.render(&buffer)
+
+			if !strings.HasPrefix(buffer.String(), "\n") {
+				t.Fatalf("diagnostic does not start with a blank line: %q", buffer.String())
+			}
+		})
+	}
+}
+
+// TestRenderPlanningLimitPromptKeepsCursorOnPromptRow checks input starts beside the question.
+func TestRenderPlanningLimitPromptKeepsCursorOnPromptRow(t *testing.T) {
+	var buffer bytes.Buffer
+	box := newStepBox(&buffer, false, "confirm")
+
+	renderPlanningLimitPrompt(box, 5)
+
+	if !strings.HasSuffix(buffer.String(), ": ") {
+		t.Fatalf("planning limit prompt moved the cursor away from the question: %q", buffer.String())
+	}
+}
