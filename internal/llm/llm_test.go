@@ -505,6 +505,33 @@ func TestParseResponseRejectsInvalidOrthogonalDecisionContract(t *testing.T) {
 	}
 }
 
+// TestParseResponseNormalizesContextReferences checks retrieval references are
+// normalized before the runtime resolves them.
+func TestParseResponseNormalizesContextReferences(t *testing.T) {
+	raw := `{"action":"retrieve_context","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reformat result","summary":"Retrieve it.","completion_basis":{"source":"","freshness":""},"context_refs":[" Result-2 "],"offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[]}`
+	response, err := parseResponse(raw, ResponseModeStrict)
+	if err != nil {
+		t.Fatalf("parseResponse() error = %v", err)
+	}
+	if got := response.ContextRefs; len(got) != 1 || got[0] != "result-2" {
+		t.Fatalf("ContextRefs = %#v, want []string{\"result-2\"}", got)
+	}
+}
+
+// TestParseResponseRejectsInvalidContextReferences checks retrieval requests
+// cannot contain empty or duplicate references.
+func TestParseResponseRejectsInvalidContextReferences(t *testing.T) {
+	valid := `{"action":"retrieve_context","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reformat result","summary":"Retrieve it.","completion_basis":{"source":"","freshness":""},"context_refs":["result-2"],"offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[]}`
+	for _, raw := range []string{
+		strings.Replace(valid, `"result-2"`, `" "`, 1),
+		strings.Replace(valid, `"context_refs":["result-2"]`, `"context_refs":["result-2"," RESULT-2 "]`, 1),
+	} {
+		if _, err := parseResponse(raw, ResponseModeStrict); err == nil {
+			t.Fatal("parseResponse() error = nil, want invalid context reference rejection")
+		}
+	}
+}
+
 // TestParseResponseAcceptsExtraTrailingBrace checks local models that append
 // one stray brace still yield the first complete JSON object.
 func TestParseResponseAcceptsExtraTrailingBrace(t *testing.T) {
@@ -536,7 +563,7 @@ func TestParseResponseKeepsBracesInsideStrings(t *testing.T) {
 // TestParseResponseStrictRejectsDocumentBoundaries checks response-format
 // providers cannot smuggle text or multiple documents past the decoder.
 func TestParseResponseStrictRejectsDocumentBoundaries(t *testing.T) {
-	valid := `{"action":"complete","objective_mode":"explain","success_criteria":"Answer provided","summary":"Done.","completion_basis":{"type":"model_knowledge"},"commands":[]}`
+	valid := `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Answer provided","summary":"Done.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]}`
 	tests := []struct {
 		name string
 		raw  string

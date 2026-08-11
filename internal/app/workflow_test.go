@@ -71,9 +71,9 @@ func TestWorkflowDecisionRetryObservationRequiresExactRetry(t *testing.T) {
 // to perform a requested change cannot terminate the workflow as success.
 func TestRunTurnRepairsActionCompletionWithoutCurrentEvidence(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"act","success_criteria":"Codex is updated","summary":"Use brew upgrade --cask codex.","completion_basis":{"type":"model_knowledge"},"commands":[]}`},
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"act","success_criteria":"Codex is updated","summary":"Update Codex.","commands":[{"command":"brew upgrade --cask codex","purpose":"Update Codex","risk":"high","requires_confirmation":true}]}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"act","success_criteria":"Codex is updated","summary":"Codex was updated.","completion_basis":{"type":"current_execution","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Codex is updated","summary":"Use brew upgrade --cask codex.","completion_basis":{"source":"current_execution","freshness":"current"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Codex is updated","summary":"Update Codex.","commands":[{"command":"brew upgrade --cask codex","purpose":"Update Codex","risk":"high","requires_confirmation":true}]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Codex is updated","summary":"Codex was updated.","completion_basis":{"source":"current_execution","freshness":"current","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -102,8 +102,8 @@ func TestRunTurnRepairsActionCompletionWithoutCurrentEvidence(t *testing.T) {
 // cannot escape an executable objective by changing its intent contract.
 func TestRunTurnDoesNotRepairActByReclassifyingAsExplain(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"act","success_criteria":"Codex is updated","summary":"Use brew upgrade --cask codex.","completion_basis":{"type":"model_knowledge"},"commands":[]}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"explain","success_criteria":"Explain how to update Codex","summary":"Run brew upgrade --cask codex.","completion_basis":{"type":"model_knowledge"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Codex is updated","summary":"Use brew upgrade --cask codex.","completion_basis":{"source":"current_execution","freshness":"current"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Explain how to update Codex","summary":"Run brew upgrade --cask codex.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -126,9 +126,9 @@ func TestRunTurnDoesNotRepairActByReclassifyingAsExplain(t *testing.T) {
 // decision does not lock an incorrect objective contract.
 func TestRunTurnCanRepairIntentWithinExecutableModes(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"act","success_criteria":"Disk changed","summary":"Disk is ready.","completion_basis":{"type":"model_knowledge"},"commands":[]}`},
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Current disk space observed","summary":"Inspect disk.","commands":[{"command":"df -h /","purpose":"Inspect disk","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Current disk space observed","summary":"There are 18 GB free.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Disk changed","summary":"Disk is ready.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Current disk space observed","summary":"Inspect disk.","commands":[{"command":"df -h /","purpose":"Inspect disk","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Current disk space observed","summary":"There are 18 GB free.","completion_basis":{"source":"current_observation","freshness":"current","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -156,7 +156,7 @@ func TestRunTurnCanRepairIntentWithinExecutableModes(t *testing.T) {
 // TestRunTurnDoesNotExposeOfferFromRejectedDecision checks a failed semantic
 // repair cannot create hidden executable authority in session memory.
 func TestRunTurnDoesNotExposeOfferFromRejectedDecision(t *testing.T) {
-	invalid := loopLLMResponse{content: `{"action":"complete","objective_mode":"capability","success_criteria":"Explain capability","summary":"Sí, puc fer-ho.","completion_basis":{"type":"current_execution"},"offer":{"objective":"crea hidden-marker","summary":"Crear marcador"},"commands":[]}`}
+	invalid := loopLLMResponse{content: `{"action":"complete","operation":"capability","evidence_source":"current_execution","freshness":"current","success_criteria":"Explain capability","summary":"Sí, puc fer-ho.","completion_basis":{"source":"current_execution","freshness":"current"},"offer":{"objective":"crea hidden-marker","summary":"Crear marcador"},"commands":[]}`}
 	fake := newLoopLLMClient(t, invalid, invalid)
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -182,8 +182,8 @@ func TestRunTurnDoesNotExposeOfferFromRejectedDecision(t *testing.T) {
 // cannot turn a non-authorizing capability question into an executable turn.
 func TestRunTurnDoesNotRepairCapabilityIntoExecutableMode(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"capability","success_criteria":"Explain marker capability","summary":"Sí, puc crear-lo.","completion_basis":{"type":"current_execution"},"offer":{"objective":"crea marker","summary":"Crear marker"},"commands":[]}`},
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"act","success_criteria":"Marker exists","summary":"Create marker.","commands":[{"command":"touch marker","purpose":"Create marker","risk":"medium","requires_confirmation":true}]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","evidence_source":"current_execution","freshness":"current","success_criteria":"Explain marker capability","summary":"Sí, puc crear-lo.","completion_basis":{"source":"current_execution","freshness":"current"},"offer":{"objective":"crea marker","summary":"Crear marker"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Marker exists","summary":"Create marker.","commands":[{"command":"touch marker","purpose":"Create marker","risk":"medium","requires_confirmation":true}]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -212,9 +212,9 @@ func TestRunTurnDoesNotRepairCapabilityIntoExecutableMode(t *testing.T) {
 // workflow is explicitly retrying the interrupted objective.
 func TestRunTurnRejectsStalePriorObservationForCurrentQuery(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Current disk space observed","summary":"There were 20 GB free.","completion_basis":{"type":"prior_session_evidence"},"commands":[]}`},
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Current disk space observed","summary":"Refresh disk state.","commands":[{"command":"df -h /","purpose":"Inspect current disk space","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Current disk space observed","summary":"There are 18 GB free now.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"observe","evidence_source":"retry_observation","freshness":"current","success_criteria":"Current disk space observed","summary":"There were 20 GB free.","completion_basis":{"source":"retry_observation","freshness":"current"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Current disk space observed","summary":"Refresh disk state.","commands":[{"command":"df -h /","purpose":"Inspect current disk space","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Current disk space observed","summary":"There are 18 GB free now.","completion_basis":{"source":"current_observation","freshness":"current","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -247,7 +247,7 @@ func TestRunTurnRejectsStalePriorObservationForCurrentQuery(t *testing.T) {
 // TestRunTurnCapabilityOffersWithoutExecuting checks a capability question
 // answers and offers a later workflow without crossing the executor boundary.
 func TestRunTurnCapabilityOffersWithoutExecuting(t *testing.T) {
-	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"action":"complete","objective_mode":"capability","success_criteria":"Explain whether disk space can be inspected","summary":"Sí, puc consultar-ho amb df -h /.","completion_basis":{"type":"model_knowledge"},"offer":{"objective":"consulta l'espai disponible al disc","summary":"Consultar l'espai del disc"},"commands":[]}`})
+	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"action":"complete","operation":"capability","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Explain whether disk space can be inspected","summary":"Sí, puc consultar-ho amb df -h /.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"offer":{"objective":"consulta l'espai disponible al disc","summary":"Consultar l'espai del disc"},"commands":[]}`})
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
 	executed := false
@@ -272,8 +272,8 @@ func TestRunTurnCapabilityOffersWithoutExecuting(t *testing.T) {
 
 func TestRunTurnCapabilityRepairUsesNonExecutingContractWithStaleHistory(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"capability","success_criteria":"Explain whether a newer Codex version can be checked","summary":"I can check it.","completion_basis":{"type":"current_execution"},"offer":{"objective":"check whether a newer Codex version is available","summary":"Check for a Codex update"},"commands":[]}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"capability","success_criteria":"Explain whether a newer Codex version can be checked","summary":"Yes. I can check Homebrew for a newer Codex cask without changing the system.","completion_basis":{"type":"model_knowledge"},"offer":{"objective":"check whether a newer Codex version is available","summary":"Check for a Codex update"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","evidence_source":"current_execution","freshness":"current","success_criteria":"Explain whether a newer Codex version can be checked","summary":"I can check it.","completion_basis":{"source":"current_execution","freshness":"current"},"offer":{"objective":"check whether a newer Codex version is available","summary":"Check for a Codex update"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Explain whether a newer Codex version can be checked","summary":"Yes. I can check Homebrew for a newer Codex cask without changing the system.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"offer":{"objective":"check whether a newer Codex version is available","summary":"Check for a Codex update"},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -305,9 +305,9 @@ func TestRunTurnCapabilityRepairUsesNonExecutingContractWithStaleHistory(t *test
 
 func TestRunTurnObserveRepairRequiresFreshExecutionWithoutCurrentAttempts(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Current Codex update availability observed","summary":"Codex was up to date.","completion_basis":{"type":"prior_session_evidence"},"commands":[]}`},
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Current Codex update availability observed","summary":"Check Homebrew now.","commands":[{"command":"brew outdated --cask codex","purpose":"Check current Codex update availability","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Current Codex update availability observed","summary":"No newer Codex cask is available.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"observe","evidence_source":"retry_observation","freshness":"current","success_criteria":"Current Codex update availability observed","summary":"Codex was up to date.","completion_basis":{"source":"retry_observation","freshness":"current"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Current Codex update availability observed","summary":"Check Homebrew now.","commands":[{"command":"brew outdated --cask codex","purpose":"Check current Codex update availability","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Current Codex update availability observed","summary":"No newer Codex cask is available.","completion_basis":{"source":"current_observation","freshness":"current","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -342,9 +342,9 @@ func TestRunTurnObserveRepairRequiresFreshExecutionWithoutCurrentAttempts(t *tes
 // follow-up starts a fresh workflow whose objective is the offered action.
 func TestRunInteractiveAcceptsStructuredCapabilityOffer(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"capability","success_criteria":"Explain disk inspection capability","summary":"Sí, puc consultar-ho amb df -h /.","completion_basis":{"type":"model_knowledge"},"offer":{"objective":"consulta l'espai disponible al disc","summary":"Consultar l'espai del disc"},"commands":[]}`},
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Current disk space observed","summary":"Consultaré el disc.","commands":[{"command":"df -h /","purpose":"Consultar l'espai del disc","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Current disk space observed","summary":"Hi ha 20 GB disponibles.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Explain disk inspection capability","summary":"Sí, puc consultar-ho amb df -h /.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"offer":{"objective":"consulta l'espai disponible al disc","summary":"Consultar l'espai del disc"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Current disk space observed","summary":"Consultaré el disc.","commands":[{"command":"df -h /","purpose":"Consultar l'espai del disc","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Current disk space observed","summary":"Hi ha 20 GB disponibles.","completion_basis":{"source":"current_observation","freshness":"current","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -379,9 +379,9 @@ func TestRunInteractiveAcceptsStructuredCapabilityOffer(t *testing.T) {
 // an offer grants only an objective, never pre-authorization for its command.
 func TestRunInteractiveAcceptedOfferPreservesRiskClassification(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"capability","success_criteria":"Explain file creation capability","summary":"Sí, puc crear el marcador.","completion_basis":{"type":"model_knowledge"},"offer":{"objective":"crea el fitxer accepted-risk-marker","summary":"Crear marcador"},"commands":[]}`},
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"act","success_criteria":"Marker file exists","summary":"Crearé el marcador.","commands":[{"command":"touch accepted-risk-marker","purpose":"Create marker file","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"act","success_criteria":"Marker file exists","summary":"Marcador creat.","completion_basis":{"type":"current_execution","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Explain file creation capability","summary":"Sí, puc crear el marcador.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"offer":{"objective":"crea el fitxer accepted-risk-marker","summary":"Crear marcador"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Marker file exists","summary":"Crearé el marcador.","commands":[{"command":"touch accepted-risk-marker","purpose":"Create marker file","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Marker file exists","summary":"Marcador creat.","completion_basis":{"source":"current_execution","freshness":"current","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -409,7 +409,7 @@ func TestRunInteractiveAcceptedOfferPreservesRiskClassification(t *testing.T) {
 // consumes the pending offer without invoking either the model or executor.
 func TestRunInteractiveDeclinesStructuredCapabilityOffer(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"capability","success_criteria":"Explain disk inspection capability","summary":"Sí, puc consultar-ho amb df -h /.","completion_basis":{"type":"model_knowledge"},"offer":{"objective":"consulta l'espai disponible al disc","summary":"Consultar l'espai del disc"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Explain disk inspection capability","summary":"Sí, puc consultar-ho amb df -h /.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"offer":{"objective":"consulta l'espai disponible al disc","summary":"Consultar l'espai del disc"},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -435,9 +435,9 @@ func TestRunInteractiveDeclinesStructuredCapabilityOffer(t *testing.T) {
 // remains retryable as its executable objective rather than as the word "sí".
 func TestRunInteractiveRetriesAcceptedOfferObjective(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"capability","success_criteria":"Explain disk inspection capability","summary":"Sí, puc consultar-ho.","completion_basis":{"type":"model_knowledge"},"offer":{"objective":"consulta l'espai disponible al disc","summary":"Consultar disc"},"commands":[]}`},
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Current disk space observed","summary":"Consultaré el disc.","commands":[{"command":"df -h /","purpose":"Consultar disc","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Current disk space observed","summary":"He reutilitzat l'observació parcial.","completion_basis":{"type":"prior_session_evidence"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Explain disk inspection capability","summary":"Sí, puc consultar-ho.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"offer":{"objective":"consulta l'espai disponible al disc","summary":"Consultar disc"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Current disk space observed","summary":"Consultaré el disc.","commands":[{"command":"df -h /","purpose":"Consultar disc","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"observe","evidence_source":"retry_observation","freshness":"current","success_criteria":"Current disk space observed","summary":"He reutilitzat l'observació parcial.","completion_basis":{"source":"retry_observation","freshness":"current"},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -468,10 +468,10 @@ func TestRunInteractiveRetriesAcceptedOfferObjective(t *testing.T) {
 // non-success outcomes arm /retry even when runTurn itself returns nil.
 func TestRunInteractiveRetriesAcceptedOfferAfterNilErrorFailure(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"capability","success_criteria":"Explain update capability","summary":"Sí, puc actualitzar Codex.","completion_basis":{"type":"model_knowledge"},"offer":{"objective":"actualitza codex","summary":"Actualitzar Codex"},"commands":[]}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"act","success_criteria":"Codex is updated","summary":"Run brew upgrade.","completion_basis":{"type":"model_knowledge"},"commands":[]}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"act","success_criteria":"Codex is updated","summary":"Run brew upgrade.","completion_basis":{"type":"model_knowledge"},"commands":[]}`},
-		loopLLMResponse{content: `{"action":"blocked","objective_mode":"act","success_criteria":"Codex is updated","summary":"Package manager unavailable.","blocker_kind":"unavailable","blocker_reason":"No package manager is available.","commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Explain update capability","summary":"Sí, puc actualitzar Codex.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"offer":{"objective":"actualitza codex","summary":"Actualitzar Codex"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Codex is updated","summary":"Run brew upgrade.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Codex is updated","summary":"Run brew upgrade.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"blocked","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Codex is updated","summary":"Package manager unavailable.","blocker_kind":"unavailable","blocker_reason":"No package manager is available.","commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -493,9 +493,9 @@ func TestRunInteractiveRetriesAcceptedOfferAfterNilErrorFailure(t *testing.T) {
 // error cannot leave unrelated executable authority waiting behind "sí".
 func TestRunInteractiveConsumesOldOfferWhenNewTurnFails(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"capability","success_criteria":"Explain disk capability","summary":"Sí, puc consultar el disc.","completion_basis":{"type":"model_knowledge"},"offer":{"objective":"consulta el disc","summary":"Consultar disc"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Explain disk capability","summary":"Sí, puc consultar el disc.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"offer":{"objective":"consulta el disc","summary":"Consultar disc"},"commands":[]}`},
 		loopLLMResponse{status: 400, content: `{"error":"bad request"}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"explain","success_criteria":"Answer provided","summary":"No hi ha cap oferta pendent.","completion_basis":{"type":"model_knowledge"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Answer provided","summary":"No hi ha cap oferta pendent.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -514,8 +514,8 @@ func TestRunInteractiveConsumesOldOfferWhenNewTurnFails(t *testing.T) {
 // instruction clears the old offer while keeping it visible to the model.
 func TestRunInteractiveReplacesStructuredCapabilityOffer(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"capability","success_criteria":"Explain disk inspection capability","summary":"Sí, puc consultar-ho.","completion_basis":{"type":"model_knowledge"},"offer":{"objective":"consulta l'espai disponible al disc","summary":"Consultar disc"},"commands":[]}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"explain","success_criteria":"Explain inodes","summary":"Un inode descriu un objecte del filesystem.","completion_basis":{"type":"model_knowledge"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Explain disk inspection capability","summary":"Sí, puc consultar-ho.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"offer":{"objective":"consulta l'espai disponible al disc","summary":"Consultar disc"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Explain inodes","summary":"Un inode descriu un objecte del filesystem.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -540,7 +540,7 @@ func TestRunInteractiveReplacesStructuredCapabilityOffer(t *testing.T) {
 // cross the command-execution boundary.
 func TestRunTurnCompletesWithoutExecutor(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"action":"complete","objective_mode":"explain","success_criteria":"Test answer provided","summary":"The answer is 42.","completion_basis":{"type":"model_knowledge"},"commands":[]}`,
+		content: `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Test answer provided","summary":"The answer is 42.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]}`,
 	})
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -576,10 +576,10 @@ func TestRunTurnPlanOnlyKeepsExecutorClosedAcrossIntentModes(t *testing.T) {
 		response    string
 		wantOutcome turnOutcome
 	}{
-		{name: "act", response: `{"action":"execute","objective_mode":"act","success_criteria":"Marker exists","summary":"Create marker.","commands":[{"command":"touch marker","purpose":"Create marker","risk":"medium","requires_confirmation":true}]}`, wantOutcome: turnOutcomePlanned},
-		{name: "observe", response: `{"action":"execute","objective_mode":"observe","success_criteria":"Directory observed","summary":"Inspect directory.","commands":[{"command":"pwd","purpose":"Inspect directory","risk":"safe","requires_confirmation":false}]}`, wantOutcome: turnOutcomePlanned},
-		{name: "capability", response: `{"action":"complete","objective_mode":"capability","success_criteria":"Capability explained","summary":"Sí, puc fer-ho.","completion_basis":{"type":"model_knowledge"},"commands":[]}`, wantOutcome: turnOutcomeCompleted},
-		{name: "explain", response: `{"action":"complete","objective_mode":"explain","success_criteria":"Method explained","summary":"Així es faria.","completion_basis":{"type":"model_knowledge"},"commands":[]}`, wantOutcome: turnOutcomeCompleted},
+		{name: "act", response: `{"action":"execute","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Marker exists","summary":"Create marker.","commands":[{"command":"touch marker","purpose":"Create marker","risk":"medium","requires_confirmation":true}]}`, wantOutcome: turnOutcomePlanned},
+		{name: "observe", response: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Directory observed","summary":"Inspect directory.","commands":[{"command":"pwd","purpose":"Inspect directory","risk":"safe","requires_confirmation":false}]}`, wantOutcome: turnOutcomePlanned},
+		{name: "capability", response: `{"action":"complete","operation":"capability","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Capability explained","summary":"Sí, puc fer-ho.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]}`, wantOutcome: turnOutcomeCompleted},
+		{name: "explain", response: `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Method explained","summary":"Així es faria.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]}`, wantOutcome: turnOutcomeCompleted},
 	}
 
 	for _, tt := range tests {
@@ -613,8 +613,8 @@ func TestRunTurnPlanOnlyKeepsExecutorClosedAcrossIntentModes(t *testing.T) {
 // feeds the next decision instead of ending the objective automatically.
 func TestRunTurnReevaluatesObjectiveAfterSuccessfulBatch(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect disk.","commands":[{"command":"df -h","purpose":"Inspect disk space","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"There are 20 GB free.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Test objective completed","summary":"Inspect disk.","commands":[{"command":"df -h","purpose":"Inspect disk space","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Test objective completed","summary":"There are 20 GB free.","completion_basis":{"source":"current_observation","freshness":"current","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -655,7 +655,7 @@ func TestRunTurnReevaluatesObjectiveAfterSuccessfulBatch(t *testing.T) {
 // from successful completion and does not invoke the executor.
 func TestRunTurnReturnsActionableBlocker(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"action":"blocked","objective_mode":"act","success_criteria":"Test objective completed","summary":"I need the service name.","blocker_kind":"missing_input","blocker_reason":"Specify the service to restart.","commands":[]}`,
+		content: `{"action":"blocked","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Test objective completed","summary":"I need the service name.","blocker_kind":"missing_input","blocker_reason":"Specify the service to restart.","commands":[]}`,
 	})
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -683,7 +683,7 @@ func TestRunTurnReturnsActionableBlocker(t *testing.T) {
 func TestRunTurnStopsAfterOneStructuralRepair(t *testing.T) {
 	fake := newLoopLLMClient(t,
 		loopLLMResponse{content: `{"summary":"missing action","commands":[]}`},
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"still missing commands","commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Test objective completed","summary":"still missing commands","commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -709,7 +709,7 @@ func TestRunTurnStopsAfterOneStructuralRepair(t *testing.T) {
 func TestRunTurnUsesOneStructuralRepairForWholeWorkflow(t *testing.T) {
 	fake := newLoopLLMClient(t,
 		loopLLMResponse{content: `{"summary":"missing action","commands":[]}`},
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect.","commands":[{"command":"pwd","purpose":"Inspect directory","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Test objective completed","summary":"Inspect.","commands":[{"command":"pwd","purpose":"Inspect directory","risk":"safe","requires_confirmation":false}]}`},
 		loopLLMResponse{content: `{"summary":"missing action again","commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
@@ -737,9 +737,9 @@ func TestRunTurnUsesOneStructuralRepairForWholeWorkflow(t *testing.T) {
 // TestRunTurnAllowsTypedSuccessfulRepeat checks verification can repeat an exact prior success.
 func TestRunTurnAllowsTypedSuccessfulRepeat(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect disk.","commands":[{"command":"df -h","purpose":"Inspect disk space","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Verify disk after cleanup.","commands":[{"command":"df -h","purpose":"Verify changed disk space","risk":"safe","requires_confirmation":false,"repeat_reason":"verify_after_change"}]}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Disk state verified.","completion_basis":{"type":"current_observation","evidence_revision":2,"attempt_ids":[2]},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Test objective completed","summary":"Inspect disk.","commands":[{"command":"df -h","purpose":"Inspect disk space","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Test objective completed","summary":"Verify disk after cleanup.","commands":[{"command":"df -h","purpose":"Verify changed disk space","risk":"safe","requires_confirmation":false,"repeat_reason":"verify_after_change"}]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Test objective completed","summary":"Disk state verified.","completion_basis":{"source":"current_observation","freshness":"current","evidence_revision":2,"attempt_ids":[2]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -765,10 +765,10 @@ func TestRunTurnAllowsTypedSuccessfulRepeat(t *testing.T) {
 }
 
 func TestRunTurnDoesNotExposeMultiRevisionValidationFailure(t *testing.T) {
-	invalidCompletion := loopLLMResponse{content: `{"action":"complete","objective_mode":"act","success_criteria":"Codex is updated","summary":"Codex updated.","completion_basis":{"type":"current_execution","evidence_revision":2,"attempt_ids":[1,2,3]},"commands":[]}`}
+	invalidCompletion := loopLLMResponse{content: `{"action":"complete","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Codex is updated","summary":"Codex updated.","completion_basis":{"source":"current_execution","freshness":"current","evidence_revision":2,"attempt_ids":[1,2,3]},"commands":[]}`}
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"act","success_criteria":"Codex is updated","summary":"Inspect installation.","commands":[{"command":"brew info codex","purpose":"Inspect Codex installation","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"act","success_criteria":"Codex is updated","summary":"Update and verify Codex.","commands":[{"command":"brew upgrade --cask codex","purpose":"Update Codex","risk":"medium","requires_confirmation":true},{"command":"codex --version","purpose":"Verify installed version","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Codex is updated","summary":"Inspect installation.","commands":[{"command":"brew info codex","purpose":"Inspect Codex installation","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Codex is updated","summary":"Update and verify Codex.","commands":[{"command":"brew upgrade --cask codex","purpose":"Update Codex","risk":"medium","requires_confirmation":true},{"command":"codex --version","purpose":"Verify installed version","risk":"safe","requires_confirmation":false}]}`},
 		invalidCompletion,
 		invalidCompletion,
 	)
@@ -807,9 +807,9 @@ func TestRunTurnDoesNotExposeMultiRevisionValidationFailure(t *testing.T) {
 // TestRunTurnRepairsThenStopsNoProgress checks an unexplained success duplicate gets one repair round.
 func TestRunTurnRepairsThenStopsNoProgress(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect disk.","commands":[{"command":"df -h","purpose":"Inspect disk space","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect disk again.","commands":[{"command":"df -h","purpose":"Repeat without cause","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Still inspect disk again.","commands":[{"command":"df -h","purpose":"Repeat without cause","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Test objective completed","summary":"Inspect disk.","commands":[{"command":"df -h","purpose":"Inspect disk space","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Test objective completed","summary":"Inspect disk again.","commands":[{"command":"df -h","purpose":"Repeat without cause","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Test objective completed","summary":"Still inspect disk again.","commands":[{"command":"df -h","purpose":"Repeat without cause","risk":"safe","requires_confirmation":false}]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -840,8 +840,8 @@ func TestRunTurnRepairsThenStopsNoProgress(t *testing.T) {
 // TestRunTurnTraceCapturesWorkflowLifecycle checks authority, attempts, evidence, decisions, and outcome are diagnosable.
 func TestRunTurnTraceCapturesWorkflowLifecycle(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect.","commands":[{"command":"pwd","purpose":"Inspect directory","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspection complete.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Test objective completed","summary":"Inspect.","commands":[{"command":"pwd","purpose":"Inspect directory","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Test objective completed","summary":"Inspection complete.","completion_basis":{"source":"current_observation","freshness":"current","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -880,8 +880,8 @@ func TestRunTurnTraceCapturesWorkflowLifecycle(t *testing.T) {
 // recorded before its revision and terminal decision closes the turn last.
 func TestRunTurnTracePreservesLifecycleOrder(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"execute","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspect.","commands":[{"command":"pwd","purpose":"Inspect directory","risk":"safe","requires_confirmation":false}]}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"observe","success_criteria":"Test objective completed","summary":"Inspection complete.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Test objective completed","summary":"Inspect.","commands":[{"command":"pwd","purpose":"Inspect directory","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Test objective completed","summary":"Inspection complete.","completion_basis":{"source":"current_observation","freshness":"current","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -932,8 +932,8 @@ func TestRunTurnTracePreservesLifecycleOrder(t *testing.T) {
 // TestMissingInputFollowUpCarriesBlockerUntilCompletion checks session projection preserves causal context across turns.
 func TestMissingInputFollowUpCarriesBlockerUntilCompletion(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"blocked","objective_mode":"act","success_criteria":"Test objective completed","summary":"I need the service name.","blocker_kind":"missing_input","blocker_reason":"Specify the service to restart.","commands":[]}`},
-		loopLLMResponse{content: `{"action":"complete","objective_mode":"explain","success_criteria":"Test answer provided","summary":"nginx is the selected service.","completion_basis":{"type":"model_knowledge"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"blocked","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Test objective completed","summary":"I need the service name.","blocker_kind":"missing_input","blocker_reason":"Specify the service to restart.","commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Test answer provided","summary":"nginx is the selected service.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
