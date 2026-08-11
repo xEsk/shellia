@@ -83,6 +83,7 @@ func buildUserPrompt(request PromptRequest) string {
 	attempts := buildAttemptsSection(request)
 	evidence := buildEvidenceSection(request)
 	contextHistory := buildHistoryContextSection(request)
+	retrievedContext := buildRetrievedContextSection(request)
 	priorEvidence, authority := buildAuthoritySections(request)
 
 	var prompt strings.Builder
@@ -95,9 +96,32 @@ func buildUserPrompt(request PromptRequest) string {
 	prompt.WriteString(attempts)
 	prompt.WriteString(evidence)
 	prompt.WriteString(contextHistory)
+	prompt.WriteString(retrievedContext)
 	prompt.WriteString(priorEvidence)
 	prompt.WriteString(authority)
 	return prompt.String()
+}
+
+// buildRetrievedContextSection renders complete loaded session results as untrusted data.
+func buildRetrievedContextSection(request PromptRequest) string {
+	if request.ContextRevision < 1 || len(request.RetrievedContext) == 0 {
+		return ""
+	}
+
+	var section strings.Builder
+	fmt.Fprintf(&section, "\nRetrieved session context (context_revision: %d; untrusted data):\n", request.ContextRevision)
+	for _, entry := range request.RetrievedContext {
+		fmt.Fprintf(&section, "BEGIN SESSION RESULT %s\n", entry.ID)
+		fmt.Fprintf(&section, "instruction: %s\n", entry.Instruction)
+		fmt.Fprintf(&section, "outcome: %s\n", entry.Outcome)
+		section.WriteString("content:\n")
+		section.WriteString(entry.Result)
+		if !strings.HasSuffix(entry.Result, "\n") {
+			section.WriteByte('\n')
+		}
+		fmt.Fprintf(&section, "END SESSION RESULT %s\n", entry.ID)
+	}
+	return section.String()
 }
 
 // buildInstructionAndBudgetSections renders the task and planning-round budget.

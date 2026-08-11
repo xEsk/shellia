@@ -19,6 +19,9 @@ type workflowState struct {
 	round                     int
 	planningBudget            int
 	evidenceRevision          int
+	contextRevision           int
+	contextRefs               []string
+	retrievedContext          []historyEntry
 	attempts                  []workflowAttempt
 	lastDecision              llmResponse
 	stallCount                int
@@ -108,7 +111,7 @@ func (state *workflowState) validateCompletion(decision llmResponse) error {
 	case "model_knowledge":
 		return nil
 	case "session_result":
-		return fmt.Errorf("session_result completion requires a loaded context revision")
+		return state.validateContextReferences(basis.ContextRevision, decision.ContextRefs)
 	case "retry_observation":
 		if state.retryObservationAvailable {
 			return nil

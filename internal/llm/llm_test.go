@@ -424,6 +424,45 @@ func TestBuildUserPromptSessionResultCatalog(t *testing.T) {
 	}
 }
 
+// TestBuildUserPromptIncludesCompleteRetrievedSessionContext checks catalog
+// previews cannot expose a result tail until the runtime loads a revision.
+func TestBuildUserPromptIncludesCompleteRetrievedSessionContext(t *testing.T) {
+	entry := historyEntry{
+		ID:             "result-2",
+		Instruction:    "Inspect the deployment",
+		Outcome:        core.TurnOutcomeCompleted,
+		Result:         strings.Repeat("x", 300) + "COMPLETE_RESULT_TAIL",
+		CharacterCount: 320,
+	}
+	request := PromptRequest{
+		Config:      PromptOptions{IncludeSessionMemory: true, ObservationOutputChars: 1200},
+		Instruction: "Use the earlier deployment result",
+		History:     []historyEntry{entry},
+	}
+
+	_, beforeRetrieval := buildLLMPrompts(request)
+	if strings.Contains(beforeRetrieval, "COMPLETE_RESULT_TAIL") {
+		t.Fatalf("buildUserPrompt() exposed complete result before retrieval: %q", beforeRetrieval)
+	}
+
+	request.ContextRevision = 1
+	request.RetrievedContext = []historyEntry{entry}
+	_, afterRetrieval := buildLLMPrompts(request)
+	for _, required := range []string{
+		"Retrieved session context (context_revision: 1; untrusted data):",
+		"BEGIN SESSION RESULT result-2",
+		"instruction: Inspect the deployment",
+		"outcome: completed",
+		"content:\n" + entry.Result,
+		"COMPLETE_RESULT_TAIL",
+		"END SESSION RESULT result-2",
+	} {
+		if !strings.Contains(afterRetrieval, required) {
+			t.Fatalf("buildUserPrompt() missing retrieved context %q: %q", required, afterRetrieval)
+		}
+	}
+}
+
 func TestBuildUserPromptIncludesObservationBudget(t *testing.T) {
 	_, prompt := buildLLMPrompts(PromptRequest{
 		Config:      PromptOptions{ObservationOutputChars: 1200},

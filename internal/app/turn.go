@@ -179,6 +179,23 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		parsed := roundResult.Parsed
 		summary := roundResult.Summary
 		plans := roundResult.Plans
+		if parsed.Action == "retrieve_context" {
+			uipkg.PrintInfoTo(deps.Stdout, ui, fmt.Sprintf("Retrieving %d session result(s)…", len(parsed.ContextRefs)))
+			deps.Trace.Record("context_retrieval_requested", turnID, "planning", round.Round, map[string]any{"context_refs": parsed.ContextRefs})
+			kind, reason := workflow.retrieveContext(history, parsed.ContextRefs)
+			if kind != "" {
+				turnUI.Final(reason)
+				blocked := workflow.result(turnOutcomeBlocked, kind, reason)
+				blocked.Result = reason
+				return blocked, nil
+			}
+			deps.Trace.Record("context_revision", turnID, "planning", round.Round, map[string]any{
+				"context_revision": workflow.contextRevision,
+				"context_refs":     workflow.contextRefs,
+				"character_count":  retrievedContextCharacterCount(workflow.retrievedContext),
+			})
+			continue
+		}
 		if terminal, handled := handleTerminalDecision(round, workflow, parsed, summary); handled {
 			return terminal, nil
 		}
@@ -310,6 +327,8 @@ func buildPlanningRoundRequest(round turnRoundContext, workflow *workflowState, 
 		ContextInfo:               *round.ContextInfo,
 		Instruction:               workflow.objective,
 		History:                   history,
+		ContextRevision:           workflow.contextRevision,
+		RetrievedContext:          workflow.retrievedContext,
 		State:                     state,
 		Observations:              workflow.executions,
 		Skipped:                   workflow.skipped,
