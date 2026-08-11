@@ -10,9 +10,11 @@ import (
 type workflowState struct {
 	objective                 string
 	executionAllowed          bool
-	objectiveMode             string
+	operation                 string
+	evidenceSource            string
+	freshness                 string
+	repairOperation           string
 	successCriteria           string
-	repairObjectiveMode       string
 	contractLocked            bool
 	round                     int
 	planningBudget            int
@@ -23,7 +25,7 @@ type workflowState struct {
 	structuralRepairUsed      bool
 	semanticRepairUsed        bool
 	decisionError             string
-	priorEvidenceAvailable    bool
+	retryObservationAvailable bool
 	outcome                   turnOutcome
 	blockerKind               string
 	blockerReason             string
@@ -36,64 +38,88 @@ type workflowState struct {
 	latestBatchSkippedStart   int
 }
 
-// validateDecision locks the first coherent objective contract and rejects
-// terminal decisions that lack causal evidence for the selected intent.
+// validateDecision locks the first coherent decision contract and rejects
+// terminal decisions that lack causal evidence for the selected operation.
 func (state *workflowState) validateDecision(decision llmResponse) error {
 	if state.contractLocked {
-		if decision.ObjectiveMode != state.objectiveMode || decision.SuccessCriteria != state.successCriteria {
-			return fmt.Errorf("objective contract changed: mode=%q criteria=%q; expected mode=%q criteria=%q", decision.ObjectiveMode, decision.SuccessCriteria, state.objectiveMode, state.successCriteria)
+		if decision.Operation != state.operation || decision.EvidenceSource != state.evidenceSource || decision.Freshness != state.freshness || decision.SuccessCriteria != state.successCriteria {
+			return fmt.Errorf("decision contract changed: operation=%q evidence_source=%q freshness=%q criteria=%q", decision.Operation, decision.EvidenceSource, decision.Freshness, decision.SuccessCriteria)
 		}
-	} else if state.repairObjectiveMode != "" && isExecutableObjectiveMode(state.repairObjectiveMode) != isExecutableObjectiveMode(decision.ObjectiveMode) {
-		return fmt.Errorf("semantic repair cannot change authority group from objective mode %q to %q", state.repairObjectiveMode, decision.ObjectiveMode)
+	} else if state.repairOperation != "" && isExecutableOperation(state.repairOperation) != isExecutableOperation(decision.Operation) {
+		return fmt.Errorf("semantic repair cannot change authority group from operation %q to %q", state.repairOperation, decision.Operation)
 	}
 
-	if decision.Action == "complete" {
-		if err := state.validateCompletion(decision); err != nil {
-			if state.repairObjectiveMode == "" {
-				state.repairObjectiveMode = decision.ObjectiveMode
-			}
-			return err
+	if err := state.validateDecisionMatrix(decision); err != nil {
+		if state.repairOperation == "" {
+			state.repairOperation = decision.Operation
 		}
+		return err
 	}
 
 	if !state.contractLocked {
-		state.objectiveMode = decision.ObjectiveMode
+		state.operation = decision.Operation
+		state.evidenceSource = decision.EvidenceSource
+		state.freshness = decision.Freshness
 		state.successCriteria = decision.SuccessCriteria
 		state.contractLocked = true
 	}
 	return nil
 }
 
-func isExecutableObjectiveMode(mode string) bool {
-	return mode == "act" || mode == "observe"
+func isExecutableOperation(operation string) bool {
+	return operation == "act" || operation == "observe"
+}
+
+// validateDecisionMatrix enforces the closed operation, source, freshness, and action matrix.
+func (state *workflowState) validateDecisionMatrix(decision llmResponse) error {
+	allowed := false
+	switch {
+	case decision.Operation == "answer" && decision.EvidenceSource == "model_knowledge" && decision.Freshness == "not_applicable":
+		allowed = decision.Action == "complete" || decision.Action == "blocked"
+	case decision.Operation == "answer" && decision.EvidenceSource == "session_result" && decision.Freshness == "snapshot":
+		allowed = decision.Action == "retrieve_context" || decision.Action == "complete" || decision.Action == "blocked"
+	case decision.Operation == "observe" && decision.EvidenceSource == "current_observation" && decision.Freshness == "current":
+		allowed = decision.Action == "execute" || decision.Action == "complete" || decision.Action == "blocked"
+	case decision.Operation == "observe" && decision.EvidenceSource == "retry_observation" && decision.Freshness == "current":
+		if !state.retryObservationAvailable {
+			return fmt.Errorf("retry_observation is not eligible for this objective")
+		}
+		allowed = decision.Action == "execute" || decision.Action == "complete" || decision.Action == "blocked"
+	case decision.Operation == "act" && decision.EvidenceSource == "current_execution" && decision.Freshness == "current":
+		allowed = decision.Action == "execute" || decision.Action == "complete" || decision.Action == "blocked"
+	case decision.Operation == "act" && decision.EvidenceSource == "current_observation" && decision.Freshness == "current":
+		allowed = decision.Action == "execute" || decision.Action == "complete" || decision.Action == "blocked"
+	case decision.Operation == "capability" && decision.EvidenceSource == "model_knowledge" && decision.Freshness == "not_applicable":
+		allowed = decision.Action == "complete" || decision.Action == "blocked"
+	}
+	if !allowed {
+		return fmt.Errorf("decision is not allowed for operation=%q evidence_source=%q freshness=%q action=%q", decision.Operation, decision.EvidenceSource, decision.Freshness, decision.Action)
+	}
+	if decision.Action == "complete" {
+		return state.validateCompletion(decision)
+	}
+	return nil
 }
 
 // validateCompletion checks evidence provenance without interpreting arbitrary command output.
 func (state *workflowState) validateCompletion(decision llmResponse) error {
 	basis := decision.CompletionBasis
-	switch decision.ObjectiveMode {
-	case "explain":
+	switch decision.EvidenceSource {
+	case "model_knowledge":
 		return nil
-	case "capability":
-		if basis.Type == "current_execution" {
-			return fmt.Errorf("capability completion cannot claim an action was executed")
-		}
-		return nil
-	case "observe":
-		if basis.Type == "prior_session_evidence" && state.evidenceRevision == 0 && state.priorEvidenceAvailable {
+	case "session_result":
+		return fmt.Errorf("session_result completion requires a loaded context revision")
+	case "retry_observation":
+		if state.retryObservationAvailable {
 			return nil
 		}
-		if basis.Type != "current_observation" {
-			return fmt.Errorf("observe completion requires current_observation evidence, got %q", basis.Type)
-		}
+		return fmt.Errorf("retry_observation is not eligible for this objective")
+	case "current_observation":
 		return state.validateEvidenceReferences(basis.EvidenceRevision, basis.AttemptIDs, false)
-	case "act":
-		if basis.Type != "current_execution" && basis.Type != "current_observation" {
-			return fmt.Errorf("act completion requires current execution or postcondition evidence, got %q", basis.Type)
-		}
-		return state.validateEvidenceReferences(basis.EvidenceRevision, basis.AttemptIDs, basis.Type == "current_execution")
+	case "current_execution":
+		return state.validateEvidenceReferences(basis.EvidenceRevision, basis.AttemptIDs, true)
 	default:
-		return fmt.Errorf("unknown objective mode %q", decision.ObjectiveMode)
+		return fmt.Errorf("unknown completion evidence source %q", decision.EvidenceSource)
 	}
 }
 

@@ -71,7 +71,7 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		objective = instruction
 	}
 	workflow := newWorkflowState(objective, cfg.PlanOnly, cfg.PlanningMaxRounds)
-	workflow.priorEvidenceAvailable = len(state.LastObservations) > 0 &&
+	workflow.retryObservationAvailable = len(state.LastObservations) > 0 &&
 		strings.EqualFold(strings.TrimSpace(state.LastRetryInstruction), strings.TrimSpace(objective)) &&
 		strings.EqualFold(strings.TrimSpace(state.LastObservationObjective), strings.TrimSpace(objective))
 	turnID := deps.Trace.StartTurn(map[string]any{
@@ -317,10 +317,12 @@ func buildPlanningRoundRequest(round turnRoundContext, workflow *workflowState, 
 		LatestBatchSkippedStart:   workflow.latestBatchSkippedStart,
 		EvidenceRevision:          workflow.evidenceRevision,
 		PlanningRoundsRemaining:   workflow.planningBudget - round.Round,
-		ObjectiveMode:             workflow.objectiveMode,
+		Operation:                 workflow.operation,
+		EvidenceSource:            workflow.evidenceSource,
+		Freshness:                 workflow.freshness,
 		SuccessCriteria:           workflow.successCriteria,
 		DecisionError:             workflow.decisionError,
-		PriorEvidenceAvailable:    workflow.priorEvidenceAvailable,
+		RetryObservationAvailable: workflow.retryObservationAvailable,
 		PreviousDecision:          previousDecision,
 		Attempts:                  workflow.attempts,
 	}
@@ -347,9 +349,12 @@ func routePlanningDecision(round turnRoundContext, workflow *workflowState, resu
 		workflow.recordDecision(parsed, result.Summary, result.Plans)
 		workflow.decisionError = decisionErr.Error()
 		round.Deps.Trace.Record("completion_validation", round.TurnID, "planning", round.Round, map[string]any{
-			"objective_mode":   parsed.ObjectiveMode,
+			"operation":        parsed.Operation,
+			"evidence_source":  parsed.EvidenceSource,
+			"freshness":        parsed.Freshness,
 			"success_criteria": parsed.SuccessCriteria,
-			"basis_type":       parsed.CompletionBasis.Type,
+			"basis_source":     parsed.CompletionBasis.Source,
+			"basis_freshness":  parsed.CompletionBasis.Freshness,
 			"admitted":         false,
 			"reason":           decisionErr.Error(),
 		})
@@ -371,7 +376,9 @@ func routePlanningDecision(round turnRoundContext, workflow *workflowState, resu
 	workflow.proposal = pendingProposal{Objective: strings.TrimSpace(parsed.Offer.Objective), Summary: strings.TrimSpace(parsed.Offer.Summary)}
 	if workflow.contractLocked {
 		round.Deps.Trace.Record("objective_contract", round.TurnID, "planning", round.Round, map[string]any{
-			"objective_mode":   workflow.objectiveMode,
+			"operation":        workflow.operation,
+			"evidence_source":  workflow.evidenceSource,
+			"freshness":        workflow.freshness,
 			"success_criteria": workflow.successCriteria,
 		})
 	}
@@ -383,19 +390,22 @@ func handleTerminalDecision(round turnRoundContext, workflow *workflowState, par
 	switch parsed.Action {
 	case "complete":
 		round.Deps.Trace.Record("completion_validation", round.TurnID, "planning", round.Round, map[string]any{
-			"objective_mode":    parsed.ObjectiveMode,
+			"operation":         parsed.Operation,
+			"evidence_source":   parsed.EvidenceSource,
+			"freshness":         parsed.Freshness,
 			"success_criteria":  parsed.SuccessCriteria,
-			"basis_type":        parsed.CompletionBasis.Type,
+			"basis_source":      parsed.CompletionBasis.Source,
+			"basis_freshness":   parsed.CompletionBasis.Freshness,
 			"evidence_revision": parsed.CompletionBasis.EvidenceRevision,
 			"attempt_ids":       parsed.CompletionBasis.AttemptIDs,
 			"admitted":          true,
 		})
 		round.Deps.Trace.Record("shellia_decision", round.TurnID, "planning", round.Round, map[string]any{
 			"decision":         "complete",
-			"completion_basis": parsed.CompletionBasis.Type,
+			"completion_basis": parsed.CompletionBasis.Source,
 		})
 		answer := summary
-		if parsed.ObjectiveMode == "capability" && strings.TrimSpace(parsed.Offer.Objective) != "" {
+		if parsed.Operation == "capability" && strings.TrimSpace(parsed.Offer.Objective) != "" {
 			round.Deps.Trace.Record("pending_proposal_created", round.TurnID, "session", -1, map[string]any{
 				"objective": parsed.Offer.Objective,
 				"summary":   parsed.Offer.Summary,
@@ -574,6 +584,9 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 	}
 	deps.Trace.Record("planner_result", request.TurnID, "planning", request.Round, map[string]any{
 		"action":           parsed.Action,
+		"operation":        parsed.Operation,
+		"evidence_source":  parsed.EvidenceSource,
+		"freshness":        parsed.Freshness,
 		"summary":          summary,
 		"completion_basis": parsed.CompletionBasis,
 		"blocker_kind":     parsed.BlockerKind,

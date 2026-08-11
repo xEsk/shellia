@@ -400,7 +400,7 @@ func representativePromptRequest() PromptRequest {
 	cfg.MaxObservationEntries = 2
 	cfg.ObservationOutputChars = 24
 
-	previous := Response{Action: "execute", ObjectiveMode: "observe", Summary: "Inspect the deployment state."}
+	previous := Response{Action: "execute", Operation: "observe", EvidenceSource: "current_observation", Freshness: "current", Summary: "Inspect the deployment state."}
 	return PromptRequest{
 		Config:              promptOptionsForTest(cfg),
 		Instruction:         "complete the maintenance task",
@@ -427,10 +427,12 @@ func representativePromptRequest() PromptRequest {
 		LatestBatchSkippedStart:   0,
 		EvidenceRevision:          4,
 		PlanningRoundsRemaining:   2,
-		ObjectiveMode:             "observe",
+		Operation:                 "observe",
+		EvidenceSource:            "current_observation",
+		Freshness:                 "current",
 		SuccessCriteria:           "The current demo service state is reported.",
 		DecisionError:             "completion basis references an unavailable attempt",
-		PriorEvidenceAvailable:    true,
+		RetryObservationAvailable: true,
 		PreviousDecision:          &previous,
 		Attempts: []workflowAttempt{{
 			ID:               7,
@@ -445,71 +447,59 @@ func representativePromptRequest() PromptRequest {
 	}
 }
 
-// TestParseResponseValidatesWorkflowDecisionContract checks malformed model
-// decisions cannot reach orchestration as executable plans.
-func TestParseResponseValidatesWorkflowDecisionContract(t *testing.T) {
+// TestParseResponseAcceptsOrthogonalDecisionContract checks the wire contract
+// accepts independently selected operation, evidence, and freshness values.
+func TestParseResponseAcceptsOrthogonalDecisionContract(t *testing.T) {
 	tests := []struct {
-		name        string
-		raw         string
-		wantAction  string
-		wantBlocked string
-		wantErr     bool
+		name string
+		raw  string
 	}{
 		{
-			name:       "execute with command",
-			raw:        `{"action":"execute","objective_mode":"observe","success_criteria":"Disk space observed","summary":"Inspect disk.","commands":[{"command":"df -h","purpose":"Inspect disk space","risk":"safe","requires_confirmation":false}]}`,
-			wantAction: "execute",
+			name: "answer from model knowledge",
+			raw:  `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Explain the concept","summary":"Explanation.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","context_refs":[],"commands":[]}`,
 		},
 		{
-			name:       "execute with typed repeat reason",
-			raw:        `{"action":"execute","objective_mode":"observe","success_criteria":"Disk space verified","summary":"Verify disk again.","commands":[{"command":"df -h","purpose":"Verify changed disk space","risk":"safe","requires_confirmation":false,"repeat_reason":"verify_after_change"}]}`,
-			wantAction: "execute",
+			name: "retrieve session result",
+			raw:  `{"action":"retrieve_context","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reformat the earlier result","summary":"Retrieve the selected result.","completion_basis":{"source":"","freshness":""},"offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","context_refs":["result-2"],"commands":[]}`,
 		},
 		{
-			name:       "complete with final answer",
-			raw:        `{"action":"complete","objective_mode":"observe","success_criteria":"Disk space observed","summary":"There are 20 GB free.","completion_basis":{"type":"current_observation","evidence_revision":1,"attempt_ids":[1]},"commands":[]}`,
-			wantAction: "complete",
+			name: "current observation",
+			raw:  `{"action":"complete","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Current ports listed","summary":"Ports listed.","completion_basis":{"source":"current_observation","freshness":"current","evidence_revision":1,"attempt_ids":[1]},"offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","context_refs":[],"commands":[]}`,
 		},
-		{
-			name:        "blocked with actionable reason",
-			raw:         `{"action":"blocked","objective_mode":"act","success_criteria":"Service restarted","summary":"I need the service name.","blocker_kind":"missing_input","blocker_reason":"Specify the service to restart.","commands":[]}`,
-			wantAction:  "blocked",
-			wantBlocked: "missing_input",
-		},
-		{name: "missing action", raw: `{"summary":"Done.","commands":[]}`, wantErr: true},
-		{name: "unknown action", raw: `{"action":"wait","objective_mode":"explain","success_criteria":"Answer provided","summary":"Wait.","commands":[]}`, wantErr: true},
-		{name: "execute without commands", raw: `{"action":"execute","objective_mode":"observe","success_criteria":"State observed","summary":"Inspect.","commands":[]}`, wantErr: true},
-		{name: "complete with commands", raw: `{"action":"complete","objective_mode":"explain","success_criteria":"Answer provided","summary":"Done.","completion_basis":{"type":"model_knowledge"},"commands":[{"command":"pwd","purpose":"Inspect","risk":"safe"}]}`, wantErr: true},
-		{name: "complete without answer", raw: `{"action":"complete","objective_mode":"explain","success_criteria":"Answer provided","summary":"","completion_basis":{"type":"model_knowledge"},"commands":[]}`, wantErr: true},
-		{name: "complete without basis", raw: `{"action":"complete","objective_mode":"explain","success_criteria":"Answer provided","summary":"Done.","commands":[]}`, wantErr: true},
-		{name: "blocked with commands", raw: `{"action":"blocked","objective_mode":"act","success_criteria":"Task completed","summary":"Cannot continue.","blocker_kind":"missing_input","blocker_reason":"Need input.","commands":[{"command":"pwd","purpose":"Inspect","risk":"safe"}]}`, wantErr: true},
-		{name: "blocked without reason", raw: `{"action":"blocked","objective_mode":"act","success_criteria":"Task completed","summary":"Cannot continue.","blocker_kind":"missing_input","commands":[]}`, wantErr: true},
-		{name: "blocked with unknown kind", raw: `{"action":"blocked","objective_mode":"act","success_criteria":"Task completed","summary":"Cannot continue.","blocker_kind":"maybe_later","blocker_reason":"Need input.","commands":[]}`, wantErr: true},
-		{name: "unknown repeat reason", raw: `{"action":"execute","objective_mode":"observe","success_criteria":"State observed","summary":"Repeat.","commands":[{"command":"df -h","purpose":"Repeat disk check","risk":"safe","repeat_reason":"because_i_said_so"}]}`, wantErr: true},
-		{name: "capability cannot execute", raw: `{"action":"execute","objective_mode":"capability","success_criteria":"Capability explained","summary":"Inspect.","commands":[{"command":"df -h","purpose":"Inspect disk","risk":"safe"}]}`, wantErr: true},
-		{name: "capability resolves as complete", raw: `{"action":"blocked","objective_mode":"capability","success_criteria":"Capability explained","summary":"I cannot do it.","blocker_kind":"unavailable","blocker_reason":"No supported tool.","commands":[]}`, wantErr: true},
-		{name: "explain cannot execute", raw: `{"action":"execute","objective_mode":"explain","success_criteria":"Method explained","summary":"Inspect.","commands":[{"command":"df -h","purpose":"Inspect disk","risk":"safe"}]}`, wantErr: true},
-		{name: "non-capability cannot offer", raw: `{"action":"complete","objective_mode":"explain","success_criteria":"Method explained","summary":"Use df.","completion_basis":{"type":"model_knowledge"},"offer":{"objective":"inspect disk"},"commands":[]}`, wantErr: true},
-		{name: "missing objective mode", raw: `{"action":"complete","summary":"Codex can be updated.","completion_basis":"direct answer","commands":[]}`, wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			response, err := parseResponse(tt.raw, ResponseModeStrict)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("parseResponse() error = nil, want rejection")
-				}
-				return
-			}
-			if err != nil {
+			if _, err := parseResponse(tt.raw, ResponseModeStrict); err != nil {
 				t.Fatalf("parseResponse() error = %v", err)
 			}
-			if response.Action != tt.wantAction {
-				t.Fatalf("Action = %q, want %q", response.Action, tt.wantAction)
-			}
-			if response.BlockerKind != tt.wantBlocked {
-				t.Fatalf("BlockerKind = %q, want %q", response.BlockerKind, tt.wantBlocked)
+		})
+	}
+}
+
+// TestParseResponseRejectsInvalidOrthogonalDecisionContract checks structural
+// wire-contract violations stop before orchestration.
+func TestParseResponseRejectsInvalidOrthogonalDecisionContract(t *testing.T) {
+	valid := `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Explain the concept","summary":"Explanation.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","context_refs":[],"commands":[]}`
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "unknown operation", raw: strings.Replace(valid, `"operation":"answer"`, `"operation":"unknown"`, 1)},
+		{name: "unknown evidence source", raw: strings.Replace(valid, `"evidence_source":"model_knowledge"`, `"evidence_source":"unknown"`, 1)},
+		{name: "unknown freshness", raw: strings.Replace(valid, `"freshness":"not_applicable"`, `"freshness":"unknown"`, 1)},
+		{name: "retrieve context without references", raw: strings.Replace(valid, `"action":"complete"`, `"action":"retrieve_context"`, 1)},
+		{name: "retrieve context with commands", raw: strings.Replace(strings.Replace(strings.Replace(valid, `"action":"complete"`, `"action":"retrieve_context"`, 1), `"context_refs":[]`, `"context_refs":["result-1"]`, 1), `"commands":[]`, `"commands":[{"command":"pwd","purpose":"Inspect","risk":"safe"}]`, 1)},
+		{name: "answer cannot execute", raw: strings.Replace(strings.Replace(valid, `"action":"complete"`, `"action":"execute"`, 1), `"commands":[]`, `"commands":[{"command":"pwd","purpose":"Inspect","risk":"safe"}]`, 1)},
+		{name: "capability cannot execute", raw: strings.Replace(strings.Replace(strings.Replace(valid, `"action":"complete"`, `"action":"execute"`, 1), `"operation":"answer"`, `"operation":"capability"`, 1), `"commands":[]`, `"commands":[{"command":"pwd","purpose":"Inspect","risk":"safe"}]`, 1)},
+		{name: "complete with commands", raw: strings.Replace(valid, `"commands":[]`, `"commands":[{"command":"pwd","purpose":"Inspect","risk":"safe"}]`, 1)},
+		{name: "completion basis differs", raw: strings.Replace(valid, `"freshness":"not_applicable"}`, `"freshness":"current"}`, 1)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := parseResponse(tt.raw, ResponseModeStrict); err == nil {
+				t.Fatal("parseResponse() error = nil, want structural contract rejection")
 			}
 		})
 	}
@@ -518,7 +508,7 @@ func TestParseResponseValidatesWorkflowDecisionContract(t *testing.T) {
 // TestParseResponseAcceptsExtraTrailingBrace checks local models that append
 // one stray brace still yield the first complete JSON object.
 func TestParseResponseAcceptsExtraTrailingBrace(t *testing.T) {
-	raw := `{"action":"execute","objective_mode":"observe","success_criteria":"Files listed","summary":"Showing files.","commands":[{"command":"ls","purpose":"List files","risk":"safe","requires_confirmation":false}]}}`
+	raw := `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Files listed","summary":"Showing files.","commands":[{"command":"ls","purpose":"List files","risk":"safe","requires_confirmation":false}]}}`
 
 	response, err := parseResponse(raw, ResponseModeCompatible)
 	if err != nil {
@@ -532,7 +522,7 @@ func TestParseResponseAcceptsExtraTrailingBrace(t *testing.T) {
 // TestParseResponseKeepsBracesInsideStrings checks JSON extraction respects
 // quoted brace characters.
 func TestParseResponseKeepsBracesInsideStrings(t *testing.T) {
-	raw := `prefix {"action":"complete","objective_mode":"explain","success_criteria":"Braces explained","summary":"Use {literal} braces.","completion_basis":{"type":"model_knowledge"},"commands":[]} suffix`
+	raw := `prefix {"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Braces explained","summary":"Use {literal} braces.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]} suffix`
 
 	response, err := parseResponse(raw, ResponseModeCompatible)
 	if err != nil {
@@ -570,7 +560,7 @@ func TestParseResponseStrictRejectsDocumentBoundaries(t *testing.T) {
 // TestParseResponseStrictAcceptsUnknownFields preserves provider compatibility
 // while strict mode enforces exactly one response document.
 func TestParseResponseStrictAcceptsUnknownFields(t *testing.T) {
-	raw := `{"action":"complete","objective_mode":"explain","success_criteria":"Answer provided","summary":"Done.","completion_basis":{"type":"model_knowledge"},"commands":[],"provider_metadata":{"request_id":"provider-123"}}`
+	raw := `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Answer provided","summary":"Done.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[],"provider_metadata":{"request_id":"provider-123"}}`
 
 	response, err := parseResponse(raw, ResponseModeStrict)
 	if err != nil {
@@ -637,13 +627,15 @@ func TestBuildSystemPromptDefinesWorkflowDecisionContract(t *testing.T) {
 		"untrusted evidence",
 		"independent_on_failure",
 		"repeat_reason",
-		"objective_mode",
+		"operation",
+		"evidence_source",
+		"freshness",
 		"success_criteria",
 		"capability",
 		"explicit capability question takes precedence",
 		"do not ask conversational permission",
 		"prefer action when an outcome is requested",
-		"prior_session_evidence only when the prompt marks it eligible",
+		"retry_observation only when the prompt marks it eligible",
 	} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("buildSystemPrompt() missing %q", required)

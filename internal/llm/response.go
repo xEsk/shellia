@@ -87,27 +87,37 @@ func firstNonWhitespaceByte(raw string) byte {
 // validateResponse normalizes and validates the decoded model decision.
 func validateResponse(parsed Response) (Response, error) {
 	parsed.Action = strings.TrimSpace(strings.ToLower(parsed.Action))
-	parsed.ObjectiveMode = strings.TrimSpace(strings.ToLower(parsed.ObjectiveMode))
+	parsed.Operation = strings.TrimSpace(strings.ToLower(parsed.Operation))
+	parsed.EvidenceSource = strings.TrimSpace(strings.ToLower(parsed.EvidenceSource))
+	parsed.Freshness = strings.TrimSpace(strings.ToLower(parsed.Freshness))
 	parsed.SuccessCriteria = strings.TrimSpace(parsed.SuccessCriteria)
 	parsed.Summary = strings.TrimSpace(parsed.Summary)
-	parsed.CompletionBasis.Type = strings.TrimSpace(strings.ToLower(parsed.CompletionBasis.Type))
+	parsed.CompletionBasis.Source = strings.TrimSpace(strings.ToLower(parsed.CompletionBasis.Source))
+	parsed.CompletionBasis.Freshness = strings.TrimSpace(strings.ToLower(parsed.CompletionBasis.Freshness))
 	parsed.Offer.Objective = strings.TrimSpace(parsed.Offer.Objective)
 	parsed.Offer.Summary = strings.TrimSpace(parsed.Offer.Summary)
 	parsed.BlockerKind = strings.TrimSpace(strings.ToLower(parsed.BlockerKind))
 	parsed.BlockerReason = strings.TrimSpace(parsed.BlockerReason)
-	switch parsed.ObjectiveMode {
-	case "act", "observe", "capability", "explain":
+	switch parsed.Operation {
+	case "answer", "observe", "act", "capability":
 	default:
-		return Response{}, fmt.Errorf("invalid llm response: unknown objective_mode %q", parsed.ObjectiveMode)
+		return Response{}, fmt.Errorf("invalid llm response: unknown operation %q", parsed.Operation)
+	}
+	switch parsed.EvidenceSource {
+	case "model_knowledge", "session_result", "retry_observation", "current_observation", "current_execution":
+	default:
+		return Response{}, fmt.Errorf("invalid llm response: unknown evidence_source %q", parsed.EvidenceSource)
+	}
+	switch parsed.Freshness {
+	case "not_applicable", "snapshot", "current":
+	default:
+		return Response{}, fmt.Errorf("invalid llm response: unknown freshness %q", parsed.Freshness)
 	}
 	if parsed.SuccessCriteria == "" {
 		return Response{}, fmt.Errorf("invalid llm response: missing success_criteria")
 	}
-	if parsed.ObjectiveMode != "capability" && (parsed.Offer.Objective != "" || parsed.Offer.Summary != "") {
+	if parsed.Operation != "capability" && (parsed.Offer.Objective != "" || parsed.Offer.Summary != "") {
 		return Response{}, fmt.Errorf("invalid llm response: offer is only valid for capability")
-	}
-	if parsed.ObjectiveMode == "capability" && parsed.Action != "complete" {
-		return Response{}, fmt.Errorf("invalid llm response: capability decision must complete the capability question")
 	}
 	if parsed.Offer.Objective == "" && parsed.Offer.Summary != "" {
 		return Response{}, fmt.Errorf("invalid llm response: offer summary requires an objective")
@@ -127,10 +137,22 @@ func validateResponse(parsed Response) (Response, error) {
 			return Response{}, fmt.Errorf("invalid llm response: unknown repeat_reason %q", cmd.RepeatReason)
 		}
 	}
+	refs := make(map[string]struct{}, len(parsed.ContextRefs))
+	for index := range parsed.ContextRefs {
+		ref := strings.TrimSpace(strings.ToLower(parsed.ContextRefs[index]))
+		if ref == "" {
+			return Response{}, fmt.Errorf("invalid llm response: empty context reference")
+		}
+		if _, exists := refs[ref]; exists {
+			return Response{}, fmt.Errorf("invalid llm response: duplicate context reference %q", ref)
+		}
+		refs[ref] = struct{}{}
+		parsed.ContextRefs[index] = ref
+	}
 	switch parsed.Action {
 	case "execute":
-		if parsed.ObjectiveMode == "capability" || parsed.ObjectiveMode == "explain" {
-			return Response{}, fmt.Errorf("invalid llm response: objective_mode %q cannot execute", parsed.ObjectiveMode)
+		if parsed.Operation == "capability" || parsed.Operation == "answer" {
+			return Response{}, fmt.Errorf("invalid llm response: operation %q cannot execute", parsed.Operation)
 		}
 		if parsed.Summary == "" {
 			return Response{}, fmt.Errorf("invalid llm response: execute decision missing summary")
@@ -138,20 +160,28 @@ func validateResponse(parsed Response) (Response, error) {
 		if len(parsed.Commands) == 0 {
 			return Response{}, fmt.Errorf("invalid llm response: execute decision missing commands")
 		}
+	case "retrieve_context":
+		if len(parsed.ContextRefs) == 0 {
+			return Response{}, fmt.Errorf("invalid llm response: retrieve_context decision missing context_refs")
+		}
+		if len(parsed.Commands) > 0 {
+			return Response{}, fmt.Errorf("invalid llm response: retrieve_context decision with commands")
+		}
 	case "complete":
 		if parsed.Summary == "" {
 			return Response{}, fmt.Errorf("invalid llm response: complete decision missing final answer")
 		}
-		if parsed.CompletionBasis.Type == "" {
+		if parsed.CompletionBasis.Source == "" || parsed.CompletionBasis.Freshness == "" {
 			return Response{}, fmt.Errorf("invalid llm response: complete decision missing completion basis")
 		}
-		switch parsed.CompletionBasis.Type {
-		case "model_knowledge", "current_observation", "current_execution", "prior_session_evidence":
-		default:
-			return Response{}, fmt.Errorf("invalid llm response: unknown completion basis %q", parsed.CompletionBasis.Type)
+		if parsed.CompletionBasis.Source != parsed.EvidenceSource || parsed.CompletionBasis.Freshness != parsed.Freshness {
+			return Response{}, fmt.Errorf("invalid llm response: completion basis must match evidence_source and freshness")
 		}
 		if len(parsed.Commands) > 0 {
 			return Response{}, fmt.Errorf("invalid llm response: complete decision with commands")
+		}
+		if len(parsed.ContextRefs) > 0 && parsed.EvidenceSource != "session_result" {
+			return Response{}, fmt.Errorf("invalid llm response: context_refs require session_result evidence")
 		}
 	case "blocked":
 		if len(parsed.Commands) > 0 {

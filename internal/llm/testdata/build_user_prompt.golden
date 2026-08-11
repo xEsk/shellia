@@ -16,8 +16,10 @@ Session memory:
 - last_blocker_kind: missing_input
 - last_blocker_reason: service name was not provided
 
-Immutable objective contract:
-- objective_mode: observe
+Immutable decision contract:
+- operation: observe
+- evidence_source: current_observation
+- freshness: current
 - success_criteria: The current demo service state is reported.
 
 Previous workflow decision:
@@ -69,7 +71,7 @@ Recent session context:
 1. User: inspect the old deployment
    Result: The old deployment needs maintenance.
 
-Prior session evidence: eligible for this same-objective retry.
+Retry observation: eligible for this same-objective retry.
 
 
 Execution authority: plan_only; commands may be shown but must not be executed.

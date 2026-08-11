@@ -65,7 +65,64 @@ func (transport *blockingContextTransport) RoundTrip(request *http.Request) (*ht
 // newLoopLLMClient builds an OpenAI-compatible fake transport for main loop tests.
 func newLoopLLMClient(t *testing.T, responses ...loopLLMResponse) *loopLLMClient {
 	t.Helper()
+	for index := range responses {
+		responses[index].content = migrateLoopResponseContract(t, responses[index].content)
+	}
 	return &loopLLMClient{responses: responses}
+}
+
+// migrateLoopResponseContract keeps the pre-cutover loop fixtures focused on
+// their workflow behavior while they exercise the current wire protocol.
+func migrateLoopResponseContract(t *testing.T, raw string) string {
+	t.Helper()
+	var decision map[string]any
+	if json.Unmarshal([]byte(raw), &decision) != nil {
+		return raw
+	}
+	objectiveMode, _ := decision["objective_mode"].(string)
+	if objectiveMode == "" {
+		return raw
+	}
+	operation, source, freshness := "", "", ""
+	switch objectiveMode {
+	case "explain":
+		operation, source, freshness = "answer", "model_knowledge", "not_applicable"
+	case "capability":
+		operation, source, freshness = "capability", "model_knowledge", "not_applicable"
+	case "observe":
+		operation, source, freshness = "observe", "current_observation", "current"
+	case "act":
+		operation, source, freshness = "act", "current_execution", "current"
+	default:
+		return raw
+	}
+	if basis, ok := decision["completion_basis"].(map[string]any); ok {
+		if basisType, ok := basis["type"].(string); ok {
+			delete(basis, "type")
+			basis["source"] = basisType
+			switch basisType {
+			case "prior_session_evidence":
+				basis["source"] = "retry_observation"
+				basis["freshness"] = "current"
+				source, freshness = "retry_observation", "current"
+			case "model_knowledge":
+				basis["freshness"] = "not_applicable"
+				source, freshness = "model_knowledge", "not_applicable"
+			case "current_observation", "current_execution":
+				basis["freshness"] = "current"
+				source, freshness = basisType, "current"
+			}
+		}
+	}
+	delete(decision, "objective_mode")
+	decision["operation"] = operation
+	decision["evidence_source"] = source
+	decision["freshness"] = freshness
+	encoded, err := json.Marshal(decision)
+	if err != nil {
+		t.Fatalf("migrateLoopResponseContract() error = %v", err)
+	}
+	return string(encoded)
 }
 
 // RoundTrip serves fake LLM responses without opening a local network listener.
@@ -1097,7 +1154,7 @@ func TestRunPlanningRoundPreservesStructuralParseCause(t *testing.T) {
 // TestRunPlanningRoundSelectsResponseModeForProviderCapabilities checks both
 // response modes at the initial and structural-repair parse sites.
 func TestRunPlanningRoundSelectsResponseModeForProviderCapabilities(t *testing.T) {
-	valid := `{"action":"complete","objective_mode":"explain","success_criteria":"Answer provided","summary":"Done.","completion_basis":{"type":"model_knowledge"},"commands":[]}`
+	valid := `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Answer provided","summary":"Done.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]}`
 	tests := []struct {
 		name                   string
 		supportsResponseFormat bool
@@ -2853,7 +2910,7 @@ func TestRunInteractiveCancellationRemembersPartialObservations(t *testing.T) {
 		t.Fatalf("execution calls = %d, LLM requests = %d, want one cancelled execution and one retry plan", calls, fake.requestCount())
 	}
 	retryBody := fake.requestBodies()[1]
-	for _, snippet := range []string{"last_retry_instruction: inspect once", "Recent reusable observations:", "Inspect before cancellation", "observed-before-cancel", "Prior session evidence: eligible for this same-objective retry."} {
+	for _, snippet := range []string{"last_retry_instruction: inspect once", "Recent reusable observations:", "Inspect before cancellation", "observed-before-cancel", "Retry observation: eligible for this same-objective retry."} {
 		if !strings.Contains(retryBody, snippet) {
 			t.Fatalf("retry prompt missing %q: %q", snippet, retryBody)
 		}

@@ -90,10 +90,12 @@ type PromptRequest struct {
 	LatestBatchSkippedStart   int
 	EvidenceRevision          int
 	PlanningRoundsRemaining   int
-	ObjectiveMode             string
+	Operation                 string
+	EvidenceSource            string
+	Freshness                 string
 	SuccessCriteria           string
 	DecisionError             string
-	PriorEvidenceAvailable    bool
+	RetryObservationAvailable bool
 	PreviousDecision          *Response
 	Attempts                  []workflowAttempt
 }
@@ -111,7 +113,9 @@ type Command struct {
 
 // CompletionBasis identifies the causal evidence supporting a complete decision.
 type CompletionBasis struct {
-	Type             string `json:"type"`
+	Source           string `json:"source"`
+	Freshness        string `json:"freshness"`
+	ContextRevision  int    `json:"context_revision,omitempty"`
 	EvidenceRevision int    `json:"evidence_revision,omitempty"`
 	AttemptIDs       []int  `json:"attempt_ids,omitempty"`
 }
@@ -124,10 +128,13 @@ type Offer struct {
 
 type Response struct {
 	Action          string          `json:"action"`
-	ObjectiveMode   string          `json:"objective_mode"`
+	Operation       string          `json:"operation"`
+	EvidenceSource  string          `json:"evidence_source"`
+	Freshness       string          `json:"freshness"`
 	SuccessCriteria string          `json:"success_criteria"`
 	Summary         string          `json:"summary"`
 	CompletionBasis CompletionBasis `json:"completion_basis"`
+	ContextRefs     []string        `json:"context_refs"`
 	Offer           Offer           `json:"offer"`
 	BlockerKind     string          `json:"blocker_kind"`
 	BlockerReason   string          `json:"blocker_reason"`

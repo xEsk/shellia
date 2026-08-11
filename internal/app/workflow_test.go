@@ -7,8 +7,65 @@ import (
 
 	"github.com/xEsk/shellia/internal/core"
 	executorpkg "github.com/xEsk/shellia/internal/executor"
+	llmpkg "github.com/xEsk/shellia/internal/llm"
 	sessionpkg "github.com/xEsk/shellia/internal/session"
 )
+
+// TestWorkflowDecisionMatrix validates the runtime-owned operation and evidence contract.
+func TestWorkflowDecisionMatrix(t *testing.T) {
+	tests := []struct {
+		name     string
+		allowed  bool
+		decision llmResponse
+	}{
+		{
+			name:     "answer retrieves snapshot",
+			allowed:  true,
+			decision: llmResponse{Action: "retrieve_context", Operation: "answer", EvidenceSource: "session_result", Freshness: "snapshot", SuccessCriteria: "Reformat result", ContextRefs: []string{"result-1"}},
+		},
+		{
+			name:     "answer cannot execute",
+			allowed:  false,
+			decision: llmResponse{Action: "execute", Operation: "answer", EvidenceSource: "session_result", Freshness: "snapshot", SuccessCriteria: "Reformat result", Commands: []llmpkg.Command{{Command: "lsof", Purpose: "Rediscover"}}},
+		},
+		{
+			name:     "historical snapshot cannot satisfy current observation",
+			allowed:  false,
+			decision: llmResponse{Action: "complete", Operation: "observe", EvidenceSource: "session_result", Freshness: "current", SuccessCriteria: "Current ports", CompletionBasis: llmpkg.CompletionBasis{Source: "session_result", Freshness: "current"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := newWorkflowState("test", false, 3)
+			err := state.validateDecision(tt.decision)
+			if (err == nil) != tt.allowed {
+				t.Fatalf("validateDecision() error = %v, allowed = %t", err, tt.allowed)
+			}
+		})
+	}
+}
+
+// TestWorkflowDecisionRetryObservationRequiresExactRetry checks old observations
+// are admitted only for the runtime-verified exact retry path.
+func TestWorkflowDecisionRetryObservationRequiresExactRetry(t *testing.T) {
+	decision := llmResponse{
+		Action:          "complete",
+		Operation:       "observe",
+		EvidenceSource:  "retry_observation",
+		Freshness:       "current",
+		SuccessCriteria: "Current state observed",
+		CompletionBasis: llmpkg.CompletionBasis{Source: "retry_observation", Freshness: "current"},
+	}
+	for _, available := range []bool{false, true} {
+		state := newWorkflowState("test", false, 3)
+		state.retryObservationAvailable = available
+		err := state.validateDecision(decision)
+		if (err == nil) != available {
+			t.Fatalf("retryObservationAvailable=%t: validateDecision() error = %v", available, err)
+		}
+	}
+}
 
 // TestRunTurnRepairsActionCompletionWithoutCurrentEvidence checks knowing how
 // to perform a requested change cannot terminate the workflow as success.
@@ -241,7 +298,7 @@ func TestRunTurnCapabilityRepairUsesNonExecutingContractWithStaleHistory(t *test
 		t.Fatalf("executed=%t result=%#v output=%q, want a completed capability offer", executed, result, output)
 	}
 	bodies := fake.requestBodies()
-	if len(bodies) != 2 || !strings.Contains(bodies[1], "Capability repair contract") || !strings.Contains(bodies[1], "completion_basis.type=model_knowledge") {
+	if len(bodies) != 2 || !strings.Contains(bodies[1], "Capability repair contract") || !strings.Contains(bodies[1], "completion_basis.source=model_knowledge") {
 		t.Fatalf("repair request bodies=%#v, want an explicit non-executing capability contract", bodies)
 	}
 }
@@ -276,7 +333,7 @@ func TestRunTurnObserveRepairRequiresFreshExecutionWithoutCurrentAttempts(t *tes
 		t.Fatalf("runs=%d result=%#v, want one fresh observation and completion", runs, result)
 	}
 	bodies := fake.requestBodies()
-	if len(bodies) != 3 || !strings.Contains(bodies[1], "Observe repair contract") || !strings.Contains(bodies[1], "Return action=execute") || !strings.Contains(bodies[1], "Do not use prior_session_evidence") {
+	if len(bodies) != 3 || !strings.Contains(bodies[1], "Observe repair contract") || !strings.Contains(bodies[1], "Return action=execute") || !strings.Contains(bodies[1], "Do not use retry_observation") {
 		t.Fatalf("repair request bodies=%#v, want a fresh-execution observe contract", bodies)
 	}
 }
