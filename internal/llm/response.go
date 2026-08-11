@@ -17,6 +17,29 @@ const (
 	ResponseModeCompatible ResponseMode = "compatible"
 )
 
+// ResponseValidationError reports a decoded response that violated Shellia's
+// structural decision contract while preserving its recognized operation.
+type ResponseValidationError struct {
+	Response Response
+	Err      error
+}
+
+// Error returns the underlying decision-contract validation failure.
+func (err *ResponseValidationError) Error() string {
+	if err == nil || err.Err == nil {
+		return ""
+	}
+	return err.Err.Error()
+}
+
+// Unwrap exposes the underlying decision-contract validation failure.
+func (err *ResponseValidationError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.Err
+}
+
 // parseResponse validates one JSON response returned by the model.
 func parseResponse(raw string, mode ResponseMode) (Response, error) {
 	var (
@@ -34,7 +57,13 @@ func parseResponse(raw string, mode ResponseMode) (Response, error) {
 	if err != nil {
 		return Response{}, err
 	}
-	return validateResponse(parsed)
+	decoded := parsed
+	validated, err := validateResponse(parsed)
+	if err != nil {
+		decoded.Operation = strings.TrimSpace(strings.ToLower(decoded.Operation))
+		return decoded, &ResponseValidationError{Response: decoded, Err: err}
+	}
+	return validated, nil
 }
 
 // decodeStrictResponse requires a single JSON object with no surrounding content.

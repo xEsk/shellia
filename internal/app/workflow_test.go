@@ -446,6 +446,39 @@ func TestRunTurnDoesNotRepairCapabilityIntoExecutableMode(t *testing.T) {
 	}
 }
 
+// TestRunTurnStructuralRepairPreservesDecodedCapabilityAuthority checks a
+// decoded capability decision cannot gain executor authority through structural repair.
+func TestRunTurnStructuralRepairPreservesDecodedCapabilityAuthority(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"action":"execute","operation":"capability","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Explain marker capability","summary":"Create the marker.","commands":[{"command":"touch marker","purpose":"Create marker","risk":"medium","requires_confirmation":true}]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Explain marker capability","summary":"Create the marker after repair.","commands":[{"command":"touch marker","purpose":"Create marker","risk":"medium","requires_confirmation":true}]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Explain marker capability","summary":"Shellia can create the marker after explicit authorization.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]}`},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	ctxInfo := loopTestContext(t)
+
+	var result turnResult
+	captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, executorpkg.Options, *contextInfo, []commandPlan, []commandExecution) (commandBatchResult, error) {
+			t.Fatal("ExecuteCommands reached after capability authority drift")
+			return commandBatchResult{}, nil
+		}
+		var err error
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "can Shellia create a marker?"))
+		if err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	if result.Outcome != turnOutcomeCompleted || result.Result != "Shellia can create the marker after explicit authorization." {
+		t.Fatalf("runTurn() result = %#v, want valid capability repair", result)
+	}
+	if fake.requestCount() != 3 {
+		t.Fatalf("LLM request count = %d, want initial decision, structural repair, and capability repair", fake.requestCount())
+	}
+}
+
 // TestRunTurnRejectsStalePriorObservationForCurrentQuery checks reusable
 // session output is not enough for a fresh mutable-state question unless this
 // workflow is explicitly retrying the interrupted objective.

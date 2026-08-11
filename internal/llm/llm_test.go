@@ -463,6 +463,31 @@ func TestBuildUserPromptIncludesCompleteRetrievedSessionContext(t *testing.T) {
 	}
 }
 
+// TestBuildUserPromptOmitsRetrievedContextWhenSessionMemoryDisabled checks the
+// loaded-context renderer independently enforces the session-memory opt-out.
+func TestBuildUserPromptOmitsRetrievedContextWhenSessionMemoryDisabled(t *testing.T) {
+	const secret = "DISABLED_RETRIEVED_CONTEXT_SECRET"
+	entry := historyEntry{
+		ID:             "result-2",
+		Instruction:    "Private task",
+		Outcome:        core.TurnOutcomeCompleted,
+		Result:         secret,
+		CharacterCount: len([]rune(secret)),
+	}
+	_, prompt := buildLLMPrompts(PromptRequest{
+		Config:           PromptOptions{IncludeSessionMemory: false, ObservationOutputChars: 1200},
+		Instruction:      "Answer without session memory",
+		ContextRevision:  1,
+		RetrievedContext: []historyEntry{entry},
+	})
+
+	for _, forbidden := range []string{"Retrieved session context", entry.ID, entry.Result} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("buildUserPrompt() exposed disabled retrieved context %q: %q", forbidden, prompt)
+		}
+	}
+}
+
 func TestBuildUserPromptIncludesObservationBudget(t *testing.T) {
 	_, prompt := buildLLMPrompts(PromptRequest{
 		Config:      PromptOptions{ObservationOutputChars: 1200},
@@ -485,6 +510,33 @@ func TestBuildSystemPromptGuidesCompactObservation(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("buildSystemPrompt() missing compact-observation guidance %q: %q", required, prompt)
+		}
+	}
+}
+
+// TestBuildSystemPromptDefinesAnswerAndContextRetrievalWorkflow checks the
+// stable contract covers text transformations and the full retrieve-to-complete flow.
+func TestBuildSystemPromptDefinesAnswerAndContextRetrievalWorkflow(t *testing.T) {
+	prompt := buildSystemPrompt()
+	for _, required := range []string{
+		"explain, summarize, compare, translate, or reformat",
+		"select the exact required IDs from the Session result catalog",
+		"return action=retrieve_context with those IDs in context_refs",
+		"exact loaded context_revision",
+		"same context_refs in the loaded order",
+		"Never rediscover or rerun terminal commands as a substitute",
+		"textual answer transformations remain answer",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("buildSystemPrompt() missing answer/retrieval contract %q: %q", required, prompt)
+		}
+	}
+	for _, contradictory := range []string{
+		"answer for a request that only asks how or why",
+		"When an outcome is requested rather than an explanation, prefer action",
+	} {
+		if strings.Contains(prompt, contradictory) {
+			t.Fatalf("buildSystemPrompt() retains contradictory answer definition %q: %q", contradictory, prompt)
 		}
 	}
 }
@@ -765,7 +817,7 @@ func TestBuildSystemPromptDefinesWorkflowDecisionContract(t *testing.T) {
 		"capability",
 		"explicit capability question takes precedence",
 		"do not ask conversational permission",
-		"prefer action when an outcome is requested",
+		"When a requested outcome requires observing mutable state or changing the system",
 		"retry_observation only when the prompt marks it eligible",
 	} {
 		if !strings.Contains(prompt, required) {

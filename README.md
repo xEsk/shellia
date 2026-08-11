@@ -568,9 +568,9 @@ This helps with follow-up prompts such as:
 - “run the PHP file now”
 - “try again”
 
-### Referencing completed results
+### Referencing retained turn results
 
-Interactive Shellia keeps up to eight completed or blocked turn results for the life of the process. Follow-ups can retrieve a selected result as an immutable snapshot without running commands again. `/new` clears those results, retrieval may require one extra model call, and selected content over 16,000 characters is blocked rather than truncated. Requests for current mutable state still require a fresh observation. Opt-in full prompt traces can contain retrieved result content; command safety and confirmation rules are unchanged.
+Interactive Shellia assigns a stable ID to every nil-error turn outcome it retains in session history and keeps up to eight at a time for the life of the process. Retaining a ninth evicts the oldest result without renumbering remaining IDs or reusing any prior ID. Follow-ups can retrieve a selected result as an immutable snapshot without running commands again. `/new` clears retained results without resetting the process-lifetime ID sequence, retrieval may require one extra model call, and selected content over 16,000 characters is blocked rather than truncated. Requests for current mutable state still require a fresh observation. Opt-in full prompt traces can contain retrieved result content; command safety and confirmation rules are unchanged.
 
 ## Examples
 

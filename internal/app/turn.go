@@ -30,10 +30,11 @@ type planningRoundRequest struct {
 
 // planningRoundResult is the normalized output of one planning attempt.
 type planningRoundResult struct {
-	Parsed               llmResponse
-	Summary              string
-	Plans                []commandPlan
-	StructuralRepairUsed bool
+	Parsed                    llmResponse
+	Summary                   string
+	Plans                     []commandPlan
+	StructuralRepairUsed      bool
+	StructuralRepairOperation string
 }
 
 // turnRequest groups the context needed to process one user instruction.
@@ -180,8 +181,15 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		summary := roundResult.Summary
 		plans := roundResult.Plans
 		if parsed.Action == "retrieve_context" {
-			uipkg.PrintInfoTo(deps.Stdout, ui, fmt.Sprintf("Retrieving %d session result(s)…", len(parsed.ContextRefs)))
 			deps.Trace.Record("context_retrieval_requested", turnID, "planning", round.Round, map[string]any{"context_refs": parsed.ContextRefs})
+			if !cfg.IncludeSessionMemory {
+				const reason = "Session result retrieval is unavailable because session memory is disabled."
+				turnUI.Final(reason)
+				blocked := workflow.result(turnOutcomeBlocked, "unavailable", reason)
+				blocked.Result = reason
+				return blocked, nil
+			}
+			uipkg.PrintInfoTo(deps.Stdout, ui, fmt.Sprintf("Retrieving %d session result(s)…", len(parsed.ContextRefs)))
 			kind, reason := workflow.retrieveContext(history, parsed.ContextRefs)
 			if kind != "" {
 				turnUI.Final(reason)
@@ -194,6 +202,13 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 				"context_refs":     workflow.contextRefs,
 				"character_count":  retrievedContextCharacterCount(workflow.retrievedContext),
 			})
+			continuation, keepPlanning, continuationErr := handlePlanningContinuation(round, workflow, commandBatchResult{}, "context_retrieval")
+			if continuationErr != nil {
+				return partialResult(), continuationErr
+			}
+			if !keepPlanning {
+				return continuation, nil
+			}
 			continue
 		}
 		if terminal, handled := handleTerminalDecision(round, workflow, parsed, summary); handled {
@@ -362,6 +377,9 @@ func buildPlanningRoundRequest(round turnRoundContext, workflow *workflowState, 
 func routePlanningDecision(round turnRoundContext, workflow *workflowState, result planningRoundResult) (bool, *turnResult) {
 	if result.StructuralRepairUsed {
 		workflow.structuralRepairUsed = true
+	}
+	if result.StructuralRepairOperation != "" && workflow.repairOperation == "" {
+		workflow.repairOperation = result.StructuralRepairOperation
 	}
 	parsed := result.Parsed
 	if decisionErr := workflow.validateDecision(parsed); decisionErr != nil {
@@ -565,7 +583,15 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 	}
 	parsed, err := llmpkg.ParseResponse(rawResponse, responseMode)
 	structuralRepairUsed := false
+	structuralRepairOperation := ""
 	if err != nil {
+		var validationErr *llmpkg.ResponseValidationError
+		if errors.As(err, &validationErr) {
+			switch validationErr.Response.Operation {
+			case "answer", "observe", "act", "capability":
+				structuralRepairOperation = validationErr.Response.Operation
+			}
+		}
 		deps.Trace.Record("llm_error", request.TurnID, "planning", request.Round, map[string]any{
 			"error":        err.Error(),
 			"raw_response": rawResponse,
@@ -615,10 +641,11 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 	})
 
 	return planningRoundResult{
-		Parsed:               parsed,
-		Summary:              summary,
-		Plans:                plans,
-		StructuralRepairUsed: structuralRepairUsed,
+		Parsed:                    parsed,
+		Summary:                   summary,
+		Plans:                     plans,
+		StructuralRepairUsed:      structuralRepairUsed,
+		StructuralRepairOperation: structuralRepairOperation,
 	}, nil
 }
 

@@ -227,6 +227,87 @@ func TestRunTurnRetrievesContextBeforeExecutorPaths(t *testing.T) {
 	}
 }
 
+// TestRunTurnRepeatedContextRetrievalHonorsPlanningLimit checks retrieval-only
+// rounds cannot bypass the user-controlled planning budget extension boundary.
+func TestRunTurnRepeatedContextRetrievalHonorsPlanningLimit(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"action":"retrieve_context","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reuse the selected result","summary":"Load the result.","completion_basis":{"source":"","freshness":""},"context_refs":["result-1"],"commands":[]}`},
+		loopLLMResponse{content: `{"action":"retrieve_context","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reuse the selected result","summary":"Load the result again.","completion_basis":{"source":"","freshness":""},"context_refs":["result-1"],"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reuse the selected result","summary":"This response must require an approved extension.","completion_basis":{"source":"session_result","freshness":"snapshot","context_revision":2},"context_refs":["result-1"],"commands":[]}`},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.PlanningMaxRounds = 2
+	ctxInfo := loopTestContext(t)
+	request := loopTurnRequest(cfg, &ctxInfo, "reuse the selected result")
+	request.History = []historyEntry{{ID: "result-1", Instruction: "earlier task", Outcome: turnOutcomeCompleted, Result: "earlier result", CharacterCount: 14}}
+
+	var result turnResult
+	output := captureMainLoopIO(t, "n\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, executorpkg.Options, *contextInfo, []commandPlan, []commandExecution) (commandBatchResult, error) {
+			t.Fatal("ExecuteCommands reached during context retrieval")
+			return commandBatchResult{}, nil
+		}
+		var err error
+		result, err = runTurn(t.Context(), deps, false, request)
+		if err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	if result.Outcome != turnOutcomePlanningLimit {
+		t.Fatalf("runTurn() result = %#v, want planning-limit outcome", result)
+	}
+	if fake.requestCount() != 2 {
+		t.Fatalf("LLM request count = %d, want 2 before declined extension", fake.requestCount())
+	}
+	if !strings.Contains(output, "Continue planning? [y/n]: no") {
+		t.Fatalf("output missing declined planning continuation: %q", output)
+	}
+}
+
+// TestRunTurnRejectsGuessedContextWhenSessionMemoryDisabled checks a model
+// cannot retrieve a predictable result ID that the prompt catalog intentionally hides.
+func TestRunTurnRejectsGuessedContextWhenSessionMemoryDisabled(t *testing.T) {
+	const secret = "DISABLED_SESSION_MEMORY_SECRET"
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"action":"retrieve_context","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reveal a guessed result","summary":"Load the guessed result.","completion_basis":{"source":"","freshness":""},"context_refs":["result-1"],"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reveal a guessed result","summary":"The hidden result was loaded.","completion_basis":{"source":"session_result","freshness":"snapshot","context_revision":1},"context_refs":["result-1"],"commands":[]}`},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.IncludeSessionMemory = false
+	ctxInfo := loopTestContext(t)
+	request := loopTurnRequest(cfg, &ctxInfo, "use a guessed earlier result")
+	request.History = []historyEntry{{ID: "result-1", Instruction: "private task", Outcome: turnOutcomeCompleted, Result: secret, CharacterCount: len([]rune(secret))}}
+
+	var result turnResult
+	output := captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, executorpkg.Options, *contextInfo, []commandPlan, []commandExecution) (commandBatchResult, error) {
+			t.Fatal("ExecuteCommands reached while session memory was disabled")
+			return commandBatchResult{}, nil
+		}
+		var err error
+		result, err = runTurn(t.Context(), deps, false, request)
+		if err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	if result.Outcome != turnOutcomeBlocked || strings.TrimSpace(result.BlockerReason) == "" {
+		t.Fatalf("runTurn() result = %#v, want explicit blocked outcome", result)
+	}
+	if fake.requestCount() != 1 {
+		t.Fatalf("LLM request count = %d, want guessed retrieval rejected before another request", fake.requestCount())
+	}
+	for _, body := range fake.requestBodies() {
+		if strings.Contains(body, secret) {
+			t.Fatalf("disabled session result leaked into an LLM request: %q", body)
+		}
+	}
+	if strings.Contains(output, secret) {
+		t.Fatalf("disabled session result leaked into terminal output: %q", output)
+	}
+}
+
 // TestRunTurnBlocksFailedContextRetrievalBeforeExecutorPaths checks missing and
 // oversized selections stop without another model request or executor call.
 func TestRunTurnBlocksFailedContextRetrievalBeforeExecutorPaths(t *testing.T) {
