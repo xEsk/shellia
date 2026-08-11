@@ -450,6 +450,14 @@ func TestBuildSystemPromptGuidesCompactObservation(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPromptAllowsNecessaryReadOnlyEvidencePipelines(t *testing.T) {
+	prompt := buildSystemPrompt()
+	const required = "Do not chain commands with ';', '&&', or '||'. A pipe is allowed only for a necessary read-only evidence-bounding pipeline, even when the user did not explicitly request a pipeline."
+	if !strings.Contains(prompt, required) {
+		t.Fatalf("buildSystemPrompt() missing evidence-bounding pipeline exception %q: %q", required, prompt)
+	}
+}
+
 // representativePromptRequest exercises every prompt section with stable data.
 func representativePromptRequest() PromptRequest {
 	cfg := configpkg.DefaultConfig()

@@ -58,7 +58,7 @@ func buildSystemPromptSentences() []string {
 		"Do not use placeholders.",
 		"Return pure shell commands only.",
 		"Do not include explanatory echo, printf, comments, labels, banners, or formatting commands inside the command field.",
-		"Do not chain commands with ';', '&&', '||', or pipes unless the user explicitly asked for a pipeline and it is strictly necessary.",
+		"Do not chain commands with ';', '&&', or '||'. A pipe is allowed only for a necessary read-only evidence-bounding pipeline, even when the user did not explicitly request a pipeline.",
 		"Prefer one atomic command per step.",
 		"Set independent_on_failure=true only when the command remains safe and useful if any earlier command in the same command batch fails.",
 		"When uncertain, set independent_on_failure=false. The field never lowers risk or confirmation requirements.",
