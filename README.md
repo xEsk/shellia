@@ -568,6 +568,10 @@ This helps with follow-up prompts such as:
 - “run the PHP file now”
 - “try again”
 
+### Referencing completed results
+
+Interactive Shellia keeps up to eight completed or blocked turn results for the life of the process. Follow-ups can retrieve a selected result as an immutable snapshot without running commands again. `/new` clears those results, retrieval may require one extra model call, and selected content over 16,000 characters is blocked rather than truncated. Requests for current mutable state still require a fresh observation. Opt-in full prompt traces can contain retrieved result content; command safety and confirmation rules are unchanged.
+
 ## Examples
 
 List files:

@@ -2,7 +2,7 @@
 
 **Data:** 2026-08-11
 
-**Estat:** aprovat, pendent d’implementació
+**Estat:** implementat
 
 **Nivell:** CRITICAL
 
