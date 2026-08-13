@@ -23,6 +23,79 @@ func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error)
 	return fn(request)
 }
 
+// TestPlanningResponseSchemaClosesAndRequiresAllObjects checks the strict
+// schema follows the provider subset that requires closed, fully required objects.
+func TestPlanningResponseSchemaClosesAndRequiresAllObjects(t *testing.T) {
+	format := planningResponseFormat(ClientOptions{SupportsJSONSchema: true})
+	if format == nil || format.JSONSchema == nil {
+		t.Fatalf("planningResponseFormat() = %#v, want JSON schema", format)
+	}
+
+	var checkSchema func(string, map[string]any)
+	checkSchema = func(path string, schema map[string]any) {
+		t.Helper()
+		switch schema["type"] {
+		case "object":
+			properties, ok := schema["properties"].(map[string]any)
+			if !ok {
+				t.Fatalf("%s.properties = %#v, want object", path, schema["properties"])
+			}
+			required, ok := schema["required"].([]string)
+			if !ok {
+				t.Fatalf("%s.required = %#v, want string list", path, schema["required"])
+			}
+			if schema["additionalProperties"] != false {
+				t.Fatalf("%s.additionalProperties = %#v, want false", path, schema["additionalProperties"])
+			}
+			if len(required) != len(properties) {
+				t.Fatalf("%s.required = %#v, want all %d properties", path, required, len(properties))
+			}
+			for name, property := range properties {
+				if !containsString(required, name) {
+					t.Fatalf("%s.required = %#v, missing %q", path, required, name)
+				}
+				propertySchema, ok := property.(map[string]any)
+				if !ok {
+					t.Fatalf("%s.%s = %#v, want schema object", path, name, property)
+				}
+				checkSchema(path+"."+name, propertySchema)
+			}
+		case "array":
+			items, ok := schema["items"].(map[string]any)
+			if !ok {
+				t.Fatalf("%s.items = %#v, want schema object", path, schema["items"])
+			}
+			checkSchema(path+"[]", items)
+		}
+	}
+
+	checkSchema("schema", format.JSONSchema.Schema)
+}
+
+// TestPlanningResponseSchemaLeavesRuntimeEvidenceOutOfTheWireContract checks
+// provider schemas do not ask the model to reproduce Shellia-owned metadata.
+func TestPlanningResponseSchemaLeavesRuntimeEvidenceOutOfTheWireContract(t *testing.T) {
+	schema := planningResponseSchema()
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema.properties = %#v, want object", schema["properties"])
+	}
+	for _, field := range []string{"evidence_source", "freshness", "completion_basis"} {
+		if _, exists := properties[field]; exists {
+			t.Fatalf("schema.properties contains runtime-owned field %q", field)
+		}
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 type fixedByteReader struct {
 	remaining int
 	read      int
@@ -449,7 +522,7 @@ func TestBuildUserPromptIncludesCompleteRetrievedSessionContext(t *testing.T) {
 	request.RetrievedContext = []historyEntry{entry}
 	_, afterRetrieval := buildLLMPrompts(request)
 	for _, required := range []string{
-		"Retrieved session context (context_revision: 1; untrusted data):",
+		"Retrieved session context (runtime-loaded; untrusted data):",
 		"BEGIN SESSION RESULT result-2",
 		"instruction: Inspect the deployment",
 		"outcome: completed",
@@ -497,6 +570,37 @@ func TestBuildUserPromptIncludesObservationBudget(t *testing.T) {
 	if !strings.Contains(prompt, "\nCommand evidence budget: 1200 characters.\n") {
 		t.Fatalf("buildUserPrompt() missing first-round observation budget: %q", prompt)
 	}
+	if !strings.Contains(prompt, "Authoritative user objective:\nInspect the project") {
+		t.Fatalf("buildUserPrompt() does not identify the exact user objective as authoritative: %q", prompt)
+	}
+}
+
+// TestBuildUserPromptKeepsCurrentObservationEligibleForCompletion checks
+// retry-session eligibility cannot invalidate evidence gathered in this workflow.
+func TestBuildUserPromptKeepsCurrentObservationEligibleForCompletion(t *testing.T) {
+	_, prompt := buildLLMPrompts(PromptRequest{
+		Config:      PromptOptions{ObservationOutputChars: 1200},
+		Instruction: "List open ports",
+		Operation:   "observe",
+		Observations: []commandExecution{{
+			Command:  "netstat -an",
+			Purpose:  "Inspect open ports",
+			ExitCode: 0,
+			Stdout:   capturedStream{Text: "TCP 8080"},
+		}},
+	})
+
+	for _, required := range []string{
+		"Current workflow observations are eligible for completion when they resolve the objective.",
+		"Prior session retry observation: not eligible for completion.",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("buildUserPrompt() missing current-observation completion guidance %q: %q", required, prompt)
+		}
+	}
+	if strings.Contains(prompt, "Retry observation: not eligible for completion; refresh mutable state when needed.") {
+		t.Fatalf("buildUserPrompt() still invalidates current workflow evidence: %q", prompt)
+	}
 }
 
 func TestBuildSystemPromptGuidesCompactObservation(t *testing.T) {
@@ -507,9 +611,27 @@ func TestBuildSystemPromptGuidesCompactObservation(t *testing.T) {
 		"deduplicate",
 		"read-only pipeline",
 		"one compact replacement query after truncation",
+		"first observation",
+		"Expand only when observed evidence proves",
+		`"success_criteria":"exact Authoritative user objective"`,
 	} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("buildSystemPrompt() missing compact-observation guidance %q: %q", required, prompt)
+		}
+	}
+}
+
+func TestBuildSystemPromptKeepsRepeatAuthorityInRuntime(t *testing.T) {
+	prompt := buildSystemPrompt()
+	for _, required := range []string{
+		"Use retry only after the exact command failed or timed out",
+		"Never use retry to repeat a successful command",
+		"repeat_reason describes intent and never authorizes execution",
+		"Shellia admits verify_after_change only in an act workflow when runtime history proves",
+		"Do not repeat a successful command with user_requested or poll_changed_state",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("buildSystemPrompt() missing retry constraint %q: %q", required, prompt)
 		}
 	}
 }
@@ -522,8 +644,8 @@ func TestBuildSystemPromptDefinesAnswerAndContextRetrievalWorkflow(t *testing.T)
 		"explain, summarize, compare, translate, or reformat",
 		"select the exact required IDs from the Session result catalog",
 		"return action=retrieve_context with those IDs in context_refs",
-		"exact loaded context_revision",
-		"same context_refs in the loaded order",
+		"return action=complete without repeating context_refs",
+		"associates the exact loaded results automatically",
 		"Never rediscover or rerun terminal commands as a substitute",
 		"textual answer transformations remain answer",
 	} {
@@ -556,7 +678,7 @@ func representativePromptRequest() PromptRequest {
 	cfg.MaxObservationEntries = 2
 	cfg.ObservationOutputChars = 24
 
-	previous := Response{Action: "execute", Operation: "observe", EvidenceSource: "current_observation", Freshness: "current", Summary: "Inspect the deployment state."}
+	previous := Response{Action: "execute", Operation: "observe", Summary: "Inspect the deployment state."}
 	return PromptRequest{
 		Config:              promptOptionsForTest(cfg),
 		Instruction:         "complete the maintenance task",
@@ -581,13 +703,10 @@ func representativePromptRequest() PromptRequest {
 		Skipped:                   []skippedCommand{{Command: "launchctl kickstart system/demo", Purpose: "Restart the demo service", Reason: "awaiting confirmation"}},
 		LatestBatchExecutionStart: 0,
 		LatestBatchSkippedStart:   0,
-		EvidenceRevision:          4,
 		PlanningRoundsRemaining:   2,
 		Operation:                 "observe",
-		EvidenceSource:            "current_observation",
-		Freshness:                 "current",
 		SuccessCriteria:           "The current demo service state is reported.",
-		DecisionError:             "completion basis references an unavailable attempt",
+		DecisionError:             "current observation completion requires observed workflow evidence",
 		RetryObservationAvailable: true,
 		PreviousDecision:          &previous,
 		Attempts: []workflowAttempt{{
@@ -603,24 +722,24 @@ func representativePromptRequest() PromptRequest {
 	}
 }
 
-// TestParseResponseAcceptsOrthogonalDecisionContract checks the wire contract
-// accepts independently selected operation, evidence, and freshness values.
-func TestParseResponseAcceptsOrthogonalDecisionContract(t *testing.T) {
+// TestParseResponseAcceptsSimplifiedDecisionContract checks each model-owned
+// action remains expressible without runtime evidence metadata.
+func TestParseResponseAcceptsSimplifiedDecisionContract(t *testing.T) {
 	tests := []struct {
 		name string
 		raw  string
 	}{
 		{
 			name: "answer from model knowledge",
-			raw:  `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Explain the concept","summary":"Explanation.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","context_refs":[],"commands":[]}`,
+			raw:  `{"action":"complete","operation":"answer","success_criteria":"Explain the concept","summary":"Explanation.","offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","context_refs":[],"commands":[]}`,
 		},
 		{
 			name: "retrieve session result",
-			raw:  `{"action":"retrieve_context","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reformat the earlier result","summary":"Retrieve the selected result.","completion_basis":{"source":"","freshness":""},"offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","context_refs":["result-2"],"commands":[]}`,
+			raw:  `{"action":"retrieve_context","operation":"answer","success_criteria":"Reformat the earlier result","summary":"Retrieve the selected result.","offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","context_refs":["result-2"],"commands":[]}`,
 		},
 		{
 			name: "current observation",
-			raw:  `{"action":"complete","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Current ports listed","summary":"Ports listed.","completion_basis":{"source":"current_observation","freshness":"current","evidence_revision":1,"attempt_ids":[1]},"offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","context_refs":[],"commands":[]}`,
+			raw:  `{"action":"complete","operation":"observe","success_criteria":"Current ports listed","summary":"Ports listed.","offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","context_refs":[],"commands":[]}`,
 		},
 	}
 
@@ -633,23 +752,36 @@ func TestParseResponseAcceptsOrthogonalDecisionContract(t *testing.T) {
 	}
 }
 
-// TestParseResponseRejectsInvalidOrthogonalDecisionContract checks structural
+// TestParseResponseAcceptsRuntimeOwnedCompletionEvidence checks a complete
+// decision needs only the model-owned operation, criterion, and answer.
+func TestParseResponseAcceptsRuntimeOwnedCompletionEvidence(t *testing.T) {
+	raw := `{"action":"complete","operation":"observe","success_criteria":"Current ports listed","summary":"Ports listed.","context_refs":[],"offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[]}`
+
+	response, err := parseResponse(raw, ResponseModeStrict)
+	if err != nil {
+		t.Fatalf("parseResponse() error = %v", err)
+	}
+	if response.Action != "complete" || response.Operation != "observe" || response.Summary != "Ports listed." {
+		t.Fatalf("response = %#v, want minimal complete decision", response)
+	}
+}
+
+// TestParseResponseRejectsInvalidDecisionContract checks structural
 // wire-contract violations stop before orchestration.
-func TestParseResponseRejectsInvalidOrthogonalDecisionContract(t *testing.T) {
-	valid := `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Explain the concept","summary":"Explanation.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","context_refs":[],"commands":[]}`
+func TestParseResponseRejectsInvalidDecisionContract(t *testing.T) {
+	valid := `{"action":"complete","operation":"answer","success_criteria":"Explain the concept","summary":"Explanation.","offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","context_refs":[],"commands":[]}`
 	tests := []struct {
 		name string
 		raw  string
 	}{
 		{name: "unknown operation", raw: strings.Replace(valid, `"operation":"answer"`, `"operation":"unknown"`, 1)},
-		{name: "unknown evidence source", raw: strings.Replace(valid, `"evidence_source":"model_knowledge"`, `"evidence_source":"unknown"`, 1)},
-		{name: "unknown freshness", raw: strings.Replace(valid, `"freshness":"not_applicable"`, `"freshness":"unknown"`, 1)},
 		{name: "retrieve context without references", raw: strings.Replace(valid, `"action":"complete"`, `"action":"retrieve_context"`, 1)},
+		{name: "retrieve context is answer only", raw: strings.Replace(strings.Replace(strings.Replace(valid, `"action":"complete"`, `"action":"retrieve_context"`, 1), `"operation":"answer"`, `"operation":"observe"`, 1), `"context_refs":[]`, `"context_refs":["result-1"]`, 1)},
 		{name: "retrieve context with commands", raw: strings.Replace(strings.Replace(strings.Replace(valid, `"action":"complete"`, `"action":"retrieve_context"`, 1), `"context_refs":[]`, `"context_refs":["result-1"]`, 1), `"commands":[]`, `"commands":[{"command":"pwd","purpose":"Inspect","risk":"safe"}]`, 1)},
+		{name: "complete cannot repeat context references", raw: strings.Replace(valid, `"context_refs":[]`, `"context_refs":["result-1"]`, 1)},
 		{name: "answer cannot execute", raw: strings.Replace(strings.Replace(valid, `"action":"complete"`, `"action":"execute"`, 1), `"commands":[]`, `"commands":[{"command":"pwd","purpose":"Inspect","risk":"safe"}]`, 1)},
 		{name: "capability cannot execute", raw: strings.Replace(strings.Replace(strings.Replace(valid, `"action":"complete"`, `"action":"execute"`, 1), `"operation":"answer"`, `"operation":"capability"`, 1), `"commands":[]`, `"commands":[{"command":"pwd","purpose":"Inspect","risk":"safe"}]`, 1)},
 		{name: "complete with commands", raw: strings.Replace(valid, `"commands":[]`, `"commands":[{"command":"pwd","purpose":"Inspect","risk":"safe"}]`, 1)},
-		{name: "completion basis differs", raw: strings.Replace(valid, `"freshness":"not_applicable"}`, `"freshness":"current"}`, 1)},
 	}
 
 	for _, tt := range tests {
@@ -664,7 +796,7 @@ func TestParseResponseRejectsInvalidOrthogonalDecisionContract(t *testing.T) {
 // TestParseResponseNormalizesContextReferences checks retrieval references are
 // normalized before the runtime resolves them.
 func TestParseResponseNormalizesContextReferences(t *testing.T) {
-	raw := `{"action":"retrieve_context","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reformat result","summary":"Retrieve it.","completion_basis":{"source":"","freshness":""},"context_refs":[" Result-2 "],"offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[]}`
+	raw := `{"action":"retrieve_context","operation":"answer","success_criteria":"Reformat result","summary":"Retrieve it.","context_refs":[" Result-2 "],"offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[]}`
 	response, err := parseResponse(raw, ResponseModeStrict)
 	if err != nil {
 		t.Fatalf("parseResponse() error = %v", err)
@@ -677,7 +809,7 @@ func TestParseResponseNormalizesContextReferences(t *testing.T) {
 // TestParseResponseRejectsInvalidContextReferences checks retrieval requests
 // cannot contain empty or duplicate references.
 func TestParseResponseRejectsInvalidContextReferences(t *testing.T) {
-	valid := `{"action":"retrieve_context","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reformat result","summary":"Retrieve it.","completion_basis":{"source":"","freshness":""},"context_refs":["result-2"],"offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[]}`
+	valid := `{"action":"retrieve_context","operation":"answer","success_criteria":"Reformat result","summary":"Retrieve it.","context_refs":["result-2"],"offer":{"objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[]}`
 	for _, raw := range []string{
 		strings.Replace(valid, `"result-2"`, `" "`, 1),
 		strings.Replace(valid, `"context_refs":["result-2"]`, `"context_refs":["result-2"," RESULT-2 "]`, 1),
@@ -691,7 +823,7 @@ func TestParseResponseRejectsInvalidContextReferences(t *testing.T) {
 // TestParseResponseAcceptsExtraTrailingBrace checks local models that append
 // one stray brace still yield the first complete JSON object.
 func TestParseResponseAcceptsExtraTrailingBrace(t *testing.T) {
-	raw := `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Files listed","summary":"Showing files.","commands":[{"command":"ls","purpose":"List files","risk":"safe","requires_confirmation":false}]}}`
+	raw := `{"action":"execute","operation":"observe","success_criteria":"Files listed","summary":"Showing files.","commands":[{"command":"ls","purpose":"List files","risk":"safe","requires_confirmation":false}]}}`
 
 	response, err := parseResponse(raw, ResponseModeCompatible)
 	if err != nil {
@@ -705,7 +837,7 @@ func TestParseResponseAcceptsExtraTrailingBrace(t *testing.T) {
 // TestParseResponseKeepsBracesInsideStrings checks JSON extraction respects
 // quoted brace characters.
 func TestParseResponseKeepsBracesInsideStrings(t *testing.T) {
-	raw := `prefix {"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Braces explained","summary":"Use {literal} braces.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]} suffix`
+	raw := `prefix {"action":"complete","operation":"answer","success_criteria":"Braces explained","summary":"Use {literal} braces.","commands":[]} suffix`
 
 	response, err := parseResponse(raw, ResponseModeCompatible)
 	if err != nil {
@@ -719,7 +851,7 @@ func TestParseResponseKeepsBracesInsideStrings(t *testing.T) {
 // TestParseResponseStrictRejectsDocumentBoundaries checks response-format
 // providers cannot smuggle text or multiple documents past the decoder.
 func TestParseResponseStrictRejectsDocumentBoundaries(t *testing.T) {
-	valid := `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Answer provided","summary":"Done.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]}`
+	valid := `{"action":"complete","operation":"answer","success_criteria":"Answer provided","summary":"Done.","commands":[]}`
 	tests := []struct {
 		name string
 		raw  string
@@ -743,7 +875,7 @@ func TestParseResponseStrictRejectsDocumentBoundaries(t *testing.T) {
 // TestParseResponseStrictAcceptsUnknownFields preserves provider compatibility
 // while strict mode enforces exactly one response document.
 func TestParseResponseStrictAcceptsUnknownFields(t *testing.T) {
-	raw := `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Answer provided","summary":"Done.","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[],"provider_metadata":{"request_id":"provider-123"}}`
+	raw := `{"action":"complete","operation":"answer","success_criteria":"Answer provided","summary":"Done.","commands":[],"provider_metadata":{"request_id":"provider-123"}}`
 
 	response, err := parseResponse(raw, ResponseModeStrict)
 	if err != nil {
@@ -803,7 +935,6 @@ func TestBuildSystemPromptDefinesWorkflowDecisionContract(t *testing.T) {
 		"action=complete",
 		"action=execute",
 		"action=blocked",
-		"completion_basis",
 		"blocker_kind",
 		"blocker_reason",
 		"local command policy is final",
@@ -811,20 +942,18 @@ func TestBuildSystemPromptDefinesWorkflowDecisionContract(t *testing.T) {
 		"independent_on_failure",
 		"repeat_reason",
 		"operation",
-		"evidence_source",
-		"freshness",
 		"success_criteria",
 		"capability",
 		"explicit capability question takes precedence",
 		"do not ask conversational permission",
 		"When a requested outcome requires observing mutable state or changing the system",
-		"retry_observation only when the prompt marks it eligible",
+		"Shellia associates runtime-owned evidence automatically",
 	} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("buildSystemPrompt() missing %q", required)
 		}
 	}
-	for _, removed := range []string{"requires_" + "observation", "observation_" + "reason", "requires_" + "input", "input_" + "reason"} {
+	for _, removed := range []string{"requires_" + "observation", "observation_" + "reason", "requires_" + "input", "input_" + "reason", "completion_basis", "evidence_source", "freshness", "evidence_revision"} {
 		if strings.Contains(prompt, removed) {
 			t.Fatalf("buildSystemPrompt() still contains obsolete field %q", removed)
 		}
@@ -929,10 +1058,9 @@ func TestBuildUserPromptOmitsDisabledObservations(t *testing.T) {
 	cfg := configpkg.DefaultConfig()
 	cfg.IncludeRecentObservations = false
 	prompt := buildUserPrompt(PromptRequest{
-		Config:           promptOptionsForTest(cfg),
-		Instruction:      "inspect",
-		ContextInfo:      contextInfo{CWD: "/tmp"},
-		EvidenceRevision: 3,
+		Config:      promptOptionsForTest(cfg),
+		Instruction: "inspect",
+		ContextInfo: contextInfo{CWD: "/tmp"},
 		Observations: []commandExecution{{
 			Command:  "printf marker",
 			Purpose:  "Inspect marker",
@@ -944,7 +1072,7 @@ func TestBuildUserPromptOmitsDisabledObservations(t *testing.T) {
 	if strings.Contains(prompt, "secret-marker") {
 		t.Fatalf("buildUserPrompt() leaked disabled observations: %q", prompt)
 	}
-	for _, required := range []string{"evidence_revision: 3", "Command: printf marker", "Exit code: 0", "Output: [omitted by configuration]"} {
+	for _, required := range []string{"Command: printf marker", "Exit code: 0", "Output: [omitted by configuration]"} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("buildUserPrompt() missing redacted current evidence %q: %q", required, prompt)
 		}
@@ -961,7 +1089,6 @@ func TestBuildUserPromptBoundsEvidenceButKeepsLatestAndRecentFailure(t *testing.
 		Instruction:               "finish inspection",
 		ContextInfo:               contextInfo{CWD: "/tmp"},
 		LatestBatchExecutionStart: 4,
-		EvidenceRevision:          5,
 		Observations: []commandExecution{
 			{Command: "echo old-success-1", Purpose: "Old success one", Stdout: capturedStream{Text: "old-success-1"}, ExitCode: 0},
 			{Command: "false", Purpose: "Recent failure", Stderr: capturedStream{Text: "failure-marker"}, ExitCode: 1},
@@ -971,7 +1098,7 @@ func TestBuildUserPromptBoundsEvidenceButKeepsLatestAndRecentFailure(t *testing.
 		},
 	})
 
-	for _, required := range []string{"evidence_revision: 5", "failure-marker", "latest-marker", "older evidence omitted: 3 execution(s)"} {
+	for _, required := range []string{"failure-marker", "latest-marker", "older evidence omitted: 3 execution(s)"} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("prompt missing %q: %q", required, prompt)
 		}
@@ -983,12 +1110,12 @@ func TestBuildUserPromptBoundsEvidenceButKeepsLatestAndRecentFailure(t *testing.
 	}
 }
 
-func TestBuildUserPromptMapsValidCompletionReferencesDuringRepair(t *testing.T) {
+func TestBuildUserPromptKeepsRuntimeEvidenceMetadataOutOfRepair(t *testing.T) {
 	prompt := buildUserPrompt(PromptRequest{
 		Config:        promptOptionsForTest(configpkg.DefaultConfig()),
 		Instruction:   "actualitza codex",
 		ContextInfo:   contextInfo{CWD: "/tmp"},
-		DecisionError: "attempt 1 does not belong to evidence revision 2",
+		DecisionError: "current observation completion requires observed workflow evidence",
 		Attempts: []workflowAttempt{
 			{ID: 1, Outcome: "success", EvidenceBefore: 0, EvidenceAfter: 1},
 			{ID: 2, Outcome: "success", EvidenceBefore: 1, EvidenceAfter: 2},
@@ -997,18 +1124,15 @@ func TestBuildUserPromptMapsValidCompletionReferencesDuringRepair(t *testing.T) 
 		},
 	})
 
-	for _, required := range []string{
-		"Valid completion references:",
-		"evidence_revision 1: attempt_ids [1]",
-		"evidence_revision 2: attempt_ids [2, 3]",
-		"Use one evidence_revision and only its listed attempt_ids",
-	} {
+	for _, required := range []string{"Recent workflow attempts:", "current observation completion requires observed workflow evidence"} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("repair prompt missing %q: %q", required, prompt)
 		}
 	}
-	if strings.Contains(prompt, "evidence_revision 2: attempt_ids [2, 3, 4]") {
-		t.Fatalf("repair prompt offered skipped attempt as completion evidence: %q", prompt)
+	for _, removed := range []string{"Valid completion references:", "evidence_revision", "attempt_ids"} {
+		if strings.Contains(prompt, removed) {
+			t.Fatalf("repair prompt exposed runtime evidence metadata %q: %q", removed, prompt)
+		}
 	}
 }
 
@@ -1063,6 +1187,49 @@ func TestBuildUserPromptAppliesOneOutputBudget(t *testing.T) {
 		if strings.Contains(prompt, hidden) {
 			t.Fatalf("prompt exceeded shared output budget with %q: %q", hidden, prompt)
 		}
+	}
+}
+
+// TestBuildUserPromptPrioritizesLatestBatchOutput checks obsolete verbose
+// evidence cannot truncate a compact result that resolves the current round.
+func TestBuildUserPromptPrioritizesLatestBatchOutput(t *testing.T) {
+	cfg := configpkg.DefaultConfig()
+	cfg.ObservationOutputChars = 24
+	prompt := buildUserPrompt(PromptRequest{
+		Config:                    promptOptionsForTest(cfg),
+		Instruction:               "list current ports",
+		ContextInfo:               contextInfo{CWD: "/tmp"},
+		LatestBatchExecutionStart: 1,
+		Observations: []commandExecution{
+			{Command: "broad-query", Purpose: "Old broad output", Stdout: capturedStream{Text: strings.Repeat("older-output-", 20)}},
+			{Command: "compact-query", Purpose: "Latest compact output", Stdout: capturedStream{Text: "LATEST-COMPLETE-VALUE"}},
+		},
+	})
+
+	if !strings.Contains(prompt, "LATEST-COMPLETE-VALUE") {
+		t.Fatalf("latest compact evidence was truncated by obsolete output: %q", prompt)
+	}
+}
+
+// TestBuildUserPromptRedistributesLatestBatchBudget checks a short latest
+// output cannot send unused budget to old evidence while a sibling is truncated.
+func TestBuildUserPromptRedistributesLatestBatchBudget(t *testing.T) {
+	cfg := configpkg.DefaultConfig()
+	cfg.ObservationOutputChars = 12
+	prompt := buildUserPrompt(PromptRequest{
+		Config:                    promptOptionsForTest(cfg),
+		Instruction:               "inspect",
+		ContextInfo:               contextInfo{CWD: "/tmp"},
+		LatestBatchExecutionStart: 1,
+		Observations: []commandExecution{
+			{Command: "old", Purpose: "Old", Stdout: capturedStream{Text: strings.Repeat("old", 20)}},
+			{Command: "latest-long", Purpose: "Latest long", Stdout: capturedStream{Text: "ABCDEFGHIJ"}},
+			{Command: "latest-short", Purpose: "Latest short", Stdout: capturedStream{Text: "K"}},
+		},
+	})
+
+	if !strings.Contains(prompt, "ABCDEFGHIJ") || !strings.Contains(prompt, "stdout:\n   K") {
+		t.Fatalf("latest batch did not receive its full budget before old evidence: %q", prompt)
 	}
 }
 

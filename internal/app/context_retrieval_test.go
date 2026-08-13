@@ -2,11 +2,11 @@ package app
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
 	executorpkg "github.com/xEsk/shellia/internal/executor"
-	llmpkg "github.com/xEsk/shellia/internal/llm"
 )
 
 // TestWorkflowRetrieveContextLoadsMultipleCompleteResults checks selected results
@@ -127,9 +127,9 @@ func TestWorkflowRetrieveContextIncrementsRevision(t *testing.T) {
 	}
 }
 
-// TestWorkflowValidateContextReferencesForCompletion checks session-result
-// completion requires the current revision and exact ordered unique references.
-func TestWorkflowValidateContextReferencesForCompletion(t *testing.T) {
+// TestWorkflowResolvesLoadedContextForCompletion checks completion provenance
+// comes from the exact runtime-loaded session context without model metadata.
+func TestWorkflowResolvesLoadedContextForCompletion(t *testing.T) {
 	state := newWorkflowState("compare results", false, 10)
 	history := []historyEntry{{ID: "result-2", Result: "alpha"}, {ID: "result-7", Result: "beta"}}
 	for revision := 1; revision <= 2; revision++ {
@@ -138,40 +138,15 @@ func TestWorkflowValidateContextReferencesForCompletion(t *testing.T) {
 		}
 	}
 
-	valid := llmResponse{
-		Action:          "complete",
-		Operation:       "answer",
-		EvidenceSource:  "session_result",
-		Freshness:       "snapshot",
-		SuccessCriteria: "Compare the results",
-		ContextRefs:     []string{"result-2", "result-7"},
-		CompletionBasis: llmpkg.CompletionBasis{Source: "session_result", Freshness: "snapshot", ContextRevision: 2},
+	evidence, err := state.resolveCompletionEvidence("answer")
+	if err != nil {
+		t.Fatalf("resolveCompletionEvidence(answer) error = %v", err)
 	}
-	if err := state.validateCompletion(valid); err != nil {
-		t.Fatalf("validateCompletion(valid) error = %v", err)
+	if evidence.Source != "session_result" || evidence.Freshness != "snapshot" || evidence.ContextRevision != 2 {
+		t.Fatalf("completion evidence = %#v, want loaded snapshot revision 2", evidence)
 	}
-
-	tests := []struct {
-		name     string
-		revision int
-		refs     []string
-	}{
-		{name: "missing revision", revision: 0, refs: []string{"result-2", "result-7"}},
-		{name: "stale revision", revision: 1, refs: []string{"result-2", "result-7"}},
-		{name: "reordered refs", revision: 2, refs: []string{"result-7", "result-2"}},
-		{name: "missing ref", revision: 2, refs: []string{"result-2"}},
-		{name: "extra ref", revision: 2, refs: []string{"result-2", "result-7", "result-8"}},
-		{name: "duplicate ref", revision: 2, refs: []string{"result-2", "result-2"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			decision := valid
-			decision.CompletionBasis.ContextRevision = tt.revision
-			decision.ContextRefs = tt.refs
-			if err := state.validateCompletion(decision); err == nil {
-				t.Fatalf("validateCompletion(revision=%d, refs=%#v) error = nil", tt.revision, tt.refs)
-			}
-		})
+	if !slices.Equal(evidence.ContextRefs, []string{"result-2", "result-7"}) {
+		t.Fatalf("completion context refs = %#v, want exact loaded refs", evidence.ContextRefs)
 	}
 }
 
@@ -179,8 +154,8 @@ func TestWorkflowValidateContextReferencesForCompletion(t *testing.T) {
 // planning round without presenting, confirming, admitting, or executing a plan.
 func TestRunTurnRetrievesContextBeforeExecutorPaths(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"retrieve_context","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reuse the selected result","summary":"MODEL_RETRIEVAL_PLAN_PRESENTATION","completion_basis":{"source":"","freshness":""},"context_refs":["result-2"],"commands":[]}`},
-		loopLLMResponse{content: `{"action":"complete","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reuse the selected result","summary":"Loaded result used.","completion_basis":{"source":"session_result","freshness":"snapshot","context_revision":1},"context_refs":["result-2"],"commands":[]}`},
+		loopLLMResponse{content: `{"action":"retrieve_context","operation":"answer","success_criteria":"Reuse the selected result","summary":"MODEL_RETRIEVAL_PLAN_PRESENTATION","context_refs":["result-2"],"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"answer","success_criteria":"Reuse the selected result","summary":"Loaded result used.","context_refs":[],"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = true
@@ -231,9 +206,9 @@ func TestRunTurnRetrievesContextBeforeExecutorPaths(t *testing.T) {
 // rounds cannot bypass the user-controlled planning budget extension boundary.
 func TestRunTurnRepeatedContextRetrievalHonorsPlanningLimit(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"retrieve_context","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reuse the selected result","summary":"Load the result.","completion_basis":{"source":"","freshness":""},"context_refs":["result-1"],"commands":[]}`},
-		loopLLMResponse{content: `{"action":"retrieve_context","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reuse the selected result","summary":"Load the result again.","completion_basis":{"source":"","freshness":""},"context_refs":["result-1"],"commands":[]}`},
-		loopLLMResponse{content: `{"action":"complete","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reuse the selected result","summary":"This response must require an approved extension.","completion_basis":{"source":"session_result","freshness":"snapshot","context_revision":2},"context_refs":["result-1"],"commands":[]}`},
+		loopLLMResponse{content: `{"action":"retrieve_context","operation":"answer","success_criteria":"Reuse the selected result","summary":"Load the result.","context_refs":["result-1"],"commands":[]}`},
+		loopLLMResponse{content: `{"action":"retrieve_context","operation":"answer","success_criteria":"Reuse the selected result","summary":"Load the result again.","context_refs":["result-1"],"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"answer","success_criteria":"Reuse the selected result","summary":"This response must require an approved extension.","context_refs":[],"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.PlanningMaxRounds = 2
@@ -270,8 +245,8 @@ func TestRunTurnRepeatedContextRetrievalHonorsPlanningLimit(t *testing.T) {
 func TestRunTurnRejectsGuessedContextWhenSessionMemoryDisabled(t *testing.T) {
 	const secret = "DISABLED_SESSION_MEMORY_SECRET"
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"retrieve_context","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reveal a guessed result","summary":"Load the guessed result.","completion_basis":{"source":"","freshness":""},"context_refs":["result-1"],"commands":[]}`},
-		loopLLMResponse{content: `{"action":"complete","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reveal a guessed result","summary":"The hidden result was loaded.","completion_basis":{"source":"session_result","freshness":"snapshot","context_revision":1},"context_refs":["result-1"],"commands":[]}`},
+		loopLLMResponse{content: `{"action":"retrieve_context","operation":"answer","success_criteria":"Reveal a guessed result","summary":"Load the guessed result.","context_refs":["result-1"],"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"answer","success_criteria":"Reveal a guessed result","summary":"The hidden result was loaded.","context_refs":[],"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	cfg.IncludeSessionMemory = false
@@ -336,7 +311,7 @@ func TestRunTurnBlocksFailedContextRetrievalBeforeExecutorPaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fake := newLoopLLMClient(t, loopLLMResponse{content: `{"action":"retrieve_context","operation":"answer","evidence_source":"session_result","freshness":"snapshot","success_criteria":"Reuse the selected result","summary":"MODEL_RETRIEVAL_PLAN_PRESENTATION","completion_basis":{"source":"","freshness":""},"context_refs":["` + tt.ref + `"],"commands":[]}`})
+			fake := newLoopLLMClient(t, loopLLMResponse{content: `{"action":"retrieve_context","operation":"answer","success_criteria":"Reuse the selected result","summary":"MODEL_RETRIEVAL_PLAN_PRESENTATION","context_refs":["` + tt.ref + `"],"commands":[]}`})
 			cfg := loopTestConfig(fake.URL())
 			cfg.AskConfirmPlan = true
 			ctxInfo := loopTestContext(t)

@@ -2,8 +2,14 @@ package app
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
+
+	"github.com/xEsk/shellia/internal/core"
+	safetypkg "github.com/xEsk/shellia/internal/safety"
 )
+
+const maxObservationStrategyAttempts = 3
 
 // workflowState owns the mutable state of one goal-oriented turn.
 // executionAllowed is derived once at construction and intentionally has no setter.
@@ -11,8 +17,6 @@ type workflowState struct {
 	objective                 string
 	executionAllowed          bool
 	operation                 string
-	evidenceSource            string
-	freshness                 string
 	repairOperation           string
 	successCriteria           string
 	contractLocked            bool
@@ -23,9 +27,10 @@ type workflowState struct {
 	contextRefs               []string
 	retrievedContext          []historyEntry
 	attempts                  []workflowAttempt
+	completionEvidence        completionEvidence
 	lastDecision              llmResponse
 	stallCount                int
-	structuralRepairUsed      bool
+	structuralRepairsUsed     int
 	semanticRepairUsed        bool
 	decisionError             string
 	retryObservationAvailable bool
@@ -41,12 +46,32 @@ type workflowState struct {
 	latestBatchSkippedStart   int
 }
 
-// validateDecision locks the first coherent decision contract and rejects
-// terminal decisions that lack causal evidence for the selected operation.
+// completionEvidence is the runtime-owned provenance for one admitted completion.
+type completionEvidence struct {
+	Source           string
+	Freshness        string
+	ContextRevision  int
+	ContextRefs      []string
+	EvidenceRevision int
+	AttemptIDs       []int
+}
+
+// planRejection retains a rejected plan and the runtime-owned reason.
+type planRejection struct {
+	Plan   commandPlan
+	Reason string
+}
+
+// validateDecision locks the first coherent operation and rejects terminal
+// decisions that lack causal evidence for that runtime-owned contract.
 func (state *workflowState) validateDecision(decision llmResponse) error {
+	state.completionEvidence = completionEvidence{
+		ContextRefs: make([]string, 0),
+		AttemptIDs:  make([]int, 0),
+	}
 	if state.contractLocked {
-		if decision.Operation != state.operation || decision.EvidenceSource != state.evidenceSource || decision.Freshness != state.freshness || decision.SuccessCriteria != state.successCriteria {
-			return fmt.Errorf("decision contract changed: operation=%q evidence_source=%q freshness=%q criteria=%q", decision.Operation, decision.EvidenceSource, decision.Freshness, decision.SuccessCriteria)
+		if decision.Operation != state.operation {
+			return fmt.Errorf("decision contract changed: operation=%q", decision.Operation)
 		}
 	} else if state.repairOperation != "" && isExecutableOperation(state.repairOperation) != isExecutableOperation(decision.Operation) {
 		return fmt.Errorf("semantic repair cannot change authority group from operation %q to %q", state.repairOperation, decision.Operation)
@@ -61,9 +86,6 @@ func (state *workflowState) validateDecision(decision llmResponse) error {
 
 	if !state.contractLocked {
 		state.operation = decision.Operation
-		state.evidenceSource = decision.EvidenceSource
-		state.freshness = decision.Freshness
-		state.successCriteria = decision.SuccessCriteria
 		state.contractLocked = true
 	}
 	return nil
@@ -73,83 +95,92 @@ func isExecutableOperation(operation string) bool {
 	return operation == "act" || operation == "observe"
 }
 
-// validateDecisionMatrix enforces the closed operation, source, freshness, and action matrix.
+// validateDecisionMatrix enforces the closed operation and action matrix.
 func (state *workflowState) validateDecisionMatrix(decision llmResponse) error {
 	allowed := false
-	switch {
-	case decision.Operation == "answer" && decision.EvidenceSource == "model_knowledge" && decision.Freshness == "not_applicable":
-		allowed = decision.Action == "complete" || decision.Action == "blocked"
-	case decision.Operation == "answer" && decision.EvidenceSource == "session_result" && decision.Freshness == "snapshot":
+	switch decision.Operation {
+	case "answer":
 		allowed = decision.Action == "retrieve_context" || decision.Action == "complete" || decision.Action == "blocked"
-	case decision.Operation == "observe" && decision.EvidenceSource == "current_observation" && decision.Freshness == "current":
+	case "observe", "act":
 		allowed = decision.Action == "execute" || decision.Action == "complete" || decision.Action == "blocked"
-	case decision.Operation == "observe" && decision.EvidenceSource == "retry_observation" && decision.Freshness == "current":
-		if !state.retryObservationAvailable {
-			return fmt.Errorf("retry_observation is not eligible for this objective")
-		}
-		allowed = decision.Action == "execute" || decision.Action == "complete" || decision.Action == "blocked"
-	case decision.Operation == "act" && decision.EvidenceSource == "current_execution" && decision.Freshness == "current":
-		allowed = decision.Action == "execute" || decision.Action == "complete" || decision.Action == "blocked"
-	case decision.Operation == "act" && decision.EvidenceSource == "current_observation" && decision.Freshness == "current":
-		allowed = decision.Action == "execute" || decision.Action == "complete" || decision.Action == "blocked"
-	case decision.Operation == "capability" && decision.EvidenceSource == "model_knowledge" && decision.Freshness == "not_applicable":
+	case "capability":
 		allowed = decision.Action == "complete" || decision.Action == "blocked"
 	}
 	if !allowed {
-		return fmt.Errorf("decision is not allowed for operation=%q evidence_source=%q freshness=%q action=%q", decision.Operation, decision.EvidenceSource, decision.Freshness, decision.Action)
+		return fmt.Errorf("decision is not allowed for operation=%q action=%q", decision.Operation, decision.Action)
 	}
 	if decision.Action == "complete" {
-		return state.validateCompletion(decision)
+		evidence, err := state.resolveCompletionEvidence(decision.Operation)
+		state.completionEvidence = evidence
+		return err
 	}
 	return nil
 }
 
-// validateCompletion checks evidence provenance without interpreting arbitrary command output.
-func (state *workflowState) validateCompletion(decision llmResponse) error {
-	basis := decision.CompletionBasis
-	switch decision.EvidenceSource {
-	case "model_knowledge":
-		return nil
-	case "session_result":
-		return state.validateContextReferences(basis.ContextRevision, decision.ContextRefs)
-	case "retry_observation":
-		if state.retryObservationAvailable {
-			return nil
+// resolveCompletionEvidence derives causal provenance without interpreting command output.
+func (state *workflowState) resolveCompletionEvidence(operation string) (completionEvidence, error) {
+	evidence := completionEvidence{
+		ContextRefs: make([]string, 0),
+		AttemptIDs:  make([]int, 0),
+	}
+	switch operation {
+	case "answer":
+		if state.contextRevision == 0 {
+			evidence.Source = "model_knowledge"
+			evidence.Freshness = "not_applicable"
+			return evidence, nil
 		}
-		return fmt.Errorf("retry_observation is not eligible for this objective")
-	case "current_observation":
-		return state.validateEvidenceReferences(basis.EvidenceRevision, basis.AttemptIDs, false)
-	case "current_execution":
-		return state.validateEvidenceReferences(basis.EvidenceRevision, basis.AttemptIDs, true)
+		evidence.Source = "session_result"
+		evidence.Freshness = "snapshot"
+		evidence.ContextRevision = state.contextRevision
+		evidence.ContextRefs = append(evidence.ContextRefs, state.contextRefs...)
+		if err := state.validateContextReferences(state.contextRevision, state.contextRefs); err != nil {
+			return evidence, err
+		}
+		return evidence, nil
+	case "capability":
+		evidence.Source = "model_knowledge"
+		evidence.Freshness = "not_applicable"
+		return evidence, nil
+	case "observe":
+		evidence.Source = "current_observation"
+		evidence.Freshness = "current"
+		evidence.EvidenceRevision = state.evidenceRevision
+		for _, attempt := range state.attempts {
+			if hasObservedEvidence(attempt.Outcome) {
+				evidence.AttemptIDs = append(evidence.AttemptIDs, attempt.ID)
+			}
+		}
+		if len(evidence.AttemptIDs) > 0 {
+			return evidence, nil
+		}
+		if len(state.attempts) == 0 && state.retryObservationAvailable {
+			evidence.Source = "retry_observation"
+			evidence.EvidenceRevision = 0
+			return evidence, nil
+		}
+		return evidence, fmt.Errorf("current observation completion requires observed workflow evidence")
+	case "act":
+		evidence.Source = "current_execution"
+		evidence.Freshness = "current"
+		evidence.EvidenceRevision = state.evidenceRevision
+		for _, attempt := range state.attempts {
+			if attempt.EvidenceAfter == state.evidenceRevision && attempt.Outcome == "success" {
+				evidence.AttemptIDs = append(evidence.AttemptIDs, attempt.ID)
+			}
+		}
+		if state.evidenceRevision > 0 && len(evidence.AttemptIDs) > 0 {
+			return evidence, nil
+		}
+		return evidence, fmt.Errorf("action completion requires a successful execution in the latest workflow batch")
 	default:
-		return fmt.Errorf("unknown completion evidence source %q", decision.EvidenceSource)
+		return evidence, fmt.Errorf("unknown completion operation %q", operation)
 	}
 }
 
-// validateEvidenceReferences ensures the model cites evidence produced by this workflow.
-func (state *workflowState) validateEvidenceReferences(revision int, attemptIDs []int, requireSuccess bool) error {
-	if revision < 1 || revision > state.evidenceRevision {
-		return fmt.Errorf("completion evidence revision %d is outside current workflow revisions 1..%d", revision, state.evidenceRevision)
-	}
-	if len(attemptIDs) == 0 {
-		return fmt.Errorf("completion evidence must reference at least one current attempt")
-	}
-	for _, attemptID := range attemptIDs {
-		if attemptID < 1 || attemptID > len(state.attempts) {
-			return fmt.Errorf("completion references unknown attempt %d", attemptID)
-		}
-		attempt := state.attempts[attemptID-1]
-		if attempt.ID != attemptID || attempt.EvidenceAfter != revision {
-			return fmt.Errorf("attempt %d does not belong to evidence revision %d", attemptID, revision)
-		}
-		if attempt.Outcome == "skipped" || attempt.Outcome == "rejected" || attempt.Outcome == "declined" || attempt.Outcome == "cancelled" {
-			return fmt.Errorf("attempt %d has no observed execution evidence", attemptID)
-		}
-		if requireSuccess && attempt.Outcome != "success" {
-			return fmt.Errorf("attempt %d did not complete successfully", attemptID)
-		}
-	}
-	return nil
+// hasObservedEvidence reports outcomes that produced stdout, stderr, or an exit status.
+func hasObservedEvidence(outcome string) bool {
+	return outcome == "success" || outcome == "failed" || outcome == "timeout"
 }
 
 // newWorkflowState creates the single state owner for a turn.
@@ -159,6 +190,7 @@ func newWorkflowState(objective string, planOnly bool, planningBudget int) *work
 	}
 	return &workflowState{
 		objective:        strings.TrimSpace(objective),
+		successCriteria:  strings.TrimSpace(objective),
 		executionAllowed: !planOnly,
 		planningBudget:   planningBudget,
 		executions:       make([]commandExecution, 0, 4),
@@ -264,8 +296,8 @@ func (state *workflowState) latestAttemptID(command string) int {
 	return 0
 }
 
-// admitPlans rejects only exact prior successes that lack a recognized causal repeat reason.
-func (state *workflowState) admitPlans(plans []commandPlan) ([]commandPlan, []commandPlan) {
+// admitPlans rejects unexplained duplicate successes and exhausted observation strategies.
+func (state *workflowState) admitPlans(plans []commandPlan) ([]commandPlan, []planRejection) {
 	succeeded := make(map[string]bool, len(state.executions))
 	for _, execution := range state.executions {
 		identity := strings.TrimSpace(execution.Command)
@@ -275,24 +307,90 @@ func (state *workflowState) admitPlans(plans []commandPlan) ([]commandPlan, []co
 	}
 
 	admitted := make([]commandPlan, 0, len(plans))
-	rejected := make([]commandPlan, 0)
+	rejected := make([]planRejection, 0)
+	strategyAttempts := state.observationStrategyAttempts()
+	authorizedRepeats := make(map[string]bool)
 	for _, plan := range plans {
-		if succeeded[strings.TrimSpace(plan.Command)] && !plan.RepeatReason.AllowsSuccessfulRepeat() {
-			rejected = append(rejected, plan)
+		strategy := observationStrategyKey(plan.Command)
+		reason := ""
+		if state.operation == "observe" && strategy != "" && strategyAttempts[strategy] >= maxObservationStrategyAttempts {
+			reason = fmt.Sprintf("Observation strategy %q is exhausted after %d attempts; choose a different strategy or complete with the available evidence.", strategy, maxObservationStrategyAttempts)
+		} else if identity := strings.TrimSpace(plan.Command); succeeded[identity] {
+			if !authorizedRepeats[identity] && state.canAuthorizeRepeat(plan) {
+				plan.AuthorizedRepeatCommand = identity
+				authorizedRepeats[identity] = true
+			} else {
+				reason = repeatReasonRequired
+			}
+		}
+		if reason != "" {
+			rejected = append(rejected, planRejection{Plan: plan, Reason: reason})
 			continue
 		}
 		admitted = append(admitted, plan)
+		if state.operation == "observe" && strategy != "" {
+			strategyAttempts[strategy]++
+		}
 	}
 	return admitted, rejected
 }
 
-// recordRepetitionConflicts retains rejected proposals as causal evidence without advancing evidenceRevision.
-func (state *workflowState) recordRepetitionConflicts(plans []commandPlan) {
-	for _, plan := range plans {
+// canAuthorizeRepeat validates a model-proposed retry or verification against
+// runtime attempt order instead of trusting repeat_reason as authority.
+func (state *workflowState) canAuthorizeRepeat(plan commandPlan) bool {
+	identity := strings.TrimSpace(plan.Command)
+	latest := -1
+	for index, attempt := range state.attempts {
+		if strings.TrimSpace(attempt.EffectiveCommand) == identity {
+			latest = index
+		}
+	}
+	if latest < 0 {
+		return false
+	}
+	if plan.RepeatReason == core.RepeatReasonRetry {
+		return state.attempts[latest].Outcome == "failed" || state.attempts[latest].Outcome == "timeout"
+	}
+	if state.operation != "act" || plan.RepeatReason != core.RepeatReasonVerifyAfterChange || state.attempts[latest].Outcome != "success" {
+		return false
+	}
+	for _, attempt := range state.attempts[latest+1:] {
+		command := strings.TrimSpace(attempt.EffectiveCommand)
+		if attempt.Outcome == "success" && command != "" && command != identity {
+			return true
+		}
+	}
+	return false
+}
+
+// observationStrategyAttempts counts evidence-producing attempts by primary executable.
+func (state *workflowState) observationStrategyAttempts() map[string]int {
+	attempts := make(map[string]int)
+	for _, attempt := range state.attempts {
+		if !hasObservedEvidence(attempt.Outcome) {
+			continue
+		}
+		if strategy := observationStrategyKey(attempt.EffectiveCommand); strategy != "" {
+			attempts[strategy]++
+		}
+	}
+	return attempts
+}
+
+// observationStrategyKey identifies the primary evidence source before formatters in a pipeline.
+func observationStrategyKey(command string) string {
+	root := safetypkg.PrimaryCommandRoot(command)
+	return strings.ToLower(filepath.Base(strings.TrimSpace(root)))
+}
+
+// recordPlanRejections retains rejected proposals as causal evidence without advancing evidenceRevision.
+func (state *workflowState) recordPlanRejections(rejections []planRejection) {
+	for _, rejection := range rejections {
+		plan := rejection.Plan
 		state.skipped = append(state.skipped, skippedCommand{
 			Command: plan.Command,
 			Purpose: plan.Purpose,
-			Reason:  repeatReasonRequired,
+			Reason:  rejection.Reason,
 		})
 		state.attempts = append(state.attempts, workflowAttempt{
 			ID:               len(state.attempts) + 1,
@@ -303,6 +401,7 @@ func (state *workflowState) recordRepetitionConflicts(plans []commandPlan) {
 			Outcome:          "rejected",
 			EvidenceBefore:   state.evidenceRevision,
 			EvidenceAfter:    state.evidenceRevision,
+			RepeatReason:     plan.RepeatReason,
 		})
 	}
 }

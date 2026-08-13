@@ -27,7 +27,6 @@ const (
 	maxCommandTimeout = 24 * time.Hour
 	maxRequestTimeout = 10 * time.Minute
 	maxCaptureBytes   = 512 * 1024 * 1024 // 512 MB
-	maxOutputChars    = 100_000
 	maxPlanningRounds = 100
 )
 
@@ -294,9 +293,6 @@ func finalizeConfig(fs *flag.FlagSet, cfg config, timeoutSecs, reqTimeoutSecs in
 	if cfg.CaptureStdoutBytes > maxCaptureBytes || cfg.CaptureStderrBytes > maxCaptureBytes {
 		return config{}, fmt.Errorf("capture byte limits cannot exceed %d bytes", maxCaptureBytes)
 	}
-	if cfg.ObservationOutputChars > maxOutputChars {
-		return config{}, fmt.Errorf("output char limits cannot exceed %d", maxOutputChars)
-	}
 	if cfg.PlanningMaxRounds <= 0 {
 		return config{}, fmt.Errorf("planning_max_rounds must be greater than 0")
 	}
@@ -397,6 +393,7 @@ func applyModelConfig(cfg *config, selected modelConfig) {
 		cfg.APIKey = strings.TrimSpace(os.Getenv(selected.APIKeyEnv))
 	}
 	cfg.SupportsResponseFormat = selected.SupportsResponseFormat
+	cfg.SupportsJSONSchema = selected.SupportsJSONSchema
 	cfg.RequestParams = selected.RequestParams
 }
 

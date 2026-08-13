@@ -24,6 +24,7 @@ type commandSafety struct {
 
 type shellSyntax struct {
 	roots       []string
+	primaryRoot string
 	hasOperator bool
 }
 
@@ -62,12 +63,16 @@ func scanShellSyntax(command string) shellSyntax {
 	result := shellSyntax{roots: make([]string, 0, 2)}
 	runes := []rune(command)
 
-	var scanExecutable func(start int, terminator rune, escapedBacktick bool) int
-	scanExecutable = func(start int, terminator rune, escapedBacktick bool) int {
+	var scanExecutable func(start int, terminator rune, escapedBacktick bool, topLevel bool) int
+	scanExecutable = func(start int, terminator rune, escapedBacktick bool, topLevel bool) int {
 		word := make([]rune, 0, 16)
 		quote := rune(0)
 		captureQuotedWord := false
 		expectRoot := true
+		transparentWrapper := ""
+		wrapperValueMode := ""
+		primaryCandidate := ""
+		firstStage := topLevel
 		parenthesisDepth := 0
 
 		flushWord := func() {
@@ -75,12 +80,41 @@ func scanShellSyntax(command string) shellSyntax {
 				return
 			}
 			if expectRoot {
+				token := string(word)
+				if wrapperValueMode != "" {
+					valueMode := wrapperValueMode
+					wrapperValueMode = ""
+					if valueMode == "split" {
+						if root := envSplitCommandRoot(token); root != "" {
+							token = root
+							result.roots = append(result.roots, token)
+							if firstStage {
+								primaryCandidate = token
+							}
+							expectRoot = false
+							transparentWrapper = ""
+						}
+					}
+					word = word[:0]
+					return
+				}
 				if isShellAssignmentPrefix(word) {
 					word = word[:0]
 					return
 				}
-				result.roots = append(result.roots, string(word))
-				expectRoot = false
+				if transparentWrapper != "" {
+					if skip, valueMode := transparentWrapperOption(transparentWrapper, token); skip {
+						wrapperValueMode = valueMode
+						word = word[:0]
+						return
+					}
+				}
+				result.roots = append(result.roots, token)
+				if firstStage {
+					primaryCandidate = token
+				}
+				transparentWrapper = transparentCommandWrapper(token)
+				expectRoot = transparentWrapper != ""
 			}
 			word = word[:0]
 		}
@@ -112,11 +146,11 @@ func scanShellSyntax(command string) shellSyntax {
 					captureQuotedWord = false
 				case '`':
 					result.hasOperator = true
-					index = scanExecutable(index+1, '`', false)
+					index = scanExecutable(index+1, '`', false, false)
 				case '$':
 					if index+1 < len(runes) && runes[index+1] == '(' {
 						result.hasOperator = true
-						index = scanExecutable(index+2, ')', false)
+						index = scanExecutable(index+2, ')', false, false)
 					} else if captureQuotedWord {
 						word = append(word, ch)
 					}
@@ -151,13 +185,13 @@ func scanShellSyntax(command string) shellSyntax {
 			switch ch {
 			case '\'':
 				quote = '\''
-				captureQuotedWord = terminator != 0 && expectRoot
+				captureQuotedWord = expectRoot
 				if !captureQuotedWord {
 					flushWord()
 				}
 			case '"':
 				quote = '"'
-				captureQuotedWord = terminator != 0 && expectRoot
+				captureQuotedWord = expectRoot
 				if !captureQuotedWord {
 					flushWord()
 				}
@@ -165,7 +199,7 @@ func scanShellSyntax(command string) shellSyntax {
 				if terminator == '`' && index+1 < len(runes) && runes[index+1] == '`' {
 					result.hasOperator = true
 					flushWord()
-					index = scanExecutable(index+2, '`', true)
+					index = scanExecutable(index+2, '`', true, false)
 					continue
 				}
 				if index+1 < len(runes) {
@@ -176,18 +210,24 @@ func scanShellSyntax(command string) shellSyntax {
 				if index+1 < len(runes) && runes[index+1] == '(' {
 					result.hasOperator = true
 					flushWord()
-					index = scanExecutable(index+2, ')', false)
+					index = scanExecutable(index+2, ')', false, false)
 					continue
 				}
 				word = append(word, ch)
 			case '`':
 				result.hasOperator = true
 				flushWord()
-				index = scanExecutable(index+1, '`', false)
+				index = scanExecutable(index+1, '`', false, false)
 			case ';', '\n', '\r', '|', '&':
 				result.hasOperator = true
 				flushWord()
+				if firstStage {
+					result.primaryRoot = primaryCandidate
+					firstStage = false
+				}
 				expectRoot = true
+				transparentWrapper = ""
+				wrapperValueMode = ""
 				if index+1 < len(runes) && runes[index+1] == ch {
 					index++
 				}
@@ -195,6 +235,8 @@ func scanShellSyntax(command string) shellSyntax {
 				result.hasOperator = true
 				flushWord()
 				expectRoot = true
+				transparentWrapper = ""
+				wrapperValueMode = ""
 				if ch == '(' && terminator == ')' {
 					parenthesisDepth++
 				}
@@ -208,11 +250,107 @@ func scanShellSyntax(command string) shellSyntax {
 		}
 
 		flushWord()
+		if firstStage {
+			result.primaryRoot = primaryCandidate
+		}
 		return len(runes)
 	}
 
-	scanExecutable(0, 0, false)
+	scanExecutable(0, 0, false, true)
 	return result
+}
+
+// transparentCommandWrapper identifies prefixes that execute another command.
+func transparentCommandWrapper(root string) string {
+	if separator := strings.LastIndexByte(root, '/'); separator >= 0 {
+		root = root[separator+1:]
+	}
+	if root == "env" {
+		return root
+	}
+	return ""
+}
+
+// transparentWrapperOption skips env configuration before its executable root.
+func transparentWrapperOption(wrapper string, token string) (bool, string) {
+	if wrapper != "env" || !strings.HasPrefix(token, "-") {
+		return false, ""
+	}
+	if token == "-S" || token == "--split-string" {
+		return true, "split"
+	}
+	needsValue := token == "-u" || token == "--unset" || token == "-C" || token == "--chdir" || token == "-P"
+	if needsValue {
+		return true, "discard"
+	}
+	return true, ""
+}
+
+// envSplitCommandRoot resolves the executable after env reprocesses a -S value.
+func envSplitCommandRoot(value string) string {
+	fields := splitEnvString(value)
+	for index := 0; index < len(fields); index++ {
+		token := fields[index]
+		if isShellAssignmentPrefix([]rune(token)) {
+			continue
+		}
+		if skip, valueMode := transparentWrapperOption("env", token); skip {
+			if valueMode == "discard" && index+1 < len(fields) {
+				index++
+			}
+			continue
+		}
+		return token
+	}
+	return ""
+}
+
+// splitEnvString tokenizes the quotes and escapes accepted by env -S values.
+func splitEnvString(value string) []string {
+	fields := make([]string, 0, 4)
+	word := make([]rune, 0, len(value))
+	quote := rune(0)
+	escaped := false
+	flush := func() {
+		if len(word) == 0 {
+			return
+		}
+		fields = append(fields, string(word))
+		word = word[:0]
+	}
+
+	for _, ch := range []rune(value) {
+		if escaped {
+			word = append(word, ch)
+			escaped = false
+			continue
+		}
+		if ch == '\\' && quote != '\'' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if ch == quote {
+				quote = 0
+			} else {
+				word = append(word, ch)
+			}
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			quote = ch
+		case ' ', '\t', '\n', '\r':
+			flush()
+		default:
+			word = append(word, ch)
+		}
+	}
+	if escaped {
+		word = append(word, '\\')
+	}
+	flush()
+	return fields
 }
 
 // isShellAssignmentPrefix reports whether a word can precede an executable command root.
@@ -235,6 +373,11 @@ func isShellAssignmentPrefix(word []rune) bool {
 // commandRoots returns executable-looking command roots, including roots inside substitutions.
 func commandRoots(command string) []string {
 	return scanShellSyntax(command).roots
+}
+
+// primaryCommandRoot returns the effective source command in the first shell stage.
+func primaryCommandRoot(command string) string {
+	return scanShellSyntax(command).primaryRoot
 }
 
 // hasDangerousCommandRoot reports whether any command root is always high risk.

@@ -2,6 +2,26 @@ package safety
 
 import "testing"
 
+// TestClassifyCommandFindsWrappedAndQuotedDangerousRoots checks wrappers and
+// cosmetic quoting cannot hide the executable from local safety policy.
+func TestClassifyCommandFindsWrappedAndQuotedDangerousRoots(t *testing.T) {
+	commands := []string{
+		"env LC_ALL=C rm -rf tmp",
+		"env -P /bin rm -rf tmp",
+		`env -S 'rm -rf tmp'`,
+		`env -S '-i rm -rf tmp'`,
+		`env -S '"/usr/bin/rm" -rf tmp'`,
+		`"/bin/rm" -rf tmp`,
+	}
+
+	for _, command := range commands {
+		got := classifyCommand(command)
+		if got.Classification != classificationDangerous || got.Risk != riskHigh || !got.RequiresConfirmation {
+			t.Errorf("classifyCommand(%q) = %#v, want dangerous high-risk confirmation", command, got)
+		}
+	}
+}
+
 // TestClassifyCommandRejectsExecutableSubstitutions catches safe-root bypasses through command substitution syntax.
 func TestClassifyCommandRejectsExecutableSubstitutions(t *testing.T) {
 	cases := []struct {

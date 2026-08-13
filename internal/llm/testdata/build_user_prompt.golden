@@ -1,4 +1,4 @@
-User instruction:
+Authoritative user objective:
 complete the maintenance task
 Command evidence budget: 24 characters.
 Planning rounds remaining: 2
@@ -19,8 +19,6 @@ Session memory:
 
 Immutable decision contract:
 - operation: observe
-- evidence_source: current_observation
-- freshness: current
 - success_criteria: The current demo service state is reported.
 
 Previous workflow decision:
@@ -28,7 +26,7 @@ Previous workflow decision:
 - summary: Inspect the deployment state.
 
 Decision repair required:
-completion basis references an unavailable attempt
+current observation completion requires observed workflow evidence
 Return a coherent decision without changing the decision's authority group or any locked objective contract.
 Observe repair contract:
 
@@ -36,13 +34,8 @@ Recent workflow attempts:
 - attempt 7 (round 1): outcome=failed exit_code=1
   planned: launchctl print system/demo
   effective: launchctl print system/demo
-  evidence_revision: 3 -> 4
-Valid completion references:
-- evidence_revision 4: attempt_ids [7]
-Use one evidence_revision and only its listed attempt_ids; current_execution may reference successful attempts only.
 
 Observed outputs from the current task:
-evidence_revision: 4
 output evidence budget: 24 chars
 1. Purpose: Inspect the demo service
    Command: launchctl print system/demo

@@ -15,6 +15,8 @@ import (
 
 var errStructuralResponse = errors.New("invalid structured model response")
 
+const maxStructuralRepairs = 3
+
 // planningRoundRequest groups one model planning attempt and its rendering dependencies.
 type planningRoundRequest struct {
 	Deps                  runtimeDeps
@@ -26,6 +28,7 @@ type planningRoundRequest struct {
 	RawPrompt             bool
 	RawResponse           bool
 	AllowStructuralRepair bool
+	EvidenceRevision      int
 }
 
 // planningRoundResult is the normalized output of one planning attempt.
@@ -148,6 +151,16 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		roundResult, err := runPlanningRound(ctx, buildPlanningRoundRequest(round, workflow, history, state))
 		if err != nil {
 			failed := partialResult()
+			var refusalErr *llmpkg.ModelRefusalError
+			if errors.As(err, &refusalErr) {
+				reason := strings.TrimSpace(refusalErr.Reason)
+				failed.Outcome = turnOutcomeBlocked
+				failed.BlockerKind = "unsafe_to_continue"
+				failed.BlockerReason = reason
+				failed.Result = reason
+				turnUI.Final(reason)
+				return failed, nil
+			}
 			switch {
 			case errors.Is(err, context.Canceled):
 				failed.Outcome = turnOutcomeCancelled
@@ -219,13 +232,15 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		plans, rejectedPlans := workflow.admitPlans(plans)
 		workflow.lastPlans = append(workflow.lastPlans[:0], plans...)
 		conflictAttemptStart := len(workflow.attempts)
-		workflow.recordRepetitionConflicts(rejectedPlans)
+		workflow.recordPlanRejections(rejectedPlans)
 		traceWorkflowAttempts(deps, turnID, round.Round, workflow.attempts[conflictAttemptStart:])
-		for _, plan := range rejectedPlans {
+		for _, rejection := range rejectedPlans {
+			plan := rejection.Plan
 			deps.Trace.Record("repeat_admission", turnID, "planning", round.Round, map[string]any{
 				"command":           plan.Command,
 				"purpose":           plan.Purpose,
 				"repeat_reason":     plan.RepeatReason,
+				"rejection_reason":  rejection.Reason,
 				"admitted":          false,
 				"evidence_revision": workflow.evidenceRevision,
 			})
@@ -253,7 +268,10 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 			deps.Trace.Record("shellia_decision", turnID, "planning", round.Round, map[string]any{
 				"decision": "no_progress",
 			})
-			const noProgressReason = "Shellia could not make progress because the same successful command was proposed again without an explicit repeat reason."
+			noProgressReason := "Shellia could not make progress because the same successful command was proposed again without a runtime-authorized repeat cause."
+			if rejectedPlans[0].Reason != repeatReasonRequired {
+				noProgressReason = "Shellia could not make progress because the current observation strategy was exhausted and no different strategy was proposed."
+			}
 			turnUI.Final(noProgressReason)
 			stalled := workflow.result(turnOutcomeNoProgress, "no_progress", noProgressReason)
 			stalled.Result = noProgressReason
@@ -349,11 +367,8 @@ func buildPlanningRoundRequest(round turnRoundContext, workflow *workflowState, 
 		Skipped:                   workflow.skipped,
 		LatestBatchExecutionStart: workflow.latestBatchExecutionStart,
 		LatestBatchSkippedStart:   workflow.latestBatchSkippedStart,
-		EvidenceRevision:          workflow.evidenceRevision,
 		PlanningRoundsRemaining:   workflow.planningBudget - round.Round,
 		Operation:                 workflow.operation,
-		EvidenceSource:            workflow.evidenceSource,
-		Freshness:                 workflow.freshness,
 		SuccessCriteria:           workflow.successCriteria,
 		DecisionError:             workflow.decisionError,
 		RetryObservationAvailable: workflow.retryObservationAvailable,
@@ -369,35 +384,25 @@ func buildPlanningRoundRequest(round turnRoundContext, workflow *workflowState, 
 		Prompt:                promptRequest,
 		RawPrompt:             round.Config.RawPrompt,
 		RawResponse:           round.Config.RawResponse,
-		AllowStructuralRepair: !workflow.structuralRepairUsed,
+		AllowStructuralRepair: workflow.structuralRepairsUsed < maxStructuralRepairs,
+		EvidenceRevision:      workflow.evidenceRevision,
 	}
 }
 
 // routePlanningDecision admits one coherent decision or routes semantic repair.
 func routePlanningDecision(round turnRoundContext, workflow *workflowState, result planningRoundResult) (bool, *turnResult) {
 	if result.StructuralRepairUsed {
-		workflow.structuralRepairUsed = true
+		workflow.structuralRepairsUsed++
 	}
 	if result.StructuralRepairOperation != "" && workflow.repairOperation == "" {
 		workflow.repairOperation = result.StructuralRepairOperation
 	}
 	parsed := result.Parsed
-	if workflow.contractLocked {
-		parsed.SuccessCriteria = workflow.successCriteria
-	}
+	parsed.SuccessCriteria = workflow.successCriteria
 	if decisionErr := workflow.validateDecision(parsed); decisionErr != nil {
 		workflow.recordDecision(parsed, result.Summary, result.Plans)
 		workflow.decisionError = decisionErr.Error()
-		round.Deps.Trace.Record("completion_validation", round.TurnID, "planning", round.Round, map[string]any{
-			"operation":        parsed.Operation,
-			"evidence_source":  parsed.EvidenceSource,
-			"freshness":        parsed.Freshness,
-			"success_criteria": parsed.SuccessCriteria,
-			"basis_source":     parsed.CompletionBasis.Source,
-			"basis_freshness":  parsed.CompletionBasis.Freshness,
-			"admitted":         false,
-			"reason":           decisionErr.Error(),
-		})
+		traceCompletionValidation(round, workflow, parsed, false, decisionErr.Error())
 		if workflow.semanticRepairUsed {
 			failed := workflow.result(turnOutcomeStructuralError, "structural_error", decisionErr.Error())
 			validationFailure := "Shellia could not validate the model's final response. The observed command output remains available above; retry the request if needed."
@@ -417,8 +422,6 @@ func routePlanningDecision(round turnRoundContext, workflow *workflowState, resu
 	if workflow.contractLocked {
 		round.Deps.Trace.Record("objective_contract", round.TurnID, "planning", round.Round, map[string]any{
 			"operation":        workflow.operation,
-			"evidence_source":  workflow.evidenceSource,
-			"freshness":        workflow.freshness,
 			"success_criteria": workflow.successCriteria,
 		})
 	}
@@ -429,20 +432,10 @@ func routePlanningDecision(round turnRoundContext, workflow *workflowState, resu
 func handleTerminalDecision(round turnRoundContext, workflow *workflowState, parsed llmResponse, summary string) (turnResult, bool) {
 	switch parsed.Action {
 	case "complete":
-		round.Deps.Trace.Record("completion_validation", round.TurnID, "planning", round.Round, map[string]any{
-			"operation":         parsed.Operation,
-			"evidence_source":   parsed.EvidenceSource,
-			"freshness":         parsed.Freshness,
-			"success_criteria":  parsed.SuccessCriteria,
-			"basis_source":      parsed.CompletionBasis.Source,
-			"basis_freshness":   parsed.CompletionBasis.Freshness,
-			"evidence_revision": parsed.CompletionBasis.EvidenceRevision,
-			"attempt_ids":       parsed.CompletionBasis.AttemptIDs,
-			"admitted":          true,
-		})
+		traceCompletionValidation(round, workflow, parsed, true, "")
 		round.Deps.Trace.Record("shellia_decision", round.TurnID, "planning", round.Round, map[string]any{
 			"decision":         "complete",
-			"completion_basis": parsed.CompletionBasis.Source,
+			"completion_basis": workflow.completionEvidence.Source,
 		})
 		answer := summary
 		if parsed.Operation == "capability" && strings.TrimSpace(parsed.Offer.Objective) != "" {
@@ -475,6 +468,28 @@ func handleTerminalDecision(round turnRoundContext, workflow *workflowState, par
 	default:
 		return turnResult{}, false
 	}
+}
+
+// traceCompletionValidation records provenance derived from runtime-owned workflow state.
+func traceCompletionValidation(round turnRoundContext, workflow *workflowState, parsed llmResponse, admitted bool, reason string) {
+	evidence := workflow.completionEvidence
+	data := map[string]any{
+		"operation":         parsed.Operation,
+		"evidence_source":   evidence.Source,
+		"freshness":         evidence.Freshness,
+		"success_criteria":  parsed.SuccessCriteria,
+		"basis_source":      evidence.Source,
+		"basis_freshness":   evidence.Freshness,
+		"context_revision":  evidence.ContextRevision,
+		"context_refs":      evidence.ContextRefs,
+		"evidence_revision": evidence.EvidenceRevision,
+		"attempt_ids":       evidence.AttemptIDs,
+		"admitted":          admitted,
+	}
+	if strings.TrimSpace(reason) != "" {
+		data["reason"] = reason
+	}
+	round.Deps.Trace.Record("completion_validation", round.TurnID, "planning", round.Round, data)
 }
 
 // executeDecisionBatch executes admitted plans and records their causal evidence.
@@ -546,7 +561,7 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 		"user_prompt":   userPrompt,
 	})
 	deps.Trace.Record("evidence_projection", request.TurnID, "planning", request.Round, map[string]any{
-		"evidence_revision": request.Prompt.EvidenceRevision,
+		"evidence_revision": request.EvidenceRevision,
 		"executions_count":  len(request.Prompt.Observations),
 		"skipped_count":     len(request.Prompt.Skipped),
 		"output_budget":     promptOptions.ObservationOutputChars,
@@ -581,7 +596,7 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 	}
 
 	responseMode := llmpkg.ResponseModeCompatible
-	if clientOptions.SupportsResponseFormat {
+	if clientOptions.SupportsResponseFormat || clientOptions.SupportsJSONSchema {
 		responseMode = llmpkg.ResponseModeStrict
 	}
 	parsed, err := llmpkg.ParseResponse(rawResponse, responseMode)
@@ -631,16 +646,13 @@ func runPlanningRound(ctx context.Context, request planningRoundRequest) (planni
 		return planningRoundResult{}, err
 	}
 	deps.Trace.Record("planner_result", request.TurnID, "planning", request.Round, map[string]any{
-		"action":           parsed.Action,
-		"operation":        parsed.Operation,
-		"evidence_source":  parsed.EvidenceSource,
-		"freshness":        parsed.Freshness,
-		"summary":          summary,
-		"completion_basis": parsed.CompletionBasis,
-		"blocker_kind":     parsed.BlockerKind,
-		"blocker_reason":   parsed.BlockerReason,
-		"commands":         tracePlannerCommands(plans),
-		"commands_count":   len(plans),
+		"action":         parsed.Action,
+		"operation":      parsed.Operation,
+		"summary":        summary,
+		"blocker_kind":   parsed.BlockerKind,
+		"blocker_reason": parsed.BlockerReason,
+		"commands":       tracePlannerCommands(plans),
+		"commands_count": len(plans),
 	})
 
 	return planningRoundResult{

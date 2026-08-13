@@ -36,6 +36,7 @@ type ClientOptions struct {
 	Model                  string
 	RequestTimeout         time.Duration
 	SupportsResponseFormat bool
+	SupportsJSONSchema     bool
 	RequestParams          map[string]any
 }
 
@@ -60,7 +61,14 @@ type chatCompletionRequest struct {
 }
 
 type responseFormat struct {
-	Type string `json:"type"`
+	Type       string              `json:"type"`
+	JSONSchema *jsonSchemaResponse `json:"json_schema,omitempty"`
+}
+
+type jsonSchemaResponse struct {
+	Name   string         `json:"name"`
+	Strict bool           `json:"strict"`
+	Schema map[string]any `json:"schema"`
 }
 
 type chatMessage struct {
@@ -72,6 +80,7 @@ type chatCompletionEnvelope struct {
 	Choices []struct {
 		Message struct {
 			Content string `json:"content"`
+			Refusal string `json:"refusal"`
 		} `json:"message"`
 	} `json:"choices"`
 }
@@ -90,11 +99,8 @@ type PromptRequest struct {
 	Skipped                   []skippedCommand
 	LatestBatchExecutionStart int
 	LatestBatchSkippedStart   int
-	EvidenceRevision          int
 	PlanningRoundsRemaining   int
 	Operation                 string
-	EvidenceSource            string
-	Freshness                 string
 	SuccessCriteria           string
 	DecisionError             string
 	RetryObservationAvailable bool
@@ -113,15 +119,6 @@ type Command struct {
 	InteractiveReason    string `json:"interactive_reason"`
 }
 
-// CompletionBasis identifies the causal evidence supporting a complete decision.
-type CompletionBasis struct {
-	Source           string `json:"source"`
-	Freshness        string `json:"freshness"`
-	ContextRevision  int    `json:"context_revision,omitempty"`
-	EvidenceRevision int    `json:"evidence_revision,omitempty"`
-	AttemptIDs       []int  `json:"attempt_ids,omitempty"`
-}
-
 // Offer describes an optional executable objective proposed by a capability answer.
 type Offer struct {
 	Objective string `json:"objective"`
@@ -129,18 +126,28 @@ type Offer struct {
 }
 
 type Response struct {
-	Action          string          `json:"action"`
-	Operation       string          `json:"operation"`
-	EvidenceSource  string          `json:"evidence_source"`
-	Freshness       string          `json:"freshness"`
-	SuccessCriteria string          `json:"success_criteria"`
-	Summary         string          `json:"summary"`
-	CompletionBasis CompletionBasis `json:"completion_basis"`
-	ContextRefs     []string        `json:"context_refs"`
-	Offer           Offer           `json:"offer"`
-	BlockerKind     string          `json:"blocker_kind"`
-	BlockerReason   string          `json:"blocker_reason"`
-	Commands        []Command       `json:"commands"`
+	Action          string    `json:"action"`
+	Operation       string    `json:"operation"`
+	SuccessCriteria string    `json:"success_criteria"`
+	Summary         string    `json:"summary"`
+	ContextRefs     []string  `json:"context_refs"`
+	Offer           Offer     `json:"offer"`
+	BlockerKind     string    `json:"blocker_kind"`
+	BlockerReason   string    `json:"blocker_reason"`
+	Commands        []Command `json:"commands"`
+}
+
+// ModelRefusalError carries a provider refusal returned outside a structured schema.
+type ModelRefusalError struct {
+	Reason string
+}
+
+// Error returns the explicit refusal reason.
+func (err *ModelRefusalError) Error() string {
+	if err == nil || strings.TrimSpace(err.Reason) == "" {
+		return "model refused request"
+	}
+	return "model refused request: " + strings.TrimSpace(err.Reason)
 }
 
 // llmHTTPStatusError carries a non-successful provider status and a compact body preview.
@@ -267,11 +274,18 @@ func doLLMRequest(ctx context.Context, client *http.Client, options ClientOption
 	if err := json.Unmarshal(responseBody, &envelope); err != nil {
 		return "", fmt.Errorf("invalid llm envelope: %w", err)
 	}
-	if len(envelope.Choices) == 0 || strings.TrimSpace(envelope.Choices[0].Message.Content) == "" {
+	if len(envelope.Choices) == 0 {
+		return "", fmt.Errorf("invalid llm response: missing message content")
+	}
+	message := envelope.Choices[0].Message
+	if refusal := strings.TrimSpace(message.Refusal); refusal != "" {
+		return "", &ModelRefusalError{Reason: refusal}
+	}
+	if strings.TrimSpace(message.Content) == "" {
 		return "", fmt.Errorf("invalid llm response: missing message content")
 	}
 
-	return envelope.Choices[0].Message.Content, nil
+	return message.Content, nil
 }
 
 // validateBaseURL rejects malformed endpoints and cleartext transport outside loopback.
@@ -375,12 +389,71 @@ func callPlanningPrompt(ctx context.Context, client *http.Client, options Client
 	})
 }
 
-// planningResponseFormat keeps strict JSON mode where providers advertise it.
+// planningResponseFormat selects the strongest configured structured response mode.
 func planningResponseFormat(options ClientOptions) *responseFormat {
+	if options.SupportsJSONSchema {
+		return &responseFormat{
+			Type: "json_schema",
+			JSONSchema: &jsonSchemaResponse{
+				Name:   "shellia_planning_decision",
+				Strict: true,
+				Schema: planningResponseSchema(),
+			},
+		}
+	}
 	if !options.SupportsResponseFormat {
 		return nil
 	}
 	return &responseFormat{Type: "json_object"}
+}
+
+// planningResponseSchema defines the typed planning decision accepted by Shellia.
+func planningResponseSchema() map[string]any {
+	object := func(properties map[string]any, required ...string) map[string]any {
+		return map[string]any{
+			"type":                 "object",
+			"properties":           properties,
+			"required":             required,
+			"additionalProperties": false,
+		}
+	}
+	stringValues := func(values ...string) map[string]any {
+		return map[string]any{"type": "string", "enum": values}
+	}
+
+	offer := object(map[string]any{
+		"objective": map[string]any{"type": "string"},
+		"summary":   map[string]any{"type": "string"},
+	}, "objective", "summary")
+
+	command := object(map[string]any{
+		"command":                map[string]any{"type": "string"},
+		"purpose":                map[string]any{"type": "string"},
+		"risk":                   map[string]any{"type": "string"},
+		"requires_confirmation":  map[string]any{"type": "boolean"},
+		"independent_on_failure": map[string]any{"type": "boolean"},
+		"repeat_reason":          stringValues("", "user_requested", "retry", "verify_after_change", "poll_changed_state"),
+		"interactive":            map[string]any{"type": "boolean"},
+		"interactive_reason":     map[string]any{"type": "string"},
+	}, "command", "purpose", "risk", "requires_confirmation", "independent_on_failure", "repeat_reason", "interactive", "interactive_reason")
+
+	return object(map[string]any{
+		"action":           stringValues("execute", "retrieve_context", "complete", "blocked"),
+		"operation":        stringValues("answer", "observe", "act", "capability"),
+		"success_criteria": map[string]any{"type": "string"},
+		"summary":          map[string]any{"type": "string"},
+		"context_refs": map[string]any{
+			"type":  "array",
+			"items": map[string]any{"type": "string"},
+		},
+		"offer":          offer,
+		"blocker_kind":   stringValues("", "missing_input", "unavailable", "unsafe_to_continue"),
+		"blocker_reason": map[string]any{"type": "string"},
+		"commands": map[string]any{
+			"type":  "array",
+			"items": command,
+		},
+	}, "action", "operation", "success_criteria", "summary", "context_refs", "offer", "blocker_kind", "blocker_reason", "commands")
 }
 
 // normalizePlan merges the model-reported risk with the local classification.

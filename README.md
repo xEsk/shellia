@@ -73,6 +73,8 @@ Shellia follows this general flow:
 
 Requests for a current local value, such as “how much disk space is free?”, are observations and use the terminal. Explicit capability questions, such as “can you check how much disk space is free?”, do not execute immediately: Shellia explains the approach and can offer a structured follow-up objective. An unequivocal “yes” starts that objective as a new workflow with the same visible plan and safety confirmations as any other task.
 
+Profiles with `supports_json_schema = true` enforce planning field types at the provider. As a bounded fallback, Shellia can repair up to three malformed model decisions across one workflow before stopping with a structural error.
+
 `--plan` and `/plan` use the same planning contract but have no execution authority: they show the first useful plan and never invoke the executor.
 
 In interactive mode, Shellia also keeps lightweight session memory so later prompts can refer to previous work.
@@ -301,6 +303,7 @@ base_url = "https://api.openai.com/v1"
 model = "gpt-5.6-luna"
 api_key_env = "SHELLIA_API_KEY"
 supports_response_format = true
+supports_json_schema = true
 
 [[models]]
 name = "llama-cpp"
@@ -328,7 +331,7 @@ command_mode            = "plain"
 [output]
 capture_stdout_bytes     = 131072
 capture_stderr_bytes     = 262144
-observation_output_chars = 1200
+observation_output_chars = 3000
 
 [ui]
 style              = "guide" # plain | guide | bands | cards
@@ -355,6 +358,8 @@ Define one or more `[[models]]` entries. Shellia selects the active profile in t
 `--base-url`, `--model`, and `--api-key` are one-shot overrides over the selected profile.
 
 Use `supports_response_format = false` for endpoints that do not support OpenAI's `response_format` parameter. If omitted, Shellia assumes `true`. The official `mlx_lm.server` should normally use `supports_response_format = false`; OpenAI and llama.cpp can use the default.
+
+Set `supports_json_schema = true` only for profiles whose Chat Completions endpoint supports strict Structured Outputs. It defaults to `false` for backward compatibility and takes precedence over the older JSON-object mode. With it disabled, Shellia uses `json_object` when `supports_response_format` is enabled, or prompt-only JSON guidance when both capabilities are disabled.
 
 Each profile can add provider-specific Chat Completions JSON body fields with `[models.request_params]`:
 
@@ -449,6 +454,7 @@ These settings control that behavior:
   - how many bytes of `stderr` Shellia keeps per command
 - `observation_output_chars`
   - the shared budget for captured output sent back to the workflow model
+  - accepts any positive integer; larger values increase token use and may add noise
 
 If output is truncated, Shellia marks it explicitly instead of pretending it captured everything.
 

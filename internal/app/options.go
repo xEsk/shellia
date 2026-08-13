@@ -63,6 +63,7 @@ func llmClientOptions(cfg config) llmpkg.ClientOptions {
 		Model:                  cfg.Model,
 		RequestTimeout:         cfg.RequestTimeout,
 		SupportsResponseFormat: cfg.SupportsResponseFormat,
+		SupportsJSONSchema:     cfg.SupportsJSONSchema,
 		RequestParams:          cfg.RequestParams,
 	}
 }

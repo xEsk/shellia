@@ -107,7 +107,7 @@ func TestInteractiveSessionNewPreservesResultCounter(t *testing.T) {
 // route appends and trims one completed result while clearing retry state.
 func TestInteractiveSessionExecuteTurnAppliesCompletedResultOnce(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Answer provided","summary":"completed result","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]}`,
+		content: `{"action":"complete","operation":"answer","success_criteria":"Answer provided","summary":"completed result","commands":[]}`,
 	})
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -148,7 +148,7 @@ func TestInteractiveSessionExecuteTurnAppliesCompletedResultOnce(t *testing.T) {
 // route applies one blocker to both bounded history and session memory.
 func TestInteractiveSessionExecuteTurnAppliesBlockedResultOnce(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"action":"blocked","operation":"act","evidence_source":"current_execution","freshness":"current","success_criteria":"Service restarted","summary":"service name required","blocker_kind":"missing_input","blocker_reason":"Specify the service.","commands":[]}`,
+		content: `{"action":"blocked","operation":"act","success_criteria":"Service restarted","summary":"service name required","blocker_kind":"missing_input","blocker_reason":"Specify the service.","commands":[]}`,
 	})
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -176,7 +176,7 @@ func TestInteractiveSessionExecuteTurnAppliesBlockedResultOnce(t *testing.T) {
 // route retains partial execution memory and renders one cancellation warning.
 func TestInteractiveSessionExecuteTurnAppliesCancellationOnce(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Working directory observed","summary":"Inspect once.","commands":[{"command":"pwd","purpose":"Inspect before cancellation","risk":"safe","requires_confirmation":false}]}`,
+		content: `{"action":"execute","operation":"observe","success_criteria":"Working directory observed","summary":"Inspect once.","commands":[{"command":"pwd","purpose":"Inspect before cancellation","risk":"safe","requires_confirmation":false}]}`,
 	})
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -217,7 +217,7 @@ func TestInteractiveSessionExecuteTurnAppliesCancellationOnce(t *testing.T) {
 func TestInteractiveSessionExecuteTurnAppliesPartialErrorOnce(t *testing.T) {
 	turnErr := errors.New("provider failed after execution")
 	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"action":"execute","operation":"observe","evidence_source":"current_observation","freshness":"current","success_criteria":"Working directory observed","summary":"Inspect before explaining.","commands":[{"command":"pwd","purpose":"Inspect before provider error","risk":"safe","requires_confirmation":false}]}`,
+		content: `{"action":"execute","operation":"observe","success_criteria":"Working directory observed","summary":"Inspect before explaining.","commands":[{"command":"pwd","purpose":"Inspect before provider error","risk":"safe","requires_confirmation":false}]}`,
 	})
 	cfg := loopTestConfig(fake.URL())
 	cfg.AskConfirmPlan = false
@@ -256,7 +256,7 @@ func TestInteractiveSessionExecuteTurnAppliesPartialErrorOnce(t *testing.T) {
 // route consumes the offer, records acceptance, and applies the result once.
 func TestInteractiveSessionExecuteTurnAppliesAcceptedProposalOnce(t *testing.T) {
 	fake := newLoopLLMClient(t, loopLLMResponse{
-		content: `{"action":"complete","operation":"answer","evidence_source":"model_knowledge","freshness":"not_applicable","success_criteria":"Accepted objective explained","summary":"offer completed","completion_basis":{"source":"model_knowledge","freshness":"not_applicable"},"commands":[]}`,
+		content: `{"action":"complete","operation":"answer","success_criteria":"Accepted objective explained","summary":"offer completed","commands":[]}`,
 	})
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -294,7 +294,7 @@ func TestInteractiveSessionExecuteTurnAppliesAcceptedProposalOnce(t *testing.T) 
 	})
 
 	bodies := fake.requestBodies()
-	if len(bodies) != 1 || !strings.Contains(bodies[0], `User instruction:\noffered objective`) || strings.Contains(bodies[0], `User instruction:\nyes`) {
+	if len(bodies) != 1 || !strings.Contains(bodies[0], `Authoritative user objective:\noffered objective`) || strings.Contains(bodies[0], `Authoritative user objective:\nyes`) {
 		t.Fatalf("request bodies = %#v, want one resolved accepted objective", bodies)
 	}
 	events := closeLoopTraceAndRead(t, logger)

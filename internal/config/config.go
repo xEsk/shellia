@@ -52,6 +52,7 @@ type Config struct {
 	Models                 []ModelConfig
 	ConfigPath             string
 	SupportsResponseFormat bool
+	SupportsJSONSchema     bool
 	RequestParams          map[string]any
 
 	// Execution options control command timeouts, confirmation flow and shell execution mode.
@@ -104,6 +105,7 @@ type ModelConfig struct {
 	APIKey                 string
 	APIKeyEnv              string
 	SupportsResponseFormat bool
+	SupportsJSONSchema     bool
 	RequestParams          map[string]any
 }
 
@@ -114,6 +116,7 @@ type FileModelConfig struct {
 	APIKey                 string         `toml:"api_key"`
 	APIKeyEnv              string         `toml:"api_key_env"`
 	SupportsResponseFormat *bool          `toml:"supports_response_format"`
+	SupportsJSONSchema     bool           `toml:"supports_json_schema"`
 	RequestParams          map[string]any `toml:"request_params"`
 }
 
@@ -192,7 +195,7 @@ func defaultConfig() Config {
 		// [output]
 		CaptureStdoutBytes:     128 * 1024,
 		CaptureStderrBytes:     256 * 1024,
-		ObservationOutputChars: 1200,
+		ObservationOutputChars: 3000,
 		MemoryObservationChars: 400,
 		MaxObservationEntries:  4,
 		TruncationStrategy:     core.TruncationMixed,
@@ -343,6 +346,7 @@ func normalizeModelConfigs(fileModels []FileModelConfig) []ModelConfig {
 			APIKey:                 strings.TrimSpace(fileModel.APIKey),
 			APIKeyEnv:              strings.TrimSpace(fileModel.APIKeyEnv),
 			SupportsResponseFormat: supportsResponseFormat,
+			SupportsJSONSchema:     fileModel.SupportsJSONSchema,
 			RequestParams:          fileModel.RequestParams,
 		})
 	}
@@ -653,6 +657,8 @@ model = "gpt-5.6-luna"
 api_key_env = "SHELLIA_API_KEY"
 # Most OpenAI-compatible endpoints support response_format. Defaults to true when omitted.
 supports_response_format = true
+# OpenAI Structured Outputs enforce the planning schema. Defaults to false when omitted.
+supports_json_schema = true
 # Optional provider-specific Chat Completions JSON body fields belong to this profile.
 # Missing fields use the provider default.
 # [models.request_params]
@@ -723,8 +729,8 @@ capture_stderr_bytes = 262144
 
 # Maximum characters of command output passed to the planning LLM as observations
 # between planning rounds. Smaller values save tokens; larger values give the model
-# more context for re-planning.
-observation_output_chars = 1200
+# more context for re-planning. Any positive value is accepted.
+observation_output_chars = 3000
 
 # Maximum characters kept per command output in session memory (used across follow-up turns).
 memory_observation_chars = 400

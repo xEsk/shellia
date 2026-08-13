@@ -62,9 +62,9 @@ func TestWorkflowStateKeepsMixedDecisionEvidenceInLatestBatch(t *testing.T) {
 	state := newWorkflowState("inspect disk", false, 4)
 	state.skipped = append(state.skipped, skippedCommand{Command: "old", Reason: "older"})
 	state.beginDecisionBatch()
-	state.recordRepetitionConflicts([]commandPlan{
-		{Command: "duplicate-one", Purpose: "Rejected one"},
-		{Command: "duplicate-two", Purpose: "Rejected two"},
+	state.recordPlanRejections([]planRejection{
+		{Plan: commandPlan{Command: "duplicate-one", Purpose: "Rejected one"}, Reason: repeatReasonRequired},
+		{Plan: commandPlan{Command: "duplicate-two", Purpose: "Rejected two"}, Reason: repeatReasonRequired},
 	})
 	state.recordBatch([]commandPlan{{Command: "df -h", Purpose: "Inspect"}}, commandBatchResult{
 		Executions: []commandExecution{{Command: "df -h", Purpose: "Inspect", ExitCode: 0}},
@@ -125,13 +125,48 @@ func TestWorkflowStateAdmitsContextualRepetitions(t *testing.T) {
 	if got := commandNames(admitted); !equalStrings(got, []string{" false ", "ls"}) {
 		t.Fatalf("admitted = %v, want failure retry and new command", got)
 	}
-	if got := commandNames(rejected); !equalStrings(got, []string{"pwd"}) {
+	if got := rejectedCommandNames(rejected); !equalStrings(got, []string{"pwd"}) {
 		t.Fatalf("rejected = %v, want successful duplicate", got)
 	}
 }
 
-// TestWorkflowStateAdmitsEveryTypedRepeatReason checks the closed cause set has identical admission semantics.
-func TestWorkflowStateAdmitsEveryTypedRepeatReason(t *testing.T) {
+func rejectedCommandNames(rejected []planRejection) []string {
+	commands := make([]string, 0, len(rejected))
+	for _, rejection := range rejected {
+		commands = append(commands, rejection.Plan.Command)
+	}
+	return commands
+}
+
+// TestObservationStrategyKeyNormalizesWrappersAndQuotes checks cosmetic shell
+// invocation changes cannot reset the observation attempt budget.
+func TestObservationStrategyKeyNormalizesWrappersAndQuotes(t *testing.T) {
+	tests := []struct {
+		command string
+		want    string
+	}{
+		{command: "env LC_ALL=C lsof -nP -iTCP", want: "lsof"},
+		{command: "/usr/bin/env LC_ALL=C netstat -an", want: "netstat"},
+		{command: `"/usr/sbin/lsof" -nP -iTCP`, want: "lsof"},
+		{command: "env", want: "env"},
+		{command: "env | grep PATH", want: "env"},
+		{command: "env -P /usr/bin lsof -nP -iTCP", want: "lsof"},
+		{command: `env -S 'lsof -nP -iTCP'`, want: "lsof"},
+		{command: `env -S 'X=1 lsof -nP -iTCP'`, want: "lsof"},
+		{command: `env -S '"/usr/sbin/lsof" -nP -iTCP'`, want: "lsof"},
+		{command: "env TAG=$(date) lsof -nP -iTCP", want: "lsof"},
+	}
+
+	for _, test := range tests {
+		if got := observationStrategyKey(test.command); got != test.want {
+			t.Errorf("observationStrategyKey(%q) = %q, want %q", test.command, got, test.want)
+		}
+	}
+}
+
+// TestWorkflowStateRejectsModelRepeatReasonsWithoutRuntimeCause checks model
+// labels alone cannot authorize an exact successful command again.
+func TestWorkflowStateRejectsModelRepeatReasonsWithoutRuntimeCause(t *testing.T) {
 	reasons := []core.RepeatReason{
 		core.RepeatReasonUserRequested,
 		core.RepeatReasonRetry,
@@ -143,10 +178,68 @@ func TestWorkflowStateAdmitsEveryTypedRepeatReason(t *testing.T) {
 			state := newWorkflowState("repeat check", false, 4)
 			state.executions = []commandExecution{{Command: "df -h", ExitCode: 0}}
 			admitted, rejected := state.admitPlans([]commandPlan{{Command: " df -h ", RepeatReason: reason}})
-			if len(admitted) != 1 || len(rejected) != 0 {
+			if len(admitted) != 0 || len(rejected) != 1 || rejected[0].Reason != repeatReasonRequired {
 				t.Fatalf("admitted = %#v, rejected = %#v", admitted, rejected)
 			}
 		})
+	}
+}
+
+// TestWorkflowStateAdmitsVerificationAfterInterveningSuccess preserves an
+// exact verification when runtime history proves another command ran between.
+func TestWorkflowStateAdmitsVerificationAfterInterveningSuccess(t *testing.T) {
+	state := newWorkflowState("clean up and verify disk", false, 4)
+	state.operation = "act"
+	state.executions = []commandExecution{
+		{Command: "df -h", ExitCode: 0},
+		{Command: "cleanup", ExitCode: 0},
+	}
+	state.attempts = []workflowAttempt{
+		{ID: 1, EffectiveCommand: "df -h", Outcome: "success"},
+		{ID: 2, EffectiveCommand: "cleanup", Outcome: "success"},
+	}
+
+	admitted, rejected := state.admitPlans([]commandPlan{{Command: "df -h", RepeatReason: core.RepeatReasonVerifyAfterChange}})
+	if len(admitted) != 1 || admitted[0].AuthorizedRepeatCommand != "df -h" || len(rejected) != 0 {
+		t.Fatalf("admitted = %#v, rejected = %#v", admitted, rejected)
+	}
+}
+
+// TestWorkflowStateConsumesRuntimeRepeatAuthorizationOnce checks one causal
+// change cannot authorize multiple identical verifications in the same batch.
+func TestWorkflowStateConsumesRuntimeRepeatAuthorizationOnce(t *testing.T) {
+	state := newWorkflowState("clean up and verify disk", false, 4)
+	state.operation = "act"
+	state.executions = []commandExecution{{Command: "df -h", ExitCode: 0}, {Command: "cleanup", ExitCode: 0}}
+	state.attempts = []workflowAttempt{
+		{ID: 1, EffectiveCommand: "df -h", Outcome: "success"},
+		{ID: 2, EffectiveCommand: "cleanup", Outcome: "success"},
+	}
+	plans := []commandPlan{
+		{Command: "df -h", RepeatReason: core.RepeatReasonVerifyAfterChange},
+		{Command: "df -h", RepeatReason: core.RepeatReasonVerifyAfterChange},
+	}
+
+	admitted, rejected := state.admitPlans(plans)
+	if len(admitted) != 1 || len(rejected) != 1 || rejected[0].Reason != repeatReasonRequired {
+		t.Fatalf("admitted = %#v, rejected = %#v", admitted, rejected)
+	}
+}
+
+// TestWorkflowStateAdmitsRetryAfterLatestFailure checks an older success does
+// not hide the runtime fact that the exact command most recently failed.
+func TestWorkflowStateAdmitsRetryAfterLatestFailure(t *testing.T) {
+	state := newWorkflowState("retry latest failure", false, 4)
+	state.operation = "act"
+	state.executions = []commandExecution{{Command: "update", ExitCode: 0}, {Command: "update", ExitCode: 1}}
+	state.attempts = []workflowAttempt{
+		{ID: 1, EffectiveCommand: "update", Outcome: "success"},
+		{ID: 2, EffectiveCommand: "update", Outcome: "failed"},
+	}
+
+	admitted, rejected := state.admitPlans([]commandPlan{{Command: "update", RepeatReason: core.RepeatReasonRetry}})
+	if len(admitted) != 1 || admitted[0].AuthorizedRepeatCommand != "update" || len(rejected) != 0 {
+		t.Fatalf("admitted = %#v, rejected = %#v", admitted, rejected)
 	}
 }
 

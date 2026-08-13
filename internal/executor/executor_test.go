@@ -813,56 +813,66 @@ func TestExecuteCommandsDoesNotAutoRunCommandSubstitutionWithYesSafe(t *testing.
 	}
 }
 
-// TestExecuteCommandsConfirmsTypedRiskyRepeat checks repeat admission never bypasses normal confirmation.
-func TestExecuteCommandsConfirmsTypedRiskyRepeat(t *testing.T) {
+// TestExecuteCommandsConfirmsRuntimeAuthorizedRiskyRepeat checks runtime repeat
+// admission never bypasses normal confirmation.
+func TestExecuteCommandsConfirmsRuntimeAuthorizedRiskyRepeat(t *testing.T) {
 	cfg := configpkg.DefaultConfig()
 	cfg.YesSafe = false
 	cfg.ShowSystemOutput = false
 	cfg.ShowCommandPopup = false
 	ctxInfo := loopTestContext(t)
 	marker := filepath.Join(t.TempDir(), "repeat-marker")
-	plans := []commandPlan{
-		{Command: "touch " + marker, Purpose: "Create marker", Risk: "medium", RequiresConfirmation: true},
-		{Command: "touch " + marker, Purpose: "Repeat marker creation", Risk: "medium", RequiresConfirmation: true, RepeatReason: core.RepeatReasonUserRequested},
-	}
+	command := "touch " + marker
+	plans := []commandPlan{{
+		Command:                 command,
+		Purpose:                 "Repeat marker creation",
+		Risk:                    "medium",
+		RequiresConfirmation:    true,
+		RepeatReason:            core.RepeatReasonVerifyAfterChange,
+		AuthorizedRepeatCommand: command,
+	}}
+	prior := []commandExecution{{Command: command, ExitCode: 0}}
 	logger := openLoopTrace(t)
 	turnID := logger.StartTurn(nil)
 
 	var batch core.CommandBatchResult
-	captureMainLoopIO(t, "y\ny\n", func(deps RuntimeDeps) {
+	captureMainLoopIO(t, "y\n", func(deps RuntimeDeps) {
 		deps.Trace = logger
 		var err error
-		batch, err = executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, executorOptions(cfg), &ctxInfo, plans, nil)
+		batch, err = executeCommands(tracepkg.WithTurnID(t.Context(), turnID), deps, false, executorOptions(cfg), &ctxInfo, plans, prior)
 		if err != nil {
 			t.Fatalf("executeCommands() error = %v", err)
 		}
 	})
 
-	if len(batch.Executions) != 2 || len(batch.Skipped) != 0 {
-		t.Fatalf("batch = %#v, want both confirmed executions", batch)
+	if len(batch.Executions) != 1 || len(batch.Skipped) != 0 {
+		t.Fatalf("batch = %#v, want authorized repeat executed", batch)
 	}
 	events := closeLoopTraceAndRead(t, logger)
-	if len(traceEventsByName(events, "command_confirmation")) != 2 || len(traceEventsByName(events, "command_start")) != 2 {
-		t.Fatalf("repeat did not traverse both confirmation paths")
+	if len(traceEventsByName(events, "command_confirmation")) != 1 || len(traceEventsByName(events, "command_start")) != 1 {
+		t.Fatalf("authorized repeat did not traverse confirmation")
 	}
 }
 
-// TestExecuteCommandsAllowsEditedDuplicateWithReason checks final effective-command admission uses the typed cause.
-func TestExecuteCommandsAllowsEditedDuplicateWithReason(t *testing.T) {
+// TestExecuteCommandsRejectsModelReasonWithoutRuntimeAuthorization checks the
+// executor does not trust a model-authored reason for an exact prior success.
+func TestExecuteCommandsRejectsModelReasonWithoutRuntimeAuthorization(t *testing.T) {
 	cfg := configpkg.DefaultConfig()
-	cfg.YesSafe = false
+	cfg.YesSafe = true
 	cfg.ShowSystemOutput = false
 	cfg.ShowCommandPopup = false
 	ctxInfo := loopTestContext(t)
 	plans := []commandPlan{{
-		Command:      "printf proposed",
-		Purpose:      "Repeat edited inspection",
-		RepeatReason: core.RepeatReasonUserRequested,
+		Command:        "printf prior",
+		Purpose:        "Poll prior inspection",
+		Classification: classificationSafe,
+		LocalSafe:      true,
+		RepeatReason:   core.RepeatReasonPollChangedState,
 	}}
 	prior := []commandExecution{{Command: "printf prior", ExitCode: 0}}
 
 	var batch core.CommandBatchResult
-	captureMainLoopIO(t, "e\nprintf prior\ny\n", func(deps RuntimeDeps) {
+	captureMainLoopIO(t, "", func(deps RuntimeDeps) {
 		var err error
 		batch, err = executeCommands(t.Context(), deps, false, executorOptions(cfg), &ctxInfo, plans, prior)
 		if err != nil {
@@ -870,8 +880,37 @@ func TestExecuteCommandsAllowsEditedDuplicateWithReason(t *testing.T) {
 		}
 	})
 
-	if len(batch.Executions) != 1 || batch.Executions[0].Command != "printf prior" || len(batch.Skipped) != 0 {
-		t.Fatalf("batch = %#v, want admitted edited repeat", batch)
+	if len(batch.Executions) != 0 || len(batch.Skipped) != 1 || batch.Skipped[0].Reason != core.RepeatReasonRequired {
+		t.Fatalf("batch = %#v, want unverified model repeat skipped", batch)
+	}
+}
+
+// TestExecuteCommandsConsumesRuntimeRepeatAuthorization checks one runtime
+// authorization can execute the exact prior command only once per batch.
+func TestExecuteCommandsConsumesRuntimeRepeatAuthorization(t *testing.T) {
+	cfg := configpkg.DefaultConfig()
+	cfg.YesSafe = true
+	cfg.ShowSystemOutput = false
+	cfg.ShowCommandPopup = false
+	ctxInfo := loopTestContext(t)
+	command := "printf prior"
+	plans := []commandPlan{
+		{Command: command, Purpose: "First verification", Classification: classificationSafe, LocalSafe: true, RepeatReason: core.RepeatReasonVerifyAfterChange, AuthorizedRepeatCommand: command},
+		{Command: command, Purpose: "Duplicate verification", Classification: classificationSafe, LocalSafe: true, RepeatReason: core.RepeatReasonVerifyAfterChange, AuthorizedRepeatCommand: command},
+	}
+	prior := []commandExecution{{Command: command, ExitCode: 0}}
+
+	var batch core.CommandBatchResult
+	captureMainLoopIO(t, "", func(deps RuntimeDeps) {
+		var err error
+		batch, err = executeCommands(t.Context(), deps, false, executorOptions(cfg), &ctxInfo, plans, prior)
+		if err != nil {
+			t.Fatalf("executeCommands() error = %v", err)
+		}
+	})
+
+	if len(batch.Executions) != 1 || len(batch.Skipped) != 1 || batch.Skipped[0].Reason != core.RepeatReasonRequired {
+		t.Fatalf("batch = %#v, want one authorized verification and one skipped duplicate", batch)
 	}
 }
 

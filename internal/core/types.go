@@ -95,18 +95,8 @@ const (
 	RepeatReasonPollChangedState  RepeatReason = "poll_changed_state"
 )
 
-// AllowsSuccessfulRepeat reports whether the closed reason set admits an exact prior success.
-func (reason RepeatReason) AllowsSuccessfulRepeat() bool {
-	switch reason {
-	case RepeatReasonUserRequested, RepeatReasonRetry, RepeatReasonVerifyAfterChange, RepeatReasonPollChangedState:
-		return true
-	default:
-		return false
-	}
-}
-
 // RepeatReasonRequired explains why an exact successful command was not admitted again.
-const RepeatReasonRequired = "successful command requires an explicit repeat_reason"
+const RepeatReasonRequired = "successful command requires a runtime-authorized repeat cause"
 
 // TurnResult is the normalized outcome of one Shellia turn.
 type TurnResult struct {
@@ -138,16 +128,24 @@ type WorkflowAttempt struct {
 
 // CommandPlan is the combined result of LLM planning and local safety classification.
 type CommandPlan struct {
-	Command              string
-	Purpose              string
-	Risk                 string
-	RequiresConfirmation bool
-	Classification       string
-	LocalSafe            bool
-	IndependentOnFailure bool
-	RepeatReason         RepeatReason
-	Interactive          bool
-	InteractiveReason    string
+	Command                 string
+	Purpose                 string
+	Risk                    string
+	RequiresConfirmation    bool
+	Classification          string
+	LocalSafe               bool
+	IndependentOnFailure    bool
+	RepeatReason            RepeatReason
+	AuthorizedRepeatCommand string
+	Interactive             bool
+	InteractiveReason       string
+}
+
+// AllowsSuccessfulRepeat reports whether runtime admission authorized this
+// exact effective command; model-authored repeat reasons are not authority.
+func (plan CommandPlan) AllowsSuccessfulRepeat(command string) bool {
+	authorized := strings.TrimSpace(plan.AuthorizedRepeatCommand)
+	return authorized != "" && authorized == strings.TrimSpace(command)
 }
 
 // SkippedCommand stores a command omitted from execution and the reason why.
@@ -242,13 +240,24 @@ func (execution CommandExecution) PromptTranscript(limit int, strategy Truncatio
 	stderrBudget := limit
 	stdoutBudget := limit
 	if execution.Stderr.HasOutput() && execution.Stdout.HasOutput() {
-		stderrBudget = (limit * 2) / 3
-		if stderrBudget <= 0 {
-			stderrBudget = 1
-		}
-		stdoutBudget = limit - stderrBudget
-		if stdoutBudget <= 0 {
-			stdoutBudget = 1
+		if limit == 1 {
+			stdoutBudget = 0
+		} else {
+			stderrBudget = (limit * 2) / 3
+			if stderrBudget <= 0 {
+				stderrBudget = 1
+			}
+			stdoutBudget = limit - stderrBudget
+			stderrNeed := len([]rune(strings.TrimSpace(execution.Stderr.Text)))
+			stdoutNeed := len([]rune(strings.TrimSpace(execution.Stdout.Text)))
+			if stderrNeed < stderrBudget {
+				stdoutBudget += stderrBudget - stderrNeed
+				stderrBudget = stderrNeed
+			}
+			if stdoutNeed < stdoutBudget {
+				stderrBudget += stdoutBudget - stdoutNeed
+				stdoutBudget = stdoutNeed
+			}
 		}
 	}
 
@@ -256,7 +265,7 @@ func (execution CommandExecution) PromptTranscript(limit int, strategy Truncatio
 	if execution.Stderr.HasOutput() {
 		sections = append(sections, execution.Stderr.RenderForPrompt("stderr", stderrBudget, strategy))
 	}
-	if execution.Stdout.HasOutput() {
+	if execution.Stdout.HasOutput() && stdoutBudget > 0 {
 		sections = append(sections, execution.Stdout.RenderForPrompt("stdout", stdoutBudget, strategy))
 	}
 

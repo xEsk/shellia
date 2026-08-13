@@ -117,12 +117,8 @@ func firstNonWhitespaceByte(raw string) byte {
 func validateResponse(parsed Response) (Response, error) {
 	parsed.Action = strings.TrimSpace(strings.ToLower(parsed.Action))
 	parsed.Operation = strings.TrimSpace(strings.ToLower(parsed.Operation))
-	parsed.EvidenceSource = strings.TrimSpace(strings.ToLower(parsed.EvidenceSource))
-	parsed.Freshness = strings.TrimSpace(strings.ToLower(parsed.Freshness))
 	parsed.SuccessCriteria = strings.TrimSpace(parsed.SuccessCriteria)
 	parsed.Summary = strings.TrimSpace(parsed.Summary)
-	parsed.CompletionBasis.Source = strings.TrimSpace(strings.ToLower(parsed.CompletionBasis.Source))
-	parsed.CompletionBasis.Freshness = strings.TrimSpace(strings.ToLower(parsed.CompletionBasis.Freshness))
 	parsed.Offer.Objective = strings.TrimSpace(parsed.Offer.Objective)
 	parsed.Offer.Summary = strings.TrimSpace(parsed.Offer.Summary)
 	parsed.BlockerKind = strings.TrimSpace(strings.ToLower(parsed.BlockerKind))
@@ -131,16 +127,6 @@ func validateResponse(parsed Response) (Response, error) {
 	case "answer", "observe", "act", "capability":
 	default:
 		return Response{}, fmt.Errorf("invalid llm response: unknown operation %q", parsed.Operation)
-	}
-	switch parsed.EvidenceSource {
-	case "model_knowledge", "session_result", "retry_observation", "current_observation", "current_execution":
-	default:
-		return Response{}, fmt.Errorf("invalid llm response: unknown evidence_source %q", parsed.EvidenceSource)
-	}
-	switch parsed.Freshness {
-	case "not_applicable", "snapshot", "current":
-	default:
-		return Response{}, fmt.Errorf("invalid llm response: unknown freshness %q", parsed.Freshness)
 	}
 	if parsed.SuccessCriteria == "" {
 		return Response{}, fmt.Errorf("invalid llm response: missing success_criteria")
@@ -178,6 +164,9 @@ func validateResponse(parsed Response) (Response, error) {
 		refs[ref] = struct{}{}
 		parsed.ContextRefs[index] = ref
 	}
+	if parsed.Action != "retrieve_context" && len(parsed.ContextRefs) > 0 {
+		return Response{}, fmt.Errorf("invalid llm response: context_refs are only valid for retrieve_context")
+	}
 	switch parsed.Action {
 	case "execute":
 		if parsed.Operation == "capability" || parsed.Operation == "answer" {
@@ -190,6 +179,9 @@ func validateResponse(parsed Response) (Response, error) {
 			return Response{}, fmt.Errorf("invalid llm response: execute decision missing commands")
 		}
 	case "retrieve_context":
+		if parsed.Operation != "answer" {
+			return Response{}, fmt.Errorf("invalid llm response: retrieve_context requires operation answer")
+		}
 		if len(parsed.ContextRefs) == 0 {
 			return Response{}, fmt.Errorf("invalid llm response: retrieve_context decision missing context_refs")
 		}
@@ -200,17 +192,8 @@ func validateResponse(parsed Response) (Response, error) {
 		if parsed.Summary == "" {
 			return Response{}, fmt.Errorf("invalid llm response: complete decision missing final answer")
 		}
-		if parsed.CompletionBasis.Source == "" || parsed.CompletionBasis.Freshness == "" {
-			return Response{}, fmt.Errorf("invalid llm response: complete decision missing completion basis")
-		}
-		if parsed.CompletionBasis.Source != parsed.EvidenceSource || parsed.CompletionBasis.Freshness != parsed.Freshness {
-			return Response{}, fmt.Errorf("invalid llm response: completion basis must match evidence_source and freshness")
-		}
 		if len(parsed.Commands) > 0 {
 			return Response{}, fmt.Errorf("invalid llm response: complete decision with commands")
-		}
-		if len(parsed.ContextRefs) > 0 && parsed.EvidenceSource != "session_result" {
-			return Response{}, fmt.Errorf("invalid llm response: context_refs require session_result evidence")
 		}
 	case "blocked":
 		if len(parsed.Commands) > 0 {

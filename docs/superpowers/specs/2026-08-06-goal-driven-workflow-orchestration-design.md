@@ -229,15 +229,12 @@ La protecció deixa de ser una blacklist textual de tots els èxits previs. Es c
 
 ### 10.1 Repeticions admissibles
 
-Un comando pot repetir-se quan:
+Un comando exacte que ja ha acabat correctament només pot repetir-se quan el runtime pot demostrar la causa:
 
-- l’intent anterior va fallar o va quedar saltat;
-- l’usuari ho ha demanat explícitament;
-- verifica l’estat després d’una mutació;
-- consulta un estat que pot haver canviat;
-- forma part d’un reintent justificat després d’una reparació.
+- l’últim intent del mateix comando va fallar o va expirar;
+- en un workflow `act`, verifica l’estat després que un comando diferent hagi acabat correctament.
 
-La decisió `execute` aporta un `repeatReason` tipat, per exemple `user_requested`, `retry`, `verify_after_change` o `poll_changed_state`.
+La decisió `execute` aporta un `repeatReason` tipat, per exemple `user_requested`, `retry`, `verify_after_change` o `poll_changed_state`, però aquest camp només descriu intenció i no concedeix autoritat. L’admissió runtime genera una autorització interna, lligada al comando efectiu exacte i consumible una sola vegada. Una repetició explícita de l’usuari comença un workflow nou i segueix el flux normal.
 
 ### 10.2 Repeticions no admissibles
 
@@ -338,7 +335,7 @@ No hi haurà flag de compatibilitat. Durant el desenvolupament els passos poden 
 - Una tasca descoberta → acció → verificació conserva l’objectiu entre rondes i no acaba després del primer èxit.
 - Un error ordinari pot provocar un pla reparador i un reintent.
 - Un comando correcte pot repetir-se després d’una mutació amb `verify_after_change`.
-- Una repetició explícita demanada per l’usuari és admissible.
+- Una repetició explícita demanada per l’usuari és admissible com a workflow nou, però el model no pot simular-la dins del workflow actual.
 - Una repetició reeixida sense justificació no s’executa i acaba en reparació o `no_progress`.
 - Un batch amb sortida truncada ho declara al model i a les traces.
 - Faltar informació acaba en `blocked/missing_input` i el follow-up conserva el context.

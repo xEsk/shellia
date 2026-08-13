@@ -361,13 +361,19 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, options Opt
 	blocked := false
 	turnID := tracepkg.TurnID(ctx)
 	succeeded := successfulCommandIdentities(priorExecutions)
+	priorSucceeded := successfulCommandIdentities(priorExecutions)
+	consumedRepeatAuthorizations := make(map[string]bool)
+	repeatAuthorized := func(plan commandPlan, command string) bool {
+		identity := strings.TrimSpace(command)
+		return priorSucceeded[identity] && !consumedRepeatAuthorizations[identity] && plan.AllowsSuccessfulRepeat(command)
+	}
 
 	for index, plan := range plans {
 		if blocked && !plan.IndependentOnFailure {
 			batch.Skipped = append(batch.Skipped, skipCommand(deps, turn, nil, turnID, index, len(plans), plan, plan.Command, skippedAfterFailureReason))
 			continue
 		}
-		if succeeded[strings.TrimSpace(plan.Command)] && !plan.RepeatReason.AllowsSuccessfulRepeat() {
+		if succeeded[strings.TrimSpace(plan.Command)] && !repeatAuthorized(plan, plan.Command) {
 			batch.Skipped = append(batch.Skipped, skipCommand(deps, turn, nil, turnID, index, len(plans), plan, plan.Command, core.RepeatReasonRequired))
 			continue
 		}
@@ -406,7 +412,7 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, options Opt
 					plan.Classification = localSafety.Classification
 					plan.RequiresConfirmation = plan.RequiresConfirmation || localSafety.RequiresConfirmation
 					plan.LocalSafe = localSafety.Classification == safetypkg.ClassificationSafe
-					if succeeded[strings.TrimSpace(effectiveCommand)] && !plan.RepeatReason.AllowsSuccessfulRepeat() {
+					if succeeded[strings.TrimSpace(effectiveCommand)] && !repeatAuthorized(plan, effectiveCommand) {
 						break
 					}
 					if localSafety.RequiresConfirmation {
@@ -426,9 +432,12 @@ func executeCommands(ctx context.Context, deps RuntimeDeps, ui bool, options Opt
 				"decision":    "auto_safe",
 			})
 		}
-		if succeeded[strings.TrimSpace(effectiveCommand)] && !plan.RepeatReason.AllowsSuccessfulRepeat() {
+		if succeeded[strings.TrimSpace(effectiveCommand)] && !repeatAuthorized(plan, effectiveCommand) {
 			batch.Skipped = append(batch.Skipped, skipCommand(deps, turn, box, turnID, index, len(plans), plan, effectiveCommand, core.RepeatReasonRequired))
 			continue
+		}
+		if priorSucceeded[strings.TrimSpace(effectiveCommand)] {
+			consumedRepeatAuthorizations[strings.TrimSpace(effectiveCommand)] = true
 		}
 
 		deps.Trace.Record("command_start", turnID, "", -1, map[string]any{

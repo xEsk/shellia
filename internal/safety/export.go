@@ -18,6 +18,11 @@ func HasShellOperators(command string) bool {
 	return hasShellOperators(command)
 }
 
+// PrimaryCommandRoot returns the effective source command in the first shell stage.
+func PrimaryCommandRoot(command string) string {
+	return primaryCommandRoot(command)
+}
+
 const (
 	// ClassificationSafe is the local safe classification label.
 	ClassificationSafe      = classificationSafe

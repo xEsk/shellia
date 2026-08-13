@@ -1136,6 +1136,7 @@ p{margin:0}
       <ul>
         <li><b>[[models]]</b><span>name each endpoint and select it with <code>default_model</code> or <code>--model-name</code></span></li>
         <li><b>supports_response_format</b><span>leave enabled for OpenAI/llama.cpp · disable for MLX LM Server</span></li>
+        <li><b>supports_json_schema</b><span>enable strict typed planning only for providers that support Structured Outputs</span></li>
         <li><b>request_params</b><span>optional provider JSON body fields scoped to one model profile · omitted fields use provider defaults</span></li>
         <li><b>shell_mode</b><span><code>"interactive"</code> drops into a real TTY · <code>"plain"</code> stays structured</span></li>
         <li><b>command_mode</b><span>same toggle for <code>!&lt;cmd&gt;</code></span></li>
@@ -1146,6 +1147,7 @@ p{margin:0}
         <li><b>continue_on_error</b><span>after a failure, skips dependent steps and runs only explicitly independent ones</span></li>
         <li><b>capture_*_bytes</b><span>bounded log capture so the model never sees a 4MB log</span></li>
       </ul>
+      <p><code>supports_json_schema</code> defaults to <code>false</code> for compatible providers. Enable it for Chat Completions endpoints with strict Structured Outputs; otherwise Shellia keeps JSON-object or prompt-only fallback and allows at most three structural repairs per workflow.</p>
       <p><code>[models.request_params]</code> accepts strings, booleans, integers, finite floats, arrays, and nested tables. JSON <code>null</code>, TOML dates/times, <code>nan</code>, and infinities are rejected at startup. Shellia also reserves <code>model</code>, <code>messages</code>, <code>response_format</code>, <code>stream</code>, <code>stream_options</code>, <code>n</code>, <code>tools</code>, <code>tool_choice</code>, <code>parallel_tool_calls</code>, <code>functions</code>, <code>function_call</code>, <code>modalities</code>, <code>audio</code>, and <code>web_search_options</code>; the provider validates other keys and ranges.</p>
       <p><code>/model</code>, <code>--model-name</code>, and <code>SHELLIA_MODEL_NAME</code> select the complete parameter set for that profile. One-shot base URL, model, and API-key overrides keep those parameters. They may change cost, latency, retention, privacy, or other remote provider behavior, so do not store credentials in this table. Shellia versions released before this option reject <code>[models.request_params]</code> as unknown configuration.</p>
     </div>
@@ -1162,6 +1164,7 @@ p{margin:0}
 <span class="cb-key">model</span> = <span class="cb-str">"gpt-5.6-luna"</span>
 <span class="cb-key">api_key_env</span> = <span class="cb-str">"SHELLIA_API_KEY"</span>
 <span class="cb-key">supports_response_format</span> = <span class="cb-num">true</span>
+<span class="cb-key">supports_json_schema</span> = <span class="cb-num">true</span>
 <span class="cb-comment"># Optional per-profile provider fields:</span>
 <span class="cb-comment"># [models.request_params]</span>
 <span class="cb-comment"># temperature = 1</span>

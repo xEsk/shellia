@@ -197,6 +197,14 @@ func TestDefaultConfigShowsSystemOutput(t *testing.T) {
 	}
 }
 
+// TestDefaultConfigUsesThreeThousandObservationCharacters checks the built-in
+// prompt evidence budget is practical for typical CLI output.
+func TestDefaultConfigUsesThreeThousandObservationCharacters(t *testing.T) {
+	if got := configpkg.DefaultConfig().ObservationOutputChars; got != 3000 {
+		t.Fatalf("configpkg.DefaultConfig().ObservationOutputChars = %d, want 3000", got)
+	}
+}
+
 // TestLoadBaseConfigResolvesEveryVisualStyle checks the user-facing TOML
 // contract at the same boundary used by application startup.
 func TestLoadBaseConfigResolvesEveryVisualStyle(t *testing.T) {
@@ -569,6 +577,9 @@ model = "local-model"
 	if !cfg.SupportsResponseFormat {
 		t.Fatalf("SupportsResponseFormat = false, want true by default")
 	}
+	if cfg.SupportsJSONSchema {
+		t.Fatalf("SupportsJSONSchema = true, want false by default")
+	}
 }
 
 // TestParseArgsSelectsFirstconfiguredModel checks the first profile is the fallback default.
@@ -814,6 +825,28 @@ temperature = 0.25
 	}
 	if cfg.RequestParams["temperature"] != 0.25 {
 		t.Fatalf("RequestParams = %#v, want selected profile params preserved", cfg.RequestParams)
+	}
+}
+
+// TestParseArgsAcceptsUnboundedObservationOutputBudget checks positive user
+// budgets are not rejected by an application-defined upper limit.
+func TestParseArgsAcceptsUnboundedObservationOutputBudget(t *testing.T) {
+	writeShelliaConfig(t, `
+[[models]]
+name = "local"
+base_url = "http://localhost:8080/v1"
+model = "local-model"
+
+[output]
+observation_output_chars = 250000
+`)
+
+	cfg, err := parseArgs([]string{"inspect status"})
+	if err != nil {
+		t.Fatalf("parseArgs() error = %v", err)
+	}
+	if cfg.ObservationOutputChars != 250000 {
+		t.Fatalf("ObservationOutputChars = %d, want 250000", cfg.ObservationOutputChars)
 	}
 }
 
@@ -1136,6 +1169,27 @@ func TestInitConfigFileUsesFivePlanningRoundsByDefault(t *testing.T) {
 	}
 	if fileCfg.Execution.PlanningMaxRounds != 5 {
 		t.Fatalf("planning_max_rounds = %d, want 5", fileCfg.Execution.PlanningMaxRounds)
+	}
+}
+
+// TestInitConfigFileUsesThreeThousandObservationCharactersByDefault checks
+// generated configurations match the built-in prompt evidence budget.
+func TestInitConfigFileUsesThreeThousandObservationCharactersByDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	var output strings.Builder
+	if err := configpkg.InitConfigFileTo(&output, false); err != nil {
+		t.Fatalf("configpkg.InitConfigFileTo() error = %v", err)
+	}
+
+	fileCfg, _, err := configpkg.LoadFileConfig()
+	if err != nil {
+		t.Fatalf("configpkg.LoadFileConfig() error = %v", err)
+	}
+	if fileCfg.Output.ObservationOutputChars != 3000 {
+		t.Fatalf("observation_output_chars = %d, want 3000", fileCfg.Output.ObservationOutputChars)
 	}
 }
 

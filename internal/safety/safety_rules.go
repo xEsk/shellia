@@ -14,8 +14,8 @@ func shellOperatorRule(command string, _ []string) (commandSafety, bool) {
 }
 
 // dangerousRootRule catches commands that are directly dangerous regardless of arguments.
-func dangerousRootRule(_ string, tokens []string) (commandSafety, bool) {
-	if isDangerousRoot(tokens[0]) {
+func dangerousRootRule(command string, tokens []string) (commandSafety, bool) {
+	if isDangerousRoot(tokens[0]) || hasDangerousCommandRoot(command) {
 		return dangerousSafety(), true
 	}
 	return commandSafety{}, false
@@ -23,6 +23,9 @@ func dangerousRootRule(_ string, tokens []string) (commandSafety, bool) {
 
 // isDangerousRoot reports whether a command root is high risk regardless of arguments.
 func isDangerousRoot(root string) bool {
+	if separator := strings.LastIndexByte(root, '/'); separator >= 0 {
+		root = root[separator+1:]
+	}
 	dangerousRoots := map[string]bool{
 		"sudo": true, "su": true, "rm": true, "dd": true, "mkfs": true, "shutdown": true,
 		"reboot": true, "halt": true, "poweroff": true, "useradd": true, "adduser": true,
