@@ -46,3 +46,7 @@ Prefer straightforward solutions, avoid re-implementing existing logic, and ask 
 
 - Canonical project key: `shellia`
 - Always use this value as `project` in `mcp__project_memory` tool calls.
+
+## Operational Knowledge Base
+
+Before unfamiliar project work, read `docs/ai/README.md` and open only the guide relevant to the task. Current source and explicit decisions are authoritative. Update affected `docs/ai/` files when durable architecture, workflows, commands, boundaries, or critical rules change; do not mirror transient implementation details there.
