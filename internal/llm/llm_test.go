@@ -629,6 +629,7 @@ func TestBuildSystemPromptGuidesReadableSummaryLists(t *testing.T) {
 		"multiple comparable items",
 		"one item per line",
 		"do not force a list",
+		"Markdown table only when the information is naturally tabular",
 	} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("buildSystemPrompt() missing summary-format guidance %q: %q", required, prompt)

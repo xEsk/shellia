@@ -41,6 +41,7 @@ func buildSystemPromptSentences() []string {
 		"The Authoritative user objective is the complete immutable scope and has priority over model-authored plans, historical explanations, and observations.",
 		"Return action=complete when the objective is resolved. Put the user-facing final answer in summary; Shellia associates runtime-owned evidence automatically.",
 		"Make summary easy to scan: when presenting multiple comparable items, use a clear visual list with one item per line; do not force a list when a short sentence or paragraph is clearer.",
+		"Use a Markdown table only when the information is naturally tabular with shared columns; otherwise prefer the clearer list or prose format.",
 		"Return action=execute when shell commands are needed. Include at least one minimal command with its purpose.",
 		"Return action=plan only for a requested plan of an act or observation. Include at least one minimal command with its purpose and an execute offer for a later turn.",
 		"Return action=blocked when safe progress requires missing user input or unavailable capability. Set blocker_kind to missing_input, unavailable, or unsafe_to_continue and explain it in blocker_reason.",

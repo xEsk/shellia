@@ -107,6 +107,39 @@ func TestNewRendererSelectsEveryVisualStyle(t *testing.T) {
 	}
 }
 
+// TestEveryVisualStyleKeepsMarkdownTablesInsideItsAnswerSurface checks tables
+// remain table-shaped without adding an outer box inside any visual theme.
+func TestEveryVisualStyleKeepsMarkdownTablesInsideItsAnswerSurface(t *testing.T) {
+	message := "| Directori | Mida |\n| --- | ---: |\n| /var/www | 7,9G |\n| /tmp | 195M |"
+	styles := []configpkg.VisualStyle{
+		configpkg.VisualStylePlain,
+		configpkg.VisualStyleGuide,
+		configpkg.VisualStyleBands,
+		configpkg.VisualStyleCards,
+	}
+
+	for _, visualStyle := range styles {
+		t.Run(string(visualStyle), func(t *testing.T) {
+			var out bytes.Buffer
+			turn := NewRenderer(&out, Presentation{Style: visualStyle, ANSI: false}).BeginShelliaTurn(testConfig(), core.ContextInfo{})
+			turn.Final(message)
+			turn.Close()
+
+			output := out.String()
+			for _, required := range []string{"Directori", "/var/www", "│", "─"} {
+				if !strings.Contains(output, required) {
+					t.Fatalf("%s output missing table content %q:\n%s", visualStyle, required, output)
+				}
+			}
+			for _, line := range strings.Split(strings.ReplaceAll(output, "\r", ""), "\n") {
+				if width := visibleWidth(line); width > 80 {
+					t.Fatalf("%s output line width = %d, want <= 80: %q", visualStyle, width, line)
+				}
+			}
+		})
+	}
+}
+
 func TestEveryVisualStyleUsesConfiguredPromptUser(t *testing.T) {
 	styles := []configpkg.VisualStyle{
 		configpkg.VisualStylePlain,

@@ -563,6 +563,25 @@ func TestRenderAnswerMarkdownNoColorOmitsANSI(t *testing.T) {
 	}
 }
 
+// TestRenderAnswerMarkdownRendersTablesWithinContentWidth checks GFM tables
+// keep their visual structure without overflowing the available answer space.
+func TestRenderAnswerMarkdownRendersTablesWithinContentWidth(t *testing.T) {
+	message := "| Directori | Mida |\n| --- | ---: |\n| /var/www | 7,9G |\n| /tmp | 195M |"
+	lines := renderAnswerMarkdown(message, 30, false)
+	joined := strings.Join(lines, "\n")
+
+	for _, required := range []string{"Directori", "/var/www", "│", "─"} {
+		if !strings.Contains(joined, required) {
+			t.Fatalf("renderAnswerMarkdown() missing table content %q: %q", required, joined)
+		}
+	}
+	for _, line := range lines {
+		if width := visibleWidth(line); width > 30 {
+			t.Fatalf("renderAnswerMarkdown() line width = %d, want <= 30: %q", width, line)
+		}
+	}
+}
+
 // TestRenderAnswerMarkdownMalformedInputFits checks malformed Markdown does not break layout.
 func TestRenderAnswerMarkdownMalformedInputFits(t *testing.T) {
 	lines := renderAnswerMarkdown("Aquest **markdown queda obert i s'ha de poder mostrar.", 18, true)
