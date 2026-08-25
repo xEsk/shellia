@@ -10,6 +10,13 @@ The model proposes a response, but it cannot grant itself execution authority.
 does not expose a setter. Semantic repair may not move a decision between executable
 (`act`/`observe`) and non-executable (`answer`/`capability`) operation groups.
 
+`action=plan` is terminal and non-authorizing even in a normally executable turn.
+Pending proposals carry a local `plan` or `execute` mode. Accepting `plan` creates a
+new plan-only workflow; accepting `execute` creates a fresh executable workflow and
+replans from the objective. Session state never stores planned commands as later
+execution authority. `/plan`, its retries, and blocked follow-ups preserve plan-only
+authority until that workflow ends.
+
 For an `execute` decision, `internal/llm` normalizes model commands and
 `internal/safety.ClassifyCommand` independently determines the effective risk and
 confirmation requirement. `internal/executor` rechecks edited or repeated commands

@@ -119,6 +119,7 @@ func validateResponse(parsed Response) (Response, error) {
 	parsed.Operation = strings.TrimSpace(strings.ToLower(parsed.Operation))
 	parsed.SuccessCriteria = strings.TrimSpace(parsed.SuccessCriteria)
 	parsed.Summary = strings.TrimSpace(parsed.Summary)
+	parsed.Offer.Mode = strings.TrimSpace(strings.ToLower(parsed.Offer.Mode))
 	parsed.Offer.Objective = strings.TrimSpace(parsed.Offer.Objective)
 	parsed.Offer.Summary = strings.TrimSpace(parsed.Offer.Summary)
 	parsed.BlockerKind = strings.TrimSpace(strings.ToLower(parsed.BlockerKind))
@@ -131,11 +132,8 @@ func validateResponse(parsed Response) (Response, error) {
 	if parsed.SuccessCriteria == "" {
 		return Response{}, fmt.Errorf("invalid llm response: missing success_criteria")
 	}
-	if parsed.Operation != "capability" && (parsed.Offer.Objective != "" || parsed.Offer.Summary != "") {
-		return Response{}, fmt.Errorf("invalid llm response: offer is only valid for capability")
-	}
-	if parsed.Offer.Objective == "" && parsed.Offer.Summary != "" {
-		return Response{}, fmt.Errorf("invalid llm response: offer summary requires an objective")
+	if err := validateOffer(parsed); err != nil {
+		return Response{}, err
 	}
 	for index := range parsed.Commands {
 		cmd := &parsed.Commands[index]
@@ -178,6 +176,16 @@ func validateResponse(parsed Response) (Response, error) {
 		if len(parsed.Commands) == 0 {
 			return Response{}, fmt.Errorf("invalid llm response: execute decision missing commands")
 		}
+	case "plan":
+		if parsed.Operation != "act" && parsed.Operation != "observe" {
+			return Response{}, fmt.Errorf("invalid llm response: plan requires operation act or observe")
+		}
+		if parsed.Summary == "" || len(parsed.Commands) == 0 {
+			return Response{}, fmt.Errorf("invalid llm response: plan decision missing summary or commands")
+		}
+		if parsed.BlockerKind != "" || parsed.BlockerReason != "" {
+			return Response{}, fmt.Errorf("invalid llm response: plan decision with blocker")
+		}
 	case "retrieve_context":
 		if parsed.Operation != "answer" {
 			return Response{}, fmt.Errorf("invalid llm response: retrieve_context requires operation answer")
@@ -212,6 +220,34 @@ func validateResponse(parsed Response) (Response, error) {
 	}
 
 	return parsed, nil
+}
+
+// validateOffer enforces the closed action, operation, and proposal-mode matrix.
+func validateOffer(parsed Response) error {
+	hasOffer := parsed.Offer.Mode != "" || parsed.Offer.Objective != "" || parsed.Offer.Summary != ""
+	if !hasOffer {
+		if parsed.Action == "plan" {
+			return fmt.Errorf("invalid llm response: plan decision requires an execute offer")
+		}
+		return nil
+	}
+	if parsed.Offer.Mode == "" || parsed.Offer.Objective == "" || parsed.Offer.Summary == "" {
+		return fmt.Errorf("invalid llm response: offer requires mode, objective, and summary")
+	}
+
+	wantMode := ""
+	switch {
+	case parsed.Action == "complete" && parsed.Operation == "answer":
+		wantMode = "plan"
+	case parsed.Action == "complete" && parsed.Operation == "capability":
+		wantMode = "execute"
+	case parsed.Action == "plan" && (parsed.Operation == "act" || parsed.Operation == "observe"):
+		wantMode = "execute"
+	}
+	if parsed.Offer.Mode != wantMode {
+		return fmt.Errorf("invalid llm response: offer mode %q is not allowed for operation=%q action=%q", parsed.Offer.Mode, parsed.Operation, parsed.Action)
+	}
+	return nil
 }
 
 // firstJSONObject extracts the first complete JSON object from model text.

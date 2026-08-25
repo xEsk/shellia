@@ -621,6 +621,21 @@ func TestBuildSystemPromptGuidesCompactObservation(t *testing.T) {
 	}
 }
 
+// TestBuildSystemPromptGuidesReadableSummaryLists checks summaries favor
+// visual lists for multiple comparable items without requiring them always.
+func TestBuildSystemPromptGuidesReadableSummaryLists(t *testing.T) {
+	prompt := buildSystemPrompt()
+	for _, required := range []string{
+		"multiple comparable items",
+		"one item per line",
+		"do not force a list",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("buildSystemPrompt() missing summary-format guidance %q: %q", required, prompt)
+		}
+	}
+}
+
 func TestBuildSystemPromptKeepsRepeatAuthorityInRuntime(t *testing.T) {
 	prompt := buildSystemPrompt()
 	for _, required := range []string{
@@ -749,6 +764,38 @@ func TestParseResponseAcceptsSimplifiedDecisionContract(t *testing.T) {
 				t.Fatalf("parseResponse() error = %v", err)
 			}
 		})
+	}
+}
+
+// TestParseResponseAcceptsTypedConversationalPlan checks a plan is a typed,
+// non-authorizing provider decision with a later execute offer.
+func TestParseResponseAcceptsTypedConversationalPlan(t *testing.T) {
+	raw := `{"action":"plan","operation":"act","success_criteria":"Marker can be created","summary":"Create the marker after approval.","context_refs":[],"offer":{"mode":"execute","objective":"create marker","summary":"Create the marker"},"blocker_kind":"","blocker_reason":"","commands":[{"command":"touch marker","purpose":"Create marker","risk":"medium","requires_confirmation":true}]}`
+
+	response, err := parseResponse(raw, ResponseModeStrict)
+	if err != nil {
+		t.Fatalf("parseResponse() error = %v", err)
+	}
+	if response.Action != "plan" || response.Offer.Mode != "execute" || len(response.Commands) != 1 {
+		t.Fatalf("response = %#v, want typed plan with execute offer", response)
+	}
+}
+
+// TestParseResponseRejectsInvalidOfferMatrix checks offers cannot silently
+// cross from explanation or planning into the wrong authority mode.
+func TestParseResponseRejectsInvalidOfferMatrix(t *testing.T) {
+	tests := []string{
+		`{"action":"complete","operation":"answer","success_criteria":"Explain","summary":"Explanation.","context_refs":[],"offer":{"mode":"execute","objective":"run checks","summary":"Run checks"},"blocker_kind":"","blocker_reason":"","commands":[]}`,
+		`{"action":"complete","operation":"capability","success_criteria":"Explain capability","summary":"Possible.","context_refs":[],"offer":{"mode":"plan","objective":"run checks","summary":"Run checks"},"blocker_kind":"","blocker_reason":"","commands":[]}`,
+		`{"action":"plan","operation":"act","success_criteria":"Change planned","summary":"Plan it.","context_refs":[],"offer":{"mode":"plan","objective":"change it","summary":"Change it"},"blocker_kind":"","blocker_reason":"","commands":[{"command":"touch marker","purpose":"Create marker","risk":"medium","requires_confirmation":true}]}`,
+		`{"action":"plan","operation":"act","success_criteria":"Change planned","summary":"Plan it.","context_refs":[],"offer":{"mode":"","objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[{"command":"touch marker","purpose":"Create marker","risk":"medium","requires_confirmation":true}]}`,
+		`{"action":"complete","operation":"observe","success_criteria":"Observation complete","summary":"Done.","context_refs":[],"offer":{"mode":"","objective":"hidden objective","summary":"Hidden offer"},"blocker_kind":"","blocker_reason":"","commands":[]}`,
+	}
+
+	for _, raw := range tests {
+		if _, err := parseResponse(raw, ResponseModeStrict); err == nil {
+			t.Fatalf("parseResponse(%s) error = nil, want invalid offer rejection", raw)
+		}
 	}
 }
 

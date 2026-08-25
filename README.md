@@ -9,7 +9,7 @@ It is designed for people who want to ask for work in plain language, see exactl
 Shellia is a local CLI tool that:
 
 - understands the current terminal context
-- asks an OpenAI-compatible model to decide whether to execute, complete, or report a blocker
+- asks an OpenAI-compatible model to decide whether to execute, plan, complete, or report a blocker
 - classifies command risk locally
 - shows a plan before execution
 - asks for confirmation when needed
@@ -52,6 +52,7 @@ The goal of Shellia is simple:
 - Optional auto-run of locally safe commands with `--yes-safe`
 - Real-time command output
 - Intent-aware decisions for actions, local observations, capability questions, and explanations
+- Conversational plan offers that remain non-executing until separately accepted
 - Causal completion checks that prevent a requested change from finishing as a mere explanation
 - Iterative planning when a later step depends on data that still needs to be observed first
 - Failure-aware replanning: ordinary command failures become bounded observations, while dependent later steps are skipped
@@ -63,7 +64,7 @@ Shellia follows this general flow:
 
 1. Detect local context.
 2. Send your instruction plus that context to a configurable LLM endpoint.
-3. Receive one structured decision: execute, complete, or blocked.
+3. Receive one structured decision: execute, plan, complete, or blocked.
 4. Lock the objective as an action, observation, capability question, or explanation.
 5. For execution decisions, re-classify every command locally with Shellia's own safety rules.
 6. Show the plan and command purposes.
@@ -71,11 +72,13 @@ Shellia follows this general flow:
 8. Execute commands in the current working directory.
 9. Feed bounded evidence back into the same workflow and continue until causal evidence supports completion or a real blocker is reached.
 
-Requests for a current local value, such as “how much disk space is free?”, are observations and use the terminal. Explicit capability questions, such as “can you check how much disk space is free?”, do not execute immediately: Shellia explains the approach and can offer a structured follow-up objective. An unequivocal “yes” starts that objective as a new workflow with the same visible plan and safety confirmations as any other task.
+Requests for a current local value, such as “how much disk space is free?”, are observations and use the terminal. Explicit capability questions, such as “can you check how much disk space is free?”, do not execute immediately: Shellia explains the approach and can offer a structured executable objective.
+
+Explanations may offer to prepare a plan, and conversational planning requests may return a visible command plan plus a separate execution offer. An unequivocal acceptance advances exactly one step: a plan offer starts a plan-only workflow, while an execution offer starts a fresh executable workflow that replans the commands. Planned commands are never stored or replayed as authority. Longer or ambiguous replies remain normal prompts.
 
 Profiles with `supports_json_schema = true` enforce planning field types at the provider. As a bounded fallback, Shellia can repair up to three malformed model decisions across one workflow before stopping with a structural error.
 
-`--plan` and `/plan` use the same planning contract but have no execution authority: they show the first useful plan and never invoke the executor.
+`--plan` and `/plan` use the same planning contract but have no execution authority: they show the first useful plan and never invoke the executor. In an interactive session, a completed `/plan` may leave a separate execution offer that can be accepted on a later turn; that later turn replans under the normal local safety and confirmation rules.
 
 In interactive mode, Shellia also keeps lightweight session memory so later prompts can refer to previous work.
 

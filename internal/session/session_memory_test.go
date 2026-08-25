@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/xEsk/shellia/internal/core"
 )
 
 func TestMergeRecentUnique(t *testing.T) {
@@ -277,10 +279,25 @@ func TestResolveInstructionForPlanning(t *testing.T) {
 		}
 	})
 
+	t.Run("accepts Catalan execute pronoun", func(t *testing.T) {
+		state := sessionState{PendingProposal: pendingProposal{Objective: "executa el canvi"}}
+		if got := resolveInstructionForPlanning("executa’l", state); got != "executa el canvi" {
+			t.Errorf("got %q, want pending proposal objective", got)
+		}
+	})
+
 	t.Run("does not invent action without pending proposal", func(t *testing.T) {
 		got := resolveInstructionForPlanning("sí", sessionState{})
 		if got != "sí" {
 			t.Errorf("got %q, want original instruction", got)
+		}
+	})
+
+	t.Run("does not accept an ambiguous follow-up", func(t *testing.T) {
+		state := sessionState{PendingProposal: pendingProposal{Objective: "executa el canvi"}}
+		instruction := "ok, quins passos són?"
+		if got := resolveInstructionForPlanning(instruction, state); got != instruction {
+			t.Errorf("got %q, want ambiguous prompt unchanged", got)
 		}
 	})
 
@@ -311,6 +328,22 @@ func TestUpdateSessionStateStoresStructuredProposal(t *testing.T) {
 
 	if state.PendingProposal.Objective != "consulta l'espai disponible al disc" {
 		t.Fatalf("PendingProposal = %#v, want structured offer", state.PendingProposal)
+	}
+}
+
+func TestUpdateSessionStatePromotesPlannedExecuteProposal(t *testing.T) {
+	state := &sessionState{PendingIntent: "prepara el canvi", PendingIntentPlanOnly: true}
+	updateSessionState(state, "prepara el canvi", turnResult{
+		Outcome: turnOutcomePlanned,
+		Proposal: pendingProposal{
+			Mode:      core.ProposalModeExecute,
+			Objective: "aplica el canvi",
+			Summary:   "Aplicar el canvi",
+		},
+	}, MemoryOptions{PlanOnly: true})
+
+	if state.PendingProposal.Mode != core.ProposalModeExecute || state.PendingIntent != "" || state.PendingIntentPlanOnly {
+		t.Fatalf("state = %#v, want planned execute proposal with cleared plan-only continuation", state)
 	}
 }
 

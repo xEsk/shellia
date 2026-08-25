@@ -42,13 +42,14 @@ type planningRoundResult struct {
 
 // turnRequest groups the context needed to process one user instruction.
 type turnRequest struct {
-	Config              config
-	ContextInfo         *contextInfo
-	Instruction         string
-	ResolvedInstruction string
-	AcceptedProposal    bool
-	History             []historyEntry
-	State               sessionState
+	Config               config
+	ContextInfo          *contextInfo
+	Instruction          string
+	ResolvedInstruction  string
+	AcceptedProposal     bool
+	AcceptedProposalMode core.ProposalMode
+	History              []historyEntry
+	State                sessionState
 }
 
 // turnRoundContext carries immutable dependencies shared by one planning round.
@@ -89,7 +90,8 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 	ctx = tracepkg.WithTurnID(ctx, turnID)
 	if request.AcceptedProposal {
 		deps.Trace.Record("pending_proposal_accepted", turnID, "session", -1, map[string]any{
-			"objective": objective,
+			"proposal_mode": request.AcceptedProposalMode,
+			"objective":     objective,
 		})
 	}
 	defer func() {
@@ -279,11 +281,33 @@ func runTurn(ctx context.Context, deps runtimeDeps, ui bool, request turnRequest
 		}
 
 		turnUI.Plan(summary, plans, false)
+		if parsed.Action == "plan" {
+			deps.Trace.Record("shellia_decision", turnID, "planning", round.Round, map[string]any{
+				"decision": "plan",
+				"action":   parsed.Action,
+			})
+			answer := proposalAnswer(parsed.Offer.Summary, workflow.proposal)
+			traceProposalCreated(round, workflow.proposal)
+			turnUI.Final(answer)
+			planned := workflow.result(turnOutcomePlanned, "", "")
+			planned.Result = answer
+			return planned, nil
+		}
 		if !workflow.canExecute() {
+			workflow.proposal = pendingProposal{
+				Mode:      core.ProposalModeExecute,
+				Objective: strings.TrimSpace(workflow.objective),
+				Summary:   strings.TrimSpace(summary),
+			}
 			deps.Trace.Record("shellia_decision", turnID, "planning", round.Round, map[string]any{
 				"decision": "planned_without_execution",
 			})
-			return workflow.result(turnOutcomePlanned, "", ""), nil
+			answer := proposalAnswer(workflow.proposal.Summary, workflow.proposal)
+			traceProposalCreated(round, workflow.proposal)
+			turnUI.Final(answer)
+			planned := workflow.result(turnOutcomePlanned, "", "")
+			planned.Result = answer
+			return planned, nil
 		}
 
 		if cfg.AskConfirmPlan {
@@ -418,7 +442,11 @@ func routePlanningDecision(round turnRoundContext, workflow *workflowState, resu
 	}
 	workflow.decisionError = ""
 	workflow.recordDecision(parsed, result.Summary, result.Plans)
-	workflow.proposal = pendingProposal{Objective: strings.TrimSpace(parsed.Offer.Objective), Summary: strings.TrimSpace(parsed.Offer.Summary)}
+	workflow.proposal = pendingProposal{
+		Mode:      core.ProposalMode(parsed.Offer.Mode),
+		Objective: strings.TrimSpace(parsed.Offer.Objective),
+		Summary:   strings.TrimSpace(parsed.Offer.Summary),
+	}
 	if workflow.contractLocked {
 		round.Deps.Trace.Record("objective_contract", round.TurnID, "planning", round.Round, map[string]any{
 			"operation":        workflow.operation,
@@ -438,12 +466,9 @@ func handleTerminalDecision(round turnRoundContext, workflow *workflowState, par
 			"completion_basis": workflow.completionEvidence.Source,
 		})
 		answer := summary
-		if parsed.Operation == "capability" && strings.TrimSpace(parsed.Offer.Objective) != "" {
-			round.Deps.Trace.Record("pending_proposal_created", round.TurnID, "session", -1, map[string]any{
-				"objective": parsed.Offer.Objective,
-				"summary":   parsed.Offer.Summary,
-			})
-			answer = strings.TrimSpace(answer) + "\n\nVols que ho executi?"
+		if workflow.proposal.Mode != "" {
+			traceProposalCreated(round, workflow.proposal)
+			answer = proposalAnswer(answer, workflow.proposal)
 		}
 		round.TurnUI.Final(answer)
 		completed := workflow.result(turnOutcomeCompleted, "", "")
@@ -468,6 +493,32 @@ func handleTerminalDecision(round turnRoundContext, workflow *workflowState, par
 	default:
 		return turnResult{}, false
 	}
+}
+
+// proposalAnswer makes a typed proposal and its exact next authority visible.
+func proposalAnswer(answer string, proposal pendingProposal) string {
+	answer = strings.TrimSpace(answer)
+	summary := strings.TrimSpace(proposal.Summary)
+	if summary != "" && summary != answer {
+		answer += "\n\nProposta: " + summary
+	}
+	switch proposal.Mode {
+	case core.ProposalModePlan:
+		return answer + "\n\nWould you like me to prepare an executable plan?"
+	case core.ProposalModeExecute:
+		return answer + "\n\nWould you like me to execute it?"
+	default:
+		return answer
+	}
+}
+
+// traceProposalCreated records proposal authority without treating it as execution authority.
+func traceProposalCreated(round turnRoundContext, proposal pendingProposal) {
+	round.Deps.Trace.Record("pending_proposal_created", round.TurnID, "session", -1, map[string]any{
+		"proposal_mode": proposal.Mode,
+		"objective":     proposal.Objective,
+		"summary":       proposal.Summary,
+	})
 }
 
 // traceCompletionValidation records provenance derived from runtime-owned workflow state.

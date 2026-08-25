@@ -61,11 +61,24 @@ type SessionState struct {
 	LastObservationObjective string
 	LastBlockerKind          string
 	LastBlockerReason        string
+	LastRetryPlanOnly        bool
+	PendingIntentPlanOnly    bool
 	PendingProposal          PendingProposal
 }
 
-// PendingProposal stores an executable objective offered by a capability answer.
+// ProposalMode identifies the authority requested by a pending proposal.
+type ProposalMode string
+
+const (
+	// ProposalModePlan asks for a non-authorizing command plan.
+	ProposalModePlan ProposalMode = "plan"
+	// ProposalModeExecute asks to start a fresh executable workflow.
+	ProposalModeExecute ProposalMode = "execute"
+)
+
+// PendingProposal stores a typed objective offered for a later turn.
 type PendingProposal struct {
+	Mode      ProposalMode
 	Objective string
 	Summary   string
 }

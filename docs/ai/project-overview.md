@@ -19,13 +19,16 @@ execution.
 ## Workflow contract
 
 `internal/app/turn.go` creates one `workflowState` per request. The provider response
-uses an action (`execute`, `retrieve_context`, `complete`, or `blocked`) and an
+uses an action (`execute`, `plan`, `retrieve_context`, `complete`, or `blocked`) and an
 operation (`answer`, `observe`, `act`, or `capability`).
 
 - `act` and `observe` can execute only when the workflow was not started by
   `--plan` or `/plan`.
 - `answer` may retrieve explicitly referenced session results before completion.
-- `capability` can answer or block and may offer a separate executable objective.
+- `answer+complete` may offer a separate plan-only objective.
+- `capability+complete` may offer a separate executable objective.
+- `act` and `observe` may return `plan`; it renders commands but never executes in
+  that turn, and may offer a fresh executable workflow for later acceptance.
 - Completion evidence is derived in `internal/app/workflow.go`: an action requires a
   successful current execution; an observation requires current observed evidence;
   answer/capability use their respective runtime-owned provenance.
@@ -53,5 +56,5 @@ owns recognition for `/ai`, `/shell`, `/plan`, `/new`, `/retry`, `/context`, `/m
 `/model`, `/theme`, `/clear`, and `/exit`; a bare `exit` also exits.
 
 Short-term state is updated in `internal/session/session_memory.go`. It tracks prior
-results, observations, pending capability offers, retry context, and relevant files
+results, observations, typed pending plan/execute offers, retry authority, and relevant files
 only for the current interactive session.

@@ -34,6 +34,11 @@ func TestWorkflowDecisionMatrix(t *testing.T) {
 			allowed:  false,
 			decision: llmResponse{Action: "complete", Operation: "observe", SuccessCriteria: "Current ports"},
 		},
+		{
+			name:     "action can return a non-authorizing plan",
+			allowed:  true,
+			decision: llmResponse{Action: "plan", Operation: "act", SuccessCriteria: "Change planned"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -44,6 +49,43 @@ func TestWorkflowDecisionMatrix(t *testing.T) {
 				t.Fatalf("validateDecision() error = %v, allowed = %t", err, tt.allowed)
 			}
 		})
+	}
+}
+
+// TestRunTurnConversationalPlanNeverExecutes checks provider planning cannot
+// cross the executor boundary even when normal safe execution is enabled.
+func TestRunTurnConversationalPlanNeverExecutes(t *testing.T) {
+	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"action":"plan","operation":"act","success_criteria":"Marker can be created","summary":"Create the marker after approval.","context_refs":[],"offer":{"mode":"execute","objective":"create marker","summary":"Create the marker"},"blocker_kind":"","blocker_reason":"","commands":[{"command":"touch marker","purpose":"Create marker","risk":"safe","requires_confirmation":false}]}`})
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	cfg.YesSafe = true
+	ctxInfo := loopTestContext(t)
+	executed := false
+	logger := openLoopTrace(t)
+
+	var result turnResult
+	output := captureMainLoopIO(t, "", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.Trace = logger
+		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, executorpkg.Options, *contextInfo, []commandPlan, []commandExecution) (commandBatchResult, error) {
+			executed = true
+			return commandBatchResult{}, nil
+		}
+		var err error
+		result, err = runTurn(t.Context(), deps, false, loopTurnRequest(cfg, &ctxInfo, "com crearies un marcador?"))
+		if err != nil {
+			t.Fatalf("runTurn() error = %v", err)
+		}
+	})
+
+	if executed || result.Outcome != turnOutcomePlanned || result.Proposal.Mode != core.ProposalModeExecute {
+		t.Fatalf("executed=%t result=%#v, want planned execute proposal", executed, result)
+	}
+	if !strings.Contains(output, "Would you like me to execute it?") {
+		t.Fatalf("output = %q, want visible execute proposal", output)
+	}
+	decisions := traceEventsByName(closeLoopTraceAndRead(t, logger), "shellia_decision")
+	if len(decisions) != 1 || traceEventData(t, decisions[0])["decision"] != "plan" || traceEventData(t, decisions[0])["action"] != "plan" {
+		t.Fatalf("shellia_decision = %#v, want action=plan", decisions)
 	}
 }
 
@@ -542,7 +584,7 @@ func TestRunTurnCanRepairIntentWithinExecutableModes(t *testing.T) {
 // TestRunTurnDoesNotExposeOfferFromRejectedDecision checks a failed semantic
 // repair cannot create hidden executable authority in session memory.
 func TestRunTurnDoesNotExposeOfferFromRejectedDecision(t *testing.T) {
-	invalid := loopLLMResponse{content: `{"action":"execute","operation":"capability","success_criteria":"Explain capability","summary":"Create it.","offer":{"objective":"crea hidden-marker","summary":"Crear marcador"},"commands":[{"command":"touch hidden-marker","purpose":"Create marker","risk":"medium","requires_confirmation":true}]}`}
+	invalid := loopLLMResponse{content: `{"action":"execute","operation":"capability","success_criteria":"Explain capability","summary":"Create it.","offer":{"mode":"execute","objective":"crea hidden-marker","summary":"Crear marcador"},"commands":[{"command":"touch hidden-marker","purpose":"Create marker","risk":"medium","requires_confirmation":true}]}`}
 	fake := newLoopLLMClient(t, invalid, invalid, invalid, invalid)
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -556,7 +598,7 @@ func TestRunTurnDoesNotExposeOfferFromRejectedDecision(t *testing.T) {
 	if runErr == nil || result.Proposal != (pendingProposal{}) {
 		t.Fatalf("error=%v result=%#v, want rejected response without proposal", runErr, result)
 	}
-	if strings.Contains(output, "Vols que ho executi?") {
+	if strings.Contains(output, "Would you like me to execute it?") {
 		t.Fatalf("rejected offer was exposed to the user: %q", output)
 	}
 }
@@ -564,7 +606,7 @@ func TestRunTurnDoesNotExposeOfferFromRejectedDecision(t *testing.T) {
 // TestRunTurnCapabilityCompletionDoesNotEnterExecutableMode checks an admitted
 // capability offer remains non-authorizing and stops after its answer.
 func TestRunTurnCapabilityCompletionDoesNotEnterExecutableMode(t *testing.T) {
-	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain marker capability","summary":"Sí, puc crear-lo.","offer":{"objective":"crea marker","summary":"Crear marker"},"commands":[]}`})
+	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain marker capability","summary":"Sí, puc crear-lo.","offer":{"mode":"execute","objective":"crea marker","summary":"Crear marker"},"commands":[]}`})
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
 	executed := false
@@ -660,7 +702,7 @@ func TestRunTurnRejectsStalePriorObservationForCurrentQuery(t *testing.T) {
 // TestRunTurnCapabilityOffersWithoutExecuting checks a capability question
 // answers and offers a later workflow without crossing the executor boundary.
 func TestRunTurnCapabilityOffersWithoutExecuting(t *testing.T) {
-	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain whether disk space can be inspected","summary":"Sí, puc consultar-ho amb df -h /.","offer":{"objective":"consulta l'espai disponible al disc","summary":"Consultar l'espai del disc"},"commands":[]}`})
+	fake := newLoopLLMClient(t, loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain whether disk space can be inspected","summary":"Sí, puc consultar-ho amb df -h /.","offer":{"mode":"execute","objective":"consulta l'espai disponible al disc","summary":"Consultar l'espai del disc"},"commands":[]}`})
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
 	executed := false
@@ -678,14 +720,14 @@ func TestRunTurnCapabilityOffersWithoutExecuting(t *testing.T) {
 	if executed {
 		t.Fatal("ExecuteCommands was called for a capability answer")
 	}
-	if !strings.Contains(output, "Vols que ho executi?") {
+	if !strings.Contains(output, "Would you like me to execute it?") {
 		t.Fatalf("output = %q, want canonical execution offer", output)
 	}
 }
 
 func TestRunTurnCapabilityCompletionIgnoresStaleHistory(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain whether a newer Codex version can be checked","summary":"I can check it.","offer":{"objective":"check whether a newer Codex version is available","summary":"Check for a Codex update"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain whether a newer Codex version can be checked","summary":"I can check it.","offer":{"mode":"execute","objective":"check whether a newer Codex version is available","summary":"Check for a Codex update"},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -706,7 +748,7 @@ func TestRunTurnCapabilityCompletionIgnoresStaleHistory(t *testing.T) {
 		}
 	})
 
-	if executed || result.Outcome != turnOutcomeCompleted || !strings.Contains(output, "Vols que ho executi?") {
+	if executed || result.Outcome != turnOutcomeCompleted || !strings.Contains(output, "Would you like me to execute it?") {
 		t.Fatalf("executed=%t result=%#v output=%q, want a completed capability offer", executed, result, output)
 	}
 	bodies := fake.requestBodies()
@@ -754,7 +796,7 @@ func TestRunTurnObserveRepairRequiresFreshExecutionWithoutCurrentAttempts(t *tes
 // follow-up starts a fresh workflow whose objective is the offered action.
 func TestRunInteractiveAcceptsStructuredCapabilityOffer(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain disk inspection capability","summary":"Sí, puc consultar-ho amb df -h /.","offer":{"objective":"consulta l'espai disponible al disc","summary":"Consultar l'espai del disc"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain disk inspection capability","summary":"Sí, puc consultar-ho amb df -h /.","offer":{"mode":"execute","objective":"consulta l'espai disponible al disc","summary":"Consultar l'espai del disc"},"commands":[]}`},
 		loopLLMResponse{content: `{"action":"execute","operation":"observe","success_criteria":"Current disk space observed","summary":"Consultaré el disc.","commands":[{"command":"df -h /","purpose":"Consultar l'espai del disc","risk":"safe","requires_confirmation":false}]}`},
 		loopLLMResponse{content: `{"action":"complete","operation":"observe","success_criteria":"Current disk space observed","summary":"Hi ha 20 GB disponibles.","commands":[]}`},
 	)
@@ -787,11 +829,198 @@ func TestRunInteractiveAcceptsStructuredCapabilityOffer(t *testing.T) {
 	}
 }
 
+// TestRunInteractivePromotesPlanOfferBeforeExecution covers the canonical
+// answer -> plan-only -> fresh executable workflow lifecycle in memory.
+func TestRunInteractivePromotesPlanOfferBeforeExecution(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"action":"complete","operation":"answer","success_criteria":"Explain how to create the marker","summary":"Primer cal preparar una ordre segura.","context_refs":[],"offer":{"mode":"plan","objective":"prepara un pla per crear lifecycle-marker","summary":"Preparar el pla del marcador"},"blocker_kind":"","blocker_reason":"","commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"act","success_criteria":"Plan for marker creation prepared","summary":"Crear lifecycle-marker.","context_refs":[],"offer":{"mode":"","objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[{"command":"touch lifecycle-marker","purpose":"Create marker","risk":"medium","requires_confirmation":true}]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"act","success_criteria":"Marker exists","summary":"Crear lifecycle-marker.","context_refs":[],"offer":{"mode":"","objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[{"command":"touch lifecycle-marker","purpose":"Create marker","risk":"medium","requires_confirmation":true}]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"act","success_criteria":"Marker exists","summary":"Marcador creat.","context_refs":[],"offer":{"mode":"","objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[]}`},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	cfg.YesSafe = true
+	ctxInfo := loopTestContext(t)
+	runs := 0
+
+	output := captureMainLoopIO(t, "com crearies un marcador?\nsí\nsí\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ executorpkg.Options, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
+			runs++
+			return commandBatchResult{Executions: []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 0}}}, nil
+		}
+		runInteractive(t.Context(), deps, false, cfg, &ctxInfo)
+	})
+
+	if runs != 1 || fake.requestCount() != 4 {
+		t.Fatalf("runs=%d requests=%d, want plan-only promotion then one fresh execution", runs, fake.requestCount())
+	}
+	bodies := fake.requestBodies()
+	if !strings.Contains(bodies[1], "Execution authority: plan_only") || strings.Contains(bodies[2], "Execution authority: plan_only") {
+		t.Fatalf("request bodies=%#v, want plan-only second turn and executable third turn", bodies)
+	}
+	if !strings.Contains(output, "Would you like me to prepare an executable plan?") || !strings.Contains(output, "Would you like me to execute it?") {
+		t.Fatalf("output=%q, want visible plan and execute proposals", output)
+	}
+}
+
+// TestRunInteractiveAmbiguousPlanFollowUpCannotExecute checks a richer reply
+// remains model-visible while conservatively retaining plan-only authority.
+func TestRunInteractiveAmbiguousPlanFollowUpCannotExecute(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"action":"complete","operation":"answer","success_criteria":"Explain how to create a marker","summary":"Cal preparar un pla.","context_refs":[],"offer":{"mode":"plan","objective":"prepara el pla del marcador","summary":"Preparar el pla"},"blocker_kind":"","blocker_reason":"","commands":[]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"act","success_criteria":"Explain the steps","summary":"Crear el marcador.","context_refs":[],"offer":{"mode":"","objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[{"command":"touch ambiguous-marker","purpose":"Create marker","risk":"safe","requires_confirmation":false}]}`},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	cfg.YesSafe = true
+	ctxInfo := loopTestContext(t)
+	executed := false
+
+	captureMainLoopIO(t, "com crearies un marcador?\nok, quins passos són?\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, executorpkg.Options, *contextInfo, []commandPlan, []commandExecution) (commandBatchResult, error) {
+			executed = true
+			return commandBatchResult{}, nil
+		}
+		runInteractive(t.Context(), deps, false, cfg, &ctxInfo)
+	})
+
+	if executed || fake.requestCount() != 2 {
+		t.Fatalf("executed=%t requests=%d, want ambiguous follow-up planned without execution", executed, fake.requestCount())
+	}
+	if !strings.Contains(fake.requestBodies()[1], `Authoritative user objective:\nok, quins passos són?`) || !strings.Contains(fake.requestBodies()[1], "Execution authority: plan_only") {
+		t.Fatalf("follow-up prompt=%q, want unchanged text with plan-only authority", fake.requestBodies()[1])
+	}
+}
+
+// TestRunInteractivePlanOnlyRecoveryCannotExecute checks provider failure and
+// missing-input recovery keep the next ordinary follow-up non-authorizing.
+func TestRunInteractivePlanOnlyRecoveryCannotExecute(t *testing.T) {
+	tests := []struct {
+		name      string
+		responses []loopLLMResponse
+	}{
+		{
+			name: "provider error",
+			responses: []loopLLMResponse{
+				{content: `{"action":"complete","operation":"answer","success_criteria":"Explain marker planning","summary":"Puc preparar el pla.","context_refs":[],"offer":{"mode":"plan","objective":"prepara el pla del marcador","summary":"Preparar el pla"},"blocker_kind":"","blocker_reason":"","commands":[]}`},
+				{status: 400, content: `{"error":"bad request"}`},
+				{content: `{"action":"execute","operation":"act","success_criteria":"Marker plan recovered","summary":"Crear el marcador.","context_refs":[],"offer":{"mode":"","objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[{"command":"touch recovery-marker","purpose":"Create marker","risk":"safe","requires_confirmation":false}]}`},
+			},
+		},
+		{
+			name: "missing input",
+			responses: []loopLLMResponse{
+				{content: `{"action":"complete","operation":"answer","success_criteria":"Explain marker planning","summary":"Puc preparar el pla.","context_refs":[],"offer":{"mode":"plan","objective":"prepara el pla del marcador","summary":"Preparar el pla"},"blocker_kind":"","blocker_reason":"","commands":[]}`},
+				{content: `{"action":"blocked","operation":"act","success_criteria":"Marker plan prepared","summary":"Falta el nom.","context_refs":[],"offer":{"mode":"","objective":"","summary":""},"blocker_kind":"missing_input","blocker_reason":"Indica el nom del marcador.","commands":[]}`},
+				{content: `{"action":"execute","operation":"act","success_criteria":"Named marker plan prepared","summary":"Crear el marcador.","context_refs":[],"offer":{"mode":"","objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[{"command":"touch recovery-marker","purpose":"Create marker","risk":"safe","requires_confirmation":false}]}`},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newLoopLLMClient(t, tt.responses...)
+			cfg := loopTestConfig(fake.URL())
+			cfg.AskConfirmPlan = false
+			cfg.YesSafe = true
+			ctxInfo := loopTestContext(t)
+			executed := false
+
+			captureMainLoopIO(t, "com prepararies un marcador?\nsí\ncontinua amb recovery-marker\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
+				deps.ExecuteCommands = func(context.Context, runtimeDeps, bool, executorpkg.Options, *contextInfo, []commandPlan, []commandExecution) (commandBatchResult, error) {
+					executed = true
+					return commandBatchResult{}, nil
+				}
+				runInteractive(t.Context(), deps, false, cfg, &ctxInfo)
+			})
+
+			if executed || fake.requestCount() != 3 {
+				t.Fatalf("executed=%t requests=%d, want recovered plan-only follow-up", executed, fake.requestCount())
+			}
+			if !strings.Contains(fake.requestBodies()[2], "Execution authority: plan_only") {
+				t.Fatalf("recovery prompt=%q, want plan-only authority", fake.requestBodies()[2])
+			}
+		})
+	}
+}
+
+// TestRunInteractiveRAMPlanLifecycle covers the canonical full in-memory
+// observation -> plan offer -> conversational plan -> fresh execution flow.
+func TestRunInteractiveRAMPlanLifecycle(t *testing.T) {
+	fake := newLoopLLMClient(t,
+		loopLLMResponse{content: `{"action":"execute","operation":"observe","success_criteria":"Current RAM and swap observed","summary":"Consultar RAM i swap.","context_refs":[],"offer":{"mode":"","objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[{"command":"memory-now","purpose":"Inspect current RAM and swap","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"observe","success_criteria":"Current RAM and swap observed","summary":"Hi ha pressió de memòria i swap en ús.","context_refs":[],"offer":{"mode":"","objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"answer","success_criteria":"Explain whether RAM can be freed without rebooting","summary":"Sí, es pot reduir la pressió sense reiniciar.","context_refs":[],"offer":{"mode":"plan","objective":"allibera RAM sense reiniciar","summary":"Preparar un pla per alliberar RAM"},"blocker_kind":"","blocker_reason":"","commands":[]}`},
+		loopLLMResponse{content: `{"action":"plan","operation":"act","success_criteria":"RAM release plan provided","summary":"Aturar temporalment el procés consumidor.","context_refs":[],"offer":{"mode":"execute","objective":"allibera RAM sense reiniciar","summary":"Executar el pla per alliberar RAM"},"blocker_kind":"","blocker_reason":"","commands":[{"command":"touch stale-ram-plan","purpose":"Represent the old planned command","risk":"medium","requires_confirmation":true}]}`},
+		loopLLMResponse{content: `{"action":"execute","operation":"act","success_criteria":"RAM released without rebooting","summary":"Aplicar el pla actualitzat.","context_refs":[],"offer":{"mode":"","objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[{"command":"touch fresh-ram-plan","purpose":"Represent the freshly planned command","risk":"safe","requires_confirmation":false}]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"act","success_criteria":"RAM released without rebooting","summary":"Memòria alliberada sense reiniciar.","context_refs":[],"offer":{"mode":"","objective":"","summary":""},"blocker_kind":"","blocker_reason":"","commands":[]}`},
+	)
+	cfg := loopTestConfig(fake.URL())
+	cfg.AskConfirmPlan = false
+	cfg.YesSafe = true
+	ctxInfo := loopTestContext(t)
+	logger := openLoopTrace(t)
+	executedCommands := make([]string, 0, 2)
+
+	output := captureMainLoopIO(t, "observa la RAM i la swap actuals\nhi ha manera d’alliberar RAM sense reiniciar?\nok, quins passos són?\nexecuta’l\n/exit\n", fake.HTTPClient(), func(deps runtimeDeps) {
+		deps.Trace = logger
+		deps.ExecuteCommands = func(_ context.Context, _ runtimeDeps, _ bool, _ executorpkg.Options, _ *contextInfo, plans []commandPlan, _ []commandExecution) (commandBatchResult, error) {
+			if len(plans) != 1 {
+				t.Fatalf("plans=%#v, want one current command", plans)
+			}
+			executedCommands = append(executedCommands, plans[0].Command)
+			if plans[0].Command == "touch fresh-ram-plan" && (!plans[0].RequiresConfirmation || plans[0].LocalSafe) {
+				t.Fatalf("fresh plan=%#v, want local risk classification preserved", plans[0])
+			}
+			return commandBatchResult{Executions: []commandExecution{{Command: plans[0].Command, Purpose: plans[0].Purpose, ExitCode: 0, Stdout: capturedStream{Text: "current evidence"}}}}, nil
+		}
+		runInteractive(t.Context(), deps, false, cfg, &ctxInfo)
+	})
+
+	if !reflect.DeepEqual(executedCommands, []string{"memory-now", "touch fresh-ram-plan"}) {
+		t.Fatalf("executed commands=%#v, want observation and freshly replanned command only", executedCommands)
+	}
+	if strings.Contains(strings.Join(executedCommands, "\n"), "stale-ram-plan") || fake.requestCount() != 6 {
+		t.Fatalf("executed=%#v requests=%d, want no stored-plan execution and six decisions", executedCommands, fake.requestCount())
+	}
+	bodies := fake.requestBodies()
+	if !strings.Contains(bodies[3], `Authoritative user objective:\nok, quins passos són?`) || !strings.Contains(bodies[3], "pending_proposal_mode: plan") || !strings.Contains(bodies[3], "Execution authority: plan_only") {
+		t.Fatalf("conversational plan prompt=%q, want visible pending plan and plan-only authority", bodies[3])
+	}
+	if !strings.Contains(bodies[4], `Authoritative user objective:\nallibera RAM sense reiniciar`) || strings.Contains(bodies[4], "stale-ram-plan") || strings.Contains(bodies[4], "Execution authority: plan_only") {
+		t.Fatalf("execution prompt=%q, want fresh executable replan from offered objective", bodies[4])
+	}
+	for _, snippet := range []string{"Preparar un pla per alliberar RAM", "Would you like me to prepare an executable plan?", "touch stale-ram-plan", "Would you like me to execute it?"} {
+		if !strings.Contains(output, snippet) {
+			t.Fatalf("output=%q, missing %q", output, snippet)
+		}
+	}
+
+	events := closeLoopTraceAndRead(t, logger)
+	if len(traceEventsByName(events, "pending_proposal_created")) != 2 || len(traceEventsByName(events, "pending_proposal_accepted")) != 1 || len(traceEventsByName(events, "pending_proposal_replaced")) != 1 {
+		t.Fatalf("proposal lifecycle events=%#v, want two created, one replaced, one accepted", events)
+	}
+	plannedEnds := 0
+	for _, event := range traceEventsByName(events, "turn_end") {
+		data := traceEventData(t, event)
+		if data["outcome"] == string(turnOutcomePlanned) {
+			plannedEnds++
+			if data["plans_count"] != float64(1) || data["executions_count"] != float64(0) {
+				t.Fatalf("planned turn_end=%#v, want one plan and zero executions", data)
+			}
+		}
+	}
+	if plannedEnds != 1 {
+		t.Fatalf("planned turn_end count=%d, want one", plannedEnds)
+	}
+}
+
 // TestRunInteractiveAcceptedOfferPreservesRiskClassification checks accepting
 // an offer grants only an objective, never pre-authorization for its command.
 func TestRunInteractiveAcceptedOfferPreservesRiskClassification(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain file creation capability","summary":"Sí, puc crear el marcador.","offer":{"objective":"crea el fitxer accepted-risk-marker","summary":"Crear marcador"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain file creation capability","summary":"Sí, puc crear el marcador.","offer":{"mode":"execute","objective":"crea el fitxer accepted-risk-marker","summary":"Crear marcador"},"commands":[]}`},
 		loopLLMResponse{content: `{"action":"execute","operation":"act","success_criteria":"Marker file exists","summary":"Crearé el marcador.","commands":[{"command":"touch accepted-risk-marker","purpose":"Create marker file","risk":"safe","requires_confirmation":false}]}`},
 		loopLLMResponse{content: `{"action":"complete","operation":"act","success_criteria":"Marker file exists","summary":"Marcador creat.","commands":[]}`},
 	)
@@ -821,7 +1050,7 @@ func TestRunInteractiveAcceptedOfferPreservesRiskClassification(t *testing.T) {
 // consumes the pending offer without invoking either the model or executor.
 func TestRunInteractiveDeclinesStructuredCapabilityOffer(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain disk inspection capability","summary":"Sí, puc consultar-ho amb df -h /.","offer":{"objective":"consulta l'espai disponible al disc","summary":"Consultar l'espai del disc"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain disk inspection capability","summary":"Sí, puc consultar-ho amb df -h /.","offer":{"mode":"execute","objective":"consulta l'espai disponible al disc","summary":"Consultar l'espai del disc"},"commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())
 	ctxInfo := loopTestContext(t)
@@ -838,7 +1067,7 @@ func TestRunInteractiveDeclinesStructuredCapabilityOffer(t *testing.T) {
 	if executed || fake.requestCount() != 1 {
 		t.Fatalf("executed = %t, requests = %d, want no execution and one capability decision", executed, fake.requestCount())
 	}
-	if !strings.Contains(output, "D’acord. No ho executaré.") {
+	if !strings.Contains(output, "Okay. I won't execute it.") {
 		t.Fatalf("output = %q, want proposal decline acknowledgement", output)
 	}
 }
@@ -847,7 +1076,7 @@ func TestRunInteractiveDeclinesStructuredCapabilityOffer(t *testing.T) {
 // remains retryable as its executable objective rather than as the word "sí".
 func TestRunInteractiveRetriesAcceptedOfferObjective(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain disk inspection capability","summary":"Sí, puc consultar-ho.","offer":{"objective":"consulta l'espai disponible al disc","summary":"Consultar disc"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain disk inspection capability","summary":"Sí, puc consultar-ho.","offer":{"mode":"execute","objective":"consulta l'espai disponible al disc","summary":"Consultar disc"},"commands":[]}`},
 		loopLLMResponse{content: `{"action":"execute","operation":"observe","success_criteria":"Current disk space observed","summary":"Consultaré el disc.","commands":[{"command":"df -h /","purpose":"Consultar disc","risk":"safe","requires_confirmation":false}]}`},
 		loopLLMResponse{content: `{"action":"complete","operation":"observe","success_criteria":"Current disk space observed","summary":"He reutilitzat l'observació parcial.","commands":[]}`},
 	)
@@ -880,7 +1109,7 @@ func TestRunInteractiveRetriesAcceptedOfferObjective(t *testing.T) {
 // non-success outcomes arm /retry even when runTurn itself returns nil.
 func TestRunInteractiveRetriesAcceptedOfferAfterNilErrorFailure(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain update capability","summary":"Sí, puc actualitzar Codex.","offer":{"objective":"actualitza codex","summary":"Actualitzar Codex"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain update capability","summary":"Sí, puc actualitzar Codex.","offer":{"mode":"execute","objective":"actualitza codex","summary":"Actualitzar Codex"},"commands":[]}`},
 		loopLLMResponse{content: `{"action":"complete","operation":"act","success_criteria":"Codex is updated","summary":"Run brew upgrade.","commands":[]}`},
 		loopLLMResponse{content: `{"action":"complete","operation":"act","success_criteria":"Codex is updated","summary":"Run brew upgrade.","commands":[]}`},
 		loopLLMResponse{content: `{"action":"blocked","operation":"act","success_criteria":"Codex is updated","summary":"Package manager unavailable.","blocker_kind":"unavailable","blocker_reason":"No package manager is available.","commands":[]}`},
@@ -905,7 +1134,7 @@ func TestRunInteractiveRetriesAcceptedOfferAfterNilErrorFailure(t *testing.T) {
 // error cannot leave unrelated executable authority waiting behind "sí".
 func TestRunInteractiveConsumesOldOfferWhenNewTurnFails(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain disk capability","summary":"Sí, puc consultar el disc.","offer":{"objective":"consulta el disc","summary":"Consultar disc"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain disk capability","summary":"Sí, puc consultar el disc.","offer":{"mode":"execute","objective":"consulta el disc","summary":"Consultar disc"},"commands":[]}`},
 		loopLLMResponse{status: 400, content: `{"error":"bad request"}`},
 		loopLLMResponse{content: `{"action":"complete","operation":"answer","success_criteria":"Answer provided","summary":"No hi ha cap oferta pendent.","commands":[]}`},
 	)
@@ -926,7 +1155,7 @@ func TestRunInteractiveConsumesOldOfferWhenNewTurnFails(t *testing.T) {
 // instruction clears the old offer while keeping it visible to the model.
 func TestRunInteractiveReplacesStructuredCapabilityOffer(t *testing.T) {
 	fake := newLoopLLMClient(t,
-		loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain disk inspection capability","summary":"Sí, puc consultar-ho.","offer":{"objective":"consulta l'espai disponible al disc","summary":"Consultar disc"},"commands":[]}`},
+		loopLLMResponse{content: `{"action":"complete","operation":"capability","success_criteria":"Explain disk inspection capability","summary":"Sí, puc consultar-ho.","offer":{"mode":"execute","objective":"consulta l'espai disponible al disc","summary":"Consultar disc"},"commands":[]}`},
 		loopLLMResponse{content: `{"action":"complete","operation":"answer","success_criteria":"Explain inodes","summary":"Un inode descriu un objecte del filesystem.","commands":[]}`},
 	)
 	cfg := loopTestConfig(fake.URL())

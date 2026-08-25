@@ -119,8 +119,9 @@ type Command struct {
 	InteractiveReason    string `json:"interactive_reason"`
 }
 
-// Offer describes an optional executable objective proposed by a capability answer.
+// Offer describes an optional typed objective proposed for a later turn.
 type Offer struct {
+	Mode      string `json:"mode"`
 	Objective string `json:"objective"`
 	Summary   string `json:"summary"`
 }
@@ -422,9 +423,10 @@ func planningResponseSchema() map[string]any {
 	}
 
 	offer := object(map[string]any{
+		"mode":      stringValues("", "plan", "execute"),
 		"objective": map[string]any{"type": "string"},
 		"summary":   map[string]any{"type": "string"},
-	}, "objective", "summary")
+	}, "mode", "objective", "summary")
 
 	command := object(map[string]any{
 		"command":                map[string]any{"type": "string"},
@@ -438,7 +440,7 @@ func planningResponseSchema() map[string]any {
 	}, "command", "purpose", "risk", "requires_confirmation", "independent_on_failure", "repeat_reason", "interactive", "interactive_reason")
 
 	return object(map[string]any{
-		"action":           stringValues("execute", "retrieve_context", "complete", "blocked"),
+		"action":           stringValues("execute", "plan", "retrieve_context", "complete", "blocked"),
 		"operation":        stringValues("answer", "observe", "act", "capability"),
 		"success_criteria": map[string]any{"type": "string"},
 		"summary":          map[string]any{"type": "string"},

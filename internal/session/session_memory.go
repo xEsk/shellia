@@ -7,6 +7,7 @@ type MemoryOptions struct {
 	MaxObservationEntries  int
 	MemoryObservationChars int
 	TruncationStrategy     truncationStrategy
+	PlanOnly               bool
 }
 
 // updateSessionState stores durable session memory after a successful or actionable partial turn.
@@ -16,8 +17,9 @@ func updateSessionState(state *sessionState, instruction string, turn turnResult
 	}
 
 	rememberInstructionContext(state, instruction)
-	if turn.Outcome == turnOutcomeCompleted && strings.TrimSpace(turn.Proposal.Objective) != "" {
+	if (turn.Outcome == turnOutcomeCompleted || turn.Outcome == turnOutcomePlanned) && strings.TrimSpace(turn.Proposal.Objective) != "" {
 		state.PendingProposal = pendingProposal{
+			Mode:      turn.Proposal.Mode,
 			Objective: strings.TrimSpace(turn.Proposal.Objective),
 			Summary:   strings.TrimSpace(turn.Proposal.Summary),
 		}
@@ -26,17 +28,20 @@ func updateSessionState(state *sessionState, instruction string, turn turnResult
 	}
 
 	switch turn.Outcome {
-	case turnOutcomeCompleted:
+	case turnOutcomeCompleted, turnOutcomePlanned:
 		state.PendingIntent = ""
+		state.PendingIntentPlanOnly = false
 		state.LastBlockerKind = ""
 		state.LastBlockerReason = ""
 	case turnOutcomeBlocked:
 		state.PendingIntent = strings.TrimSpace(instruction)
+		state.PendingIntentPlanOnly = options.PlanOnly
 		state.LastBlockerKind = strings.TrimSpace(turn.BlockerKind)
 		state.LastBlockerReason = strings.TrimSpace(turn.BlockerReason)
 	default:
 		if shouldPromotePendingIntent(instruction, turn) {
 			state.PendingIntent = strings.TrimSpace(instruction)
+			state.PendingIntentPlanOnly = options.PlanOnly
 		}
 	}
 
@@ -131,7 +136,7 @@ func resolveInstructionForPlanning(instruction string, state sessionState) strin
 // isProposalAcceptance recognizes only short, unequivocal acceptance phrases.
 func isProposalAcceptance(instruction string) bool {
 	switch normalizeForMemory(instruction) {
-	case "si", "sí", "yes", "fes ho", "endavant", "executa ho", "d acord", "ok", "okay":
+	case "si", "sí", "yes", "fes ho", "endavant", "executa ho", "executa l", "executal", "d acord", "ok", "okay":
 		return true
 	default:
 		return false
@@ -151,7 +156,7 @@ func isProposalDecline(instruction string) bool {
 // shouldPromotePendingIntent keeps the latest meaningful instruction available
 // for the planning model, which decides later whether it is still relevant.
 func shouldPromotePendingIntent(instruction string, turn turnResult) bool {
-	return strings.TrimSpace(instruction) != "" && turn.Outcome != turnOutcomeCompleted
+	return strings.TrimSpace(instruction) != "" && turn.Outcome != turnOutcomeCompleted && turn.Outcome != turnOutcomePlanned
 }
 
 // detectRuntimeHint stores the latest runtime/container context when present.
@@ -244,7 +249,7 @@ func mergeRecentUnique(existing []string, incoming []string, limit int) []string
 // normalizeForMemory simplifies text for broad intent heuristics.
 func normalizeForMemory(text string) string {
 	replacer := strings.NewReplacer(
-		"'", "", "\"", "", "(", " ", ")", " ", ",", " ", ".", " ",
+		"'", "", "’", "", "\"", "", "(", " ", ")", " ", ",", " ", ".", " ",
 		":", " ", ";", " ", "?", " ", "!", " ", "-", " ",
 	)
 	return strings.Join(strings.Fields(strings.ToLower(replacer.Replace(text))), " ")

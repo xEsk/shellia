@@ -51,6 +51,7 @@ type turnApplication struct {
 	retryInstruction   string
 	priorProposal      pendingProposal
 	acceptedProposal   bool
+	planOnly           bool
 	turn               turnResult
 	err                error
 	reportCancelled    bool
@@ -113,6 +114,7 @@ func runInteractive(ctx context.Context, deps runtimeDeps, ui bool, cfg config, 
 func (session *interactiveSession) routeInteractiveInput(ctx context.Context, input string) bool {
 	trimmed := strings.TrimSpace(input)
 	forcePromptMode := false
+	turnCfg := session.cfg
 	planOnly, plannedInstruction := interactivepkg.ParsePlanInstruction(input)
 	if planOnly {
 		if strings.TrimSpace(plannedInstruction) == "" {
@@ -120,7 +122,6 @@ func (session *interactiveSession) routeInteractiveInput(ctx context.Context, in
 			return false
 		}
 
-		turnCfg := session.cfg
 		turnCfg.PlanOnly = true
 		session.executeInteractiveTurn(ctx, interactiveTurnRequest{
 			config:             turnCfg,
@@ -194,6 +195,7 @@ func (session *interactiveSession) routeInteractiveInput(ctx context.Context, in
 			}
 			trimmed = session.state.LastRetryInstruction
 			input = session.state.LastRetryInstruction
+			turnCfg.PlanOnly = session.state.LastRetryPlanOnly
 			forcePromptMode = true
 			uipkg.PrintInfoTo(session.deps.Stdout, session.ui, fmt.Sprintf("Retrying: %s", input))
 		case interactivepkg.CommandNew:
@@ -212,9 +214,14 @@ func (session *interactiveSession) routeInteractiveInput(ctx context.Context, in
 		declined := session.state.PendingProposal
 		session.state.PendingProposal = pendingProposal{}
 		session.deps.Trace.Record("pending_proposal_declined", "", "session", -1, map[string]any{
-			"objective": declined.Objective,
+			"proposal_mode": declined.Mode,
+			"objective":     declined.Objective,
 		})
-		uipkg.PrintInfoTo(session.deps.Stdout, session.ui, "D’acord. No ho executaré.")
+		message := "Okay. I won't execute it."
+		if declined.Mode == core.ProposalModePlan {
+			message = "Okay. I won't prepare the plan."
+		}
+		uipkg.PrintInfoTo(session.deps.Stdout, session.ui, message)
 		return false
 	}
 
@@ -230,10 +237,15 @@ func (session *interactiveSession) routeInteractiveInput(ctx context.Context, in
 	retryInstruction := instruction
 	if acceptedProposal {
 		retryInstruction = resolvedInstruction
+		if priorProposal.Mode == core.ProposalModePlan {
+			turnCfg.PlanOnly = true
+		}
+	} else if priorProposal.Mode == core.ProposalModePlan || session.state.PendingIntentPlanOnly {
+		turnCfg.PlanOnly = true
 	}
 
 	session.executeInteractiveTurn(ctx, interactiveTurnRequest{
-		config:              session.cfg,
+		config:              turnCfg,
 		instruction:         instruction,
 		resolvedInstruction: resolvedInstruction,
 		historyInstruction:  instruction,
@@ -255,13 +267,14 @@ func (session *interactiveSession) executeInteractiveTurn(ctx context.Context, r
 
 	turnCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	turn, err := runTurn(turnCtx, session.deps, session.ui, turnRequest{
-		Config:              request.config,
-		ContextInfo:         session.contextInfo,
-		Instruction:         request.instruction,
-		ResolvedInstruction: request.resolvedInstruction,
-		AcceptedProposal:    request.acceptedProposal,
-		History:             session.history,
-		State:               turnState,
+		Config:               request.config,
+		ContextInfo:          session.contextInfo,
+		Instruction:          request.instruction,
+		ResolvedInstruction:  request.resolvedInstruction,
+		AcceptedProposal:     request.acceptedProposal,
+		AcceptedProposalMode: request.priorProposal.Mode,
+		History:              session.history,
+		State:                turnState,
 	})
 	stop()
 
@@ -270,6 +283,7 @@ func (session *interactiveSession) executeInteractiveTurn(ctx context.Context, r
 		retryInstruction:   request.retryInstruction,
 		priorProposal:      request.priorProposal,
 		acceptedProposal:   request.acceptedProposal,
+		planOnly:           request.config.PlanOnly,
 		turn:               turn,
 		err:                err,
 		reportCancelled:    request.reportCancelled,
@@ -315,12 +329,16 @@ func (session *interactiveSession) applyTurnResult(application turnApplication) 
 	}
 
 	if application.err != nil && len(application.turn.Executions) > 0 {
-		sessionpkg.UpdateState(&session.state, application.retryInstruction, application.turn, sessionMemoryOptions(session.cfg))
+		options := sessionMemoryOptions(session.cfg)
+		options.PlanOnly = application.planOnly
+		sessionpkg.UpdateState(&session.state, application.retryInstruction, application.turn, options)
 	}
 
 	if errors.Is(application.err, core.ErrAborted) || errors.Is(application.err, context.Canceled) {
 		session.state.LastRetryInstruction = application.retryInstruction
+		session.state.LastRetryPlanOnly = application.planOnly
 		sessionpkg.RememberUnfinishedInstruction(&session.state, application.retryInstruction)
+		session.state.PendingIntentPlanOnly = application.planOnly
 		if application.reportCancelled {
 			uipkg.PrintWarningTo(session.deps.Stderr, session.ui, "Request cancelled.")
 			fmt.Fprintln(session.deps.Stdout)
@@ -331,14 +349,18 @@ func (session *interactiveSession) applyTurnResult(application turnApplication) 
 	if application.err != nil {
 		uipkg.PrintWarningTo(session.deps.Stderr, session.ui, application.err.Error())
 		session.state.LastRetryInstruction = application.retryInstruction
+		session.state.LastRetryPlanOnly = application.planOnly
 		sessionpkg.RememberUnfinishedInstruction(&session.state, application.retryInstruction)
+		session.state.PendingIntentPlanOnly = application.planOnly
 		return
 	}
 
-	if !application.acceptedProposal && strings.TrimSpace(application.priorProposal.Objective) != "" && application.turn.Outcome == turnOutcomeCompleted && strings.TrimSpace(application.turn.Proposal.Objective) != strings.TrimSpace(application.priorProposal.Objective) {
+	if !application.acceptedProposal && strings.TrimSpace(application.priorProposal.Objective) != "" && (application.turn.Outcome == turnOutcomeCompleted || application.turn.Outcome == turnOutcomePlanned) && application.turn.Proposal != application.priorProposal {
 		session.deps.Trace.Record("pending_proposal_replaced", "", "session", -1, map[string]any{
-			"previous_objective":    application.priorProposal.Objective,
-			"replacement_objective": application.turn.Proposal.Objective,
+			"previous_proposal_mode": application.priorProposal.Mode,
+			"proposal_mode":          application.turn.Proposal.Mode,
+			"previous_objective":     application.priorProposal.Objective,
+			"replacement_objective":  application.turn.Proposal.Objective,
 		})
 	}
 
@@ -350,13 +372,18 @@ func (session *interactiveSession) applyTurnResult(application turnApplication) 
 		Result:         application.turn.Result,
 		CharacterCount: len([]rune(application.turn.Result)),
 	})
-	sessionpkg.UpdateState(&session.state, application.retryInstruction, application.turn, sessionMemoryOptions(session.cfg))
-	if application.acceptedProposal && application.turn.Outcome != turnOutcomeCompleted && application.turn.Outcome != turnOutcomeDeclined {
+	options := sessionMemoryOptions(session.cfg)
+	options.PlanOnly = application.planOnly
+	sessionpkg.UpdateState(&session.state, application.retryInstruction, application.turn, options)
+	if application.acceptedProposal && application.turn.Outcome != turnOutcomeCompleted && application.turn.Outcome != turnOutcomePlanned && application.turn.Outcome != turnOutcomeDeclined {
 		session.state.LastRetryInstruction = application.retryInstruction
+		session.state.LastRetryPlanOnly = application.planOnly
 		sessionpkg.RememberUnfinishedInstruction(&session.state, application.retryInstruction)
+		session.state.PendingIntentPlanOnly = application.planOnly
 	}
-	if application.turn.Outcome == turnOutcomeCompleted {
+	if application.turn.Outcome == turnOutcomeCompleted || application.turn.Outcome == turnOutcomePlanned {
 		session.state.LastRetryInstruction = ""
+		session.state.LastRetryPlanOnly = false
 	}
 	if len(session.history) > maxHistoryEntries {
 		session.history = session.history[len(session.history)-maxHistoryEntries:]

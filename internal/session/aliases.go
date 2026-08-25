@@ -20,6 +20,7 @@ type (
 const (
 	turnOutcomeCompleted       = core.TurnOutcomeCompleted
 	turnOutcomeBlocked         = core.TurnOutcomeBlocked
+	turnOutcomePlanned         = core.TurnOutcomePlanned
 	turnOutcomeTimeout         = core.TurnOutcomeTimeout
 	turnOutcomeStructuralError = core.TurnOutcomeStructuralError
 	truncationStart            = core.TruncationStart

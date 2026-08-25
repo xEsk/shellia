@@ -102,7 +102,7 @@ func (state *workflowState) validateDecisionMatrix(decision llmResponse) error {
 	case "answer":
 		allowed = decision.Action == "retrieve_context" || decision.Action == "complete" || decision.Action == "blocked"
 	case "observe", "act":
-		allowed = decision.Action == "execute" || decision.Action == "complete" || decision.Action == "blocked"
+		allowed = decision.Action == "execute" || decision.Action == "plan" || decision.Action == "complete" || decision.Action == "blocked"
 	case "capability":
 		allowed = decision.Action == "complete" || decision.Action == "blocked"
 	}
