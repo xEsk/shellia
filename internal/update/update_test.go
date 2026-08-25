@@ -18,6 +18,17 @@ import (
 	"testing"
 )
 
+func TestArchiveNameMatchesGoReleaserVersion(t *testing.T) {
+	got, err := ArchiveName("v0.2.2", "linux", "amd64")
+	if err != nil {
+		t.Fatalf("ArchiveName() error = %v", err)
+	}
+	const want = "shellia_0.2.2_linux_amd64.tar.gz"
+	if got != want {
+		t.Fatalf("ArchiveName() = %q, want %q", got, want)
+	}
+}
+
 func TestCheckLatestFindsCompatibleRelease(t *testing.T) {
 	archiveName, err := ArchiveName("v1.2.0", runtime.GOOS, runtime.GOARCH)
 	if err != nil {
@@ -44,6 +55,21 @@ func TestCheckLatestFindsCompatibleRelease(t *testing.T) {
 	}
 	if !result.Available || result.Release.Tag != "v1.2.0" {
 		t.Fatalf("CheckLatest() = %#v, want available v1.2.0", result)
+	}
+}
+
+func TestCheckLatestCurrentVersionDoesNotRequireAssets(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(releaseResponse{TagName: "v0.2.2"})
+	}))
+	defer server.Close()
+
+	result, err := CheckLatest(t.Context(), server.Client(), server.URL, "v0.2.2")
+	if err != nil {
+		t.Fatalf("CheckLatest() error = %v", err)
+	}
+	if result.Available {
+		t.Fatalf("CheckLatest() Available = true, want false")
 	}
 }
 

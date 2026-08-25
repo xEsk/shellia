@@ -118,7 +118,7 @@ Download the latest release for your platform from [GitHub Releases](https://git
 
 ```bash
 # example for macOS Apple Silicon
-tar -xzf shellia_v0.1.0_darwin_arm64.tar.gz
+tar -xzf shellia_0.1.0_darwin_arm64.tar.gz
 mv shellia /usr/local/bin/
 ```
 

@@ -61,11 +61,11 @@ func ArchiveName(tag, goos, goarch string) (string, error) {
 	if goarch != "amd64" && goarch != "arm64" {
 		return "", fmt.Errorf("automatic updates are not supported on %s/%s", goos, goarch)
 	}
-	tag = strings.TrimSpace(tag)
-	if tag == "" {
+	version := strings.TrimPrefix(strings.TrimSpace(tag), "v")
+	if version == "" {
 		return "", errors.New("release has no version tag")
 	}
-	return fmt.Sprintf("shellia_%s_%s_%s.tar.gz", tag, goos, goarch), nil
+	return fmt.Sprintf("shellia_%s_%s_%s.tar.gz", version, goos, goarch), nil
 }
 
 // CheckLatest checks GitHub for a newer release compatible with this binary's platform.
@@ -89,12 +89,19 @@ func CheckLatest(ctx context.Context, client *http.Client, latestURL, currentVer
 		return CheckResult{}, fmt.Errorf("cannot read latest release: %w", err)
 	}
 
+	release := Release{Tag: strings.TrimSpace(latest.TagName)}
+	if release.Tag == "" {
+		return CheckResult{}, errors.New("latest release has no version tag")
+	}
+	if !isNewer(release.Tag, currentVersion) {
+		return CheckResult{Release: release}, nil
+	}
+
 	archiveName, err := ArchiveName(latest.TagName, runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		return CheckResult{}, err
 	}
 
-	release := Release{Tag: strings.TrimSpace(latest.TagName)}
 	for _, candidate := range latest.Assets {
 		switch candidate.Name {
 		case archiveName:
@@ -110,7 +117,7 @@ func CheckLatest(ctx context.Context, client *http.Client, latestURL, currentVer
 		return CheckResult{}, fmt.Errorf("latest release %s has no %s", release.Tag, checksumAssetName)
 	}
 
-	return CheckResult{Available: isNewer(release.Tag, currentVersion), Release: release}, nil
+	return CheckResult{Available: true, Release: release}, nil
 }
 
 // DownloadBinary downloads, verifies and extracts a Shellia binary from a release.

@@ -19,7 +19,7 @@ import (
 
 // TestRunUpdateReportsAvailableRelease checks the command checks releases without requiring LLM configuration.
 func TestRunUpdateReportsAvailableRelease(t *testing.T) {
-	archiveName := "shellia_v1.2.0_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
+	archiveName := "shellia_1.2.0_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		baseURL := "http://" + r.Host
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -62,7 +62,7 @@ func TestRunUpdateReportsAvailableRelease(t *testing.T) {
 
 // TestRunUpdateInstallsVerifiedBinary checks --yes replaces the injected executable path.
 func TestRunUpdateInstallsVerifiedBinary(t *testing.T) {
-	archiveName := "shellia_v1.2.0_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
+	archiveName := "shellia_1.2.0_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
 	archive := updateTestArchive(t, []byte("new binary"))
 	sum := sha256.Sum256(archive)
 	checksums := hex.EncodeToString(sum[:]) + "  " + archiveName + "\n"
