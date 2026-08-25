@@ -79,6 +79,12 @@ func runApp(parentCtx context.Context, args []string, deps runtimeDeps) int {
 		}
 		uipkg.RenderPanel(deps.Stdout, ui, "config", uipkg.ColorCyan, []string{path})
 		return 0
+	case "update":
+		if err := runUpdate(parentCtx, deps, cfg); err != nil {
+			uipkg.PrintErrorTo(deps.Stderr, ui, err.Error())
+			return 1
+		}
+		return 0
 	}
 
 	appCtx := parentCtx
@@ -166,6 +172,9 @@ func parseArgs(args []string) (config, error) {
 		cfg.CommandKind = kind
 		return cfg, nil
 	}
+	if cfg, ok, err := parseUpdateSubcommand(args); ok || err != nil {
+		return cfg, err
+	}
 
 	cfg, err := loadBaseConfig()
 	if err != nil {
@@ -188,6 +197,24 @@ func parseArgs(args []string) (config, error) {
 	}
 
 	return finalizeConfig(fs, cfg, *timeoutSecs, *reqTimeoutSecs)
+}
+
+// parseUpdateSubcommand detects `shellia update [--yes]` without requiring model configuration.
+func parseUpdateSubcommand(args []string) (config, bool, error) {
+	if len(args) == 0 || args[0] != "update" {
+		return config{}, false, nil
+	}
+
+	cfg := configpkg.DefaultConfig()
+	cfg.CommandKind = "update"
+	if len(args) == 1 {
+		return cfg, true, nil
+	}
+	if len(args) == 2 && args[1] == "--yes" {
+		cfg.UpdateYes = true
+		return cfg, true, nil
+	}
+	return config{}, true, fmt.Errorf("invalid update command: use shellia update [--yes]")
 }
 
 // loadBaseConfig applies defaults → file → env in order.
@@ -467,6 +494,7 @@ func usageFunc(fs *flag.FlagSet) func() {
 		fmt.Fprintln(os.Stdout, `  shellia [flags] "your instruction here"`)
 		fmt.Fprintln(os.Stdout, "  shellia config init")
 		fmt.Fprintln(os.Stdout, "  shellia config path")
+		fmt.Fprintln(os.Stdout, "  shellia update [--yes]")
 		fmt.Fprintln(os.Stdout)
 		fmt.Fprintln(os.Stdout, "Flags:")
 		fs.VisitAll(func(f *flag.Flag) {
@@ -482,6 +510,7 @@ func usageFunc(fs *flag.FlagSet) func() {
 		fmt.Fprintln(os.Stdout, `  shellia --api-key "YOUR_KEY" "run git status"`)
 		fmt.Fprintln(os.Stdout, `  shellia -i "run git status"`)
 		fmt.Fprintln(os.Stdout, "  shellia config init")
+		fmt.Fprintln(os.Stdout, "  shellia update --yes")
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 
 	executorpkg "github.com/xEsk/shellia/internal/executor"
 	uipkg "github.com/xEsk/shellia/internal/ui"
+	updatepkg "github.com/xEsk/shellia/internal/update"
 	"golang.org/x/term"
 )
 
@@ -24,6 +25,8 @@ type runtimeDeps struct {
 	Stdout                *os.File
 	Stderr                *os.File
 	HTTPClient            *http.Client
+	LatestReleaseURL      string
+	ExecutablePath        func() (string, error)
 	ExecuteCommands       commandRunner
 	ExecuteManualCommand  manualCommandRunner
 	ReadInteractivePrompt func(bool, *bufio.Reader, *os.File, io.Writer, interactiveMode, uipkg.ViewOptions, *uipkg.Renderer) (string, error)
@@ -40,6 +43,8 @@ func defaultRuntimeDeps() runtimeDeps {
 		Stdout:                os.Stdout,
 		Stderr:                os.Stderr,
 		HTTPClient:            &http.Client{},
+		LatestReleaseURL:      updatepkg.LatestReleaseURL,
+		ExecutablePath:        os.Executable,
 		ExecuteCommands:       executeCommands,
 		ExecuteManualCommand:  executeManualCommand,
 		ReadInteractivePrompt: uipkg.ReadInteractivePromptWithRenderer,
@@ -61,6 +66,12 @@ func (deps runtimeDeps) withDefaults() runtimeDeps {
 	}
 	if deps.HTTPClient == nil {
 		deps.HTTPClient = defaults.HTTPClient
+	}
+	if deps.LatestReleaseURL == "" {
+		deps.LatestReleaseURL = defaults.LatestReleaseURL
+	}
+	if deps.ExecutablePath == nil {
+		deps.ExecutablePath = defaults.ExecutablePath
 	}
 	if deps.ExecuteCommands == nil {
 		deps.ExecuteCommands = defaults.ExecuteCommands

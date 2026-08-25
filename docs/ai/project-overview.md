@@ -16,6 +16,12 @@ or a blocker.
 initializes renderer and optional trace output, and selects interactive or one-shot
 execution.
 
+`shellia update` is an explicit release-management command. It checks the latest
+GitHub release for the current platform; `shellia update --yes` verifies the release
+checksum and replaces the executable. A protected installation must instead be
+updated with `sudo shellia update --yes`, so the whole update runs with administrator
+permissions.
+
 ## Workflow contract
 
 `internal/app/turn.go` creates one `workflowState` per request. The provider response

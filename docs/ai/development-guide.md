@@ -42,6 +42,8 @@ Run focused package tests while iterating, then the full suite for behavior chan
 
 - `.goreleaser.yaml` builds `./cmd/shellia` for Linux and Darwin on amd64/arm64 and
   injects `main.version`.
+- `shellia update` consumes those GoReleaser archives and `checksums.txt`; keep the
+  archive naming convention and checksum artifact when changing releases.
 - `.github/workflows/release.yml` runs tests and vet before `goreleaser release` on
   version tags.
 - `site/**` changes on `main` trigger `.github/workflows/pages.yml`. Review both the

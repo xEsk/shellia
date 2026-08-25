@@ -533,6 +533,17 @@ func TestParseArgsRejectsInvalidConfigCommand(t *testing.T) {
 	}
 }
 
+// TestParseArgsAcceptsUpdateCommandWithoutModelConfiguration checks release commands stay independent from LLM setup.
+func TestParseArgsAcceptsUpdateCommandWithoutModelConfiguration(t *testing.T) {
+	cfg, err := parseArgs([]string{"update", "--yes"})
+	if err != nil {
+		t.Fatalf("parseArgs() error = %v", err)
+	}
+	if cfg.CommandKind != "update" || !cfg.UpdateYes {
+		t.Fatalf("parseArgs() = %#v, want update command with --yes", cfg)
+	}
+}
+
 // TestParseArgsRejectsNonPositiveTimeouts checks timeout flags cannot disable safeguards.
 func TestParseArgsRejectsNonPositiveTimeouts(t *testing.T) {
 	for _, args := range [][]string{

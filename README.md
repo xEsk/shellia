@@ -128,6 +128,29 @@ mv shellia /usr/local/bin/
 go install github.com/xEsk/shellia/cmd/shellia@latest
 ```
 
+### Update an installed binary
+
+Check the latest GitHub release:
+
+```bash
+shellia update
+```
+
+To download the matching archive, verify its published SHA-256 checksum, and
+replace the running binary:
+
+```bash
+shellia update --yes
+```
+
+If Shellia is installed in a protected directory such as `/usr/local/bin` or
+`/usr/sbin`, run the update as administrator so both download and replacement run
+with the required permissions:
+
+```bash
+sudo shellia update --yes
+```
+
 ### Build from source
 
 ```bash

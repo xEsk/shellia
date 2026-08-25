@@ -42,6 +42,7 @@ type Config struct {
 	Instruction string
 	Interactive bool
 	PlanOnly    bool
+	UpdateYes   bool
 
 	// LLM options identify the OpenAI-compatible endpoint used for workflow decisions.
 	BaseURL                string
